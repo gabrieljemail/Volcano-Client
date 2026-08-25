@@ -1,0 +1,80 @@
+[
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/VolcanoClient.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/VolcanoClient.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/VolcanoClient.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/VolcanoClient.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/network/Connection.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/network/Connection.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/network/MSAuth.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/network/MSAuth.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/network/MSAuth.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/network/MSAuth.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/network/NBT.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/network/NBT.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/network/NBT.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/network/NBT.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/renderer/RenderThread.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/renderer/RenderThread.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/renderer/RenderThread.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/renderer/RenderThread.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/renderer/VulkanInit.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/renderer/VulkanInit.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/renderer/VulkanInit.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/renderer/VulkanInit.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/renderer/entity/EntityRenderer.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/renderer/entity/EntityRenderer.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/renderer/gui/ControlRenderer.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/renderer/gui/ControlRenderer.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/renderer/gui/ControlRenderer.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/renderer/gui/ControlRenderer.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/renderer/gui/GUIController.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/renderer/gui/GUIController.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/renderer/gui/GUIController.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/renderer/gui/GUIController.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/renderer/gui/OverlayController.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/renderer/gui/OverlayController.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/renderer/gui/OverlayController.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/renderer/gui/OverlayController.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkMesher.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/renderer/terrain/ChunkMesher.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/renderer/terrain/ChunkMesher.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkMesher.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkParser.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/renderer/terrain/ChunkParser.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/renderer/terrain/ChunkParser.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkParser.cpp.o"
+},
+{
+  "directory": "/home/badimo57/Projects/VolcanoClient/build",
+  "command": "clang++ -I/home/badimo57/Projects/VolcanoClient/src -I/home/badimo57/Projects/VolcanoClient/src/network -I/home/badimo57/Projects/VolcanoClient/src/renderer -I/home/badimo57/Projects/VolcanoClient/src/renderer/terrain -I/home/badimo57/Projects/VolcanoClient/src/renderer/entity -I/home/badimo57/Projects/VolcanoClient/src/renderer/gui -I/home/badimo57/Projects/VolcanoClient/lib/vk-bootstrap/src -I/home/badimo57/Projects/VolcanoClient/lib/vulkanmemory/include -g -std=gnu++20 -flto=thin -Wall -Wextra -O3 -march=native -ffast-math -o CMakeFiles/VolcanoClient.dir/src/renderer/terrain/VisibleChunkController.cpp.o -c /home/badimo57/Projects/VolcanoClient/src/renderer/terrain/VisibleChunkController.cpp",
+  "file": "/home/badimo57/Projects/VolcanoClient/src/renderer/terrain/VisibleChunkController.cpp",
+  "output": "CMakeFiles/VolcanoClient.dir/src/renderer/terrain/VisibleChunkController.cpp.o"
+}
+]

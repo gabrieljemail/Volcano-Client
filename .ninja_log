@@ -1,0 +1,26 @@
+# ninja log v6
+1058	1211	1787659109094849018	VolcanoClient	4ef54e34de6c902d
+219	285	1787658965732165633	CMakeFiles/VolcanoClient.dir/src/renderer/terrain/VisibleChunkController.cpp.o	870627f243da7390
+107	275	1787658965620166203	CMakeFiles/VolcanoClient.dir/src/renderer/gui/GUIController.cpp.o	a21fa4bff6fe839
+4	249	1787658965516166732	CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.o	d06e3baa19a6eefe
+179	278	1787658965692165836	CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkParser.cpp.o	1dbcad722bcde4d4
+144	248	1787658965656166020	CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkMesher.cpp.o	3b99e62b44790cb3
+116	224	1787658965628166162	CMakeFiles/VolcanoClient.dir/src/renderer/gui/OverlayController.cpp.o	7d6c8f44896e6492
+106	218	1787658965616166223	CMakeFiles/VolcanoClient.dir/src/renderer/gui/ControlRenderer.cpp.o	5602e2599d72a95f
+6	177	1787658965516166732	CMakeFiles/VolcanoClient.dir/src/renderer/LifecycleController.cpp.o	3277b6b60e7d2872
+7	142	1787658965520166712	CMakeFiles/VolcanoClient.dir/src/renderer/VulkanInit.cpp.o	edaeca10ae66e8c1
+7	115	1787658965520166712	CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.o	a4a3f7c0145ade80
+6	107	1787658965516166732	CMakeFiles/VolcanoClient.dir/src/network/MSAuth.cpp.o	49f2145c37b36d09
+3	1057	1787659108038869918	CMakeFiles/VolcanoClient.dir/src/VolcanoClient.cpp.o	fa1d04b39a00041a
+22	504	1787683670703041173	build.ninja	17b1a8d2747a3c07
+8	1098	1787683670727039108	CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.o	6dd2ede64329dfe0
+8	1102	1787683670727039108	CMakeFiles/VolcanoClient.dir/src/network/MSAuth.cpp.o	90841a6ed58d40bd
+9	1104	1787683670731038764	CMakeFiles/VolcanoClient.dir/src/network/NBT.cpp.o	564dd259a43ecd2f
+1098	1164	1787683671818945345	CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.o	783a67d1fb652cbb
+1104	1185	1787683671822945002	CMakeFiles/VolcanoClient.dir/src/renderer/gui/GUIController.cpp.o	43d65e656e76e08d
+1102	1204	1787683671822945002	CMakeFiles/VolcanoClient.dir/src/renderer/gui/ControlRenderer.cpp.o	93a8dccaa15cb8b0
+1204	1276	1787683671922936420	CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkParser.cpp.o	89ffe76c31a63a9d
+1164	1282	1787683671882939853	CMakeFiles/VolcanoClient.dir/src/renderer/gui/OverlayController.cpp.o	58fcff40b61e9fb
+1186	1293	1787683671906937794	CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkMesher.cpp.o	2a09b48d9e1b7087
+1277	1370	1787683671998929899	CMakeFiles/VolcanoClient.dir/src/renderer/terrain/VisibleChunkController.cpp.o	c11de5c9d83f9eda
+10	12560	1787683670731038764	CMakeFiles/VolcanoClient.dir/src/renderer/RenderThread.cpp.o	faf34380d76f3c72

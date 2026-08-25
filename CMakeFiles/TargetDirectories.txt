@@ -1,0 +1,3 @@
+/home/badimo57/Projects/VolcanoClient/CMakeFiles/VolcanoClient.dir
+/home/badimo57/Projects/VolcanoClient/CMakeFiles/edit_cache.dir
+/home/badimo57/Projects/VolcanoClient/CMakeFiles/rebuild_cache.dir
