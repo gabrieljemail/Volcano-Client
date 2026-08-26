@@ -1,34 +1,26 @@
 #include <thread>
 #include <memory>
 #include <iostream>
+#include <vector>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-#include <VkBootstrap.h>
 #include "VulkanInit.hpp"
 #include "RenderThread.hpp"
+#include "../Helpers.hpp"
 
 using namespace std;
 
-// Setting placeholders:
-constexpr const char* APP_NAME          = "Volcano Client";
-constexpr const uint32_t APP_VERSION    = VK_MAKE_API_VERSION(1,0,1,1);
-constexpr const char* ENGINE_NAME       = "Volcano Game Engine";
-constexpr const uint32_t ENGINE_VERSION = VK_MAKE_API_VERSION(1,0,1,1);
-constexpr const uint32_t WINDOW_WIDTH   = 854;
-constexpr const uint32_t WINDOW_HEIGHT  = 480;
-constexpr const auto PRESENT_MODE       = VK_PRESENT_MODE_MAILBOX_KHR;
-constexpr const uint8_t BUFFER_SIZE     = 3;
-constexpr const uint16_t TARGET_FPS     = 60;
+// Creates the graphics pipeline. Used in the main function.
+void CreateGraphicsPipeline() {
+    // Load compiled SPIR-V binary.
+    vector<char>* vertShaderCode = ReadFile("resources/terrain.vert.spv");
 
-// Global handles:
-vkb::Instance instance;
-vkb::PhysicalDevice physicalDevice;
-vkb::Device device;
-VkSurfaceKHR surface;
-vkb::Swapchain swapchain;
-GLFWwindow* window;
+    // TODO: Set up the shader stage.
+    // TODO: Set up single-pass sampling.
+    // TODO: Finish the graphics pipeline.
+}
 
-// Main function:
+// Main function.
 void Init()
 {
     // Make an instance.
@@ -129,6 +121,120 @@ void Init()
         return;
     }
     swapchain = swapchainBuilderReturn.value();
+    uint32_t imageCount = swapchain.image_count;
+
+    // Create image views.
+    imageViews.resize(imageCount);
+    for (uint32_t i = 0; i < imageCount; i++)
+    {
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = swapchain.get_images().value()[i];
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = swapchain.image_format;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+        
+        VkResult createViewResult = vkCreateImageView(device, &viewInfo, nullptr, &imageViews[i]);
+        if (createViewResult != VK_SUCCESS)
+        {
+            throw runtime_error("[ERROR] Failed to create swapchain image view.");
+        }
+    }
+
+    // Create the render pass.
+    VkAttachmentDescription colorAttachment{};
+    colorAttachment.format = swapchain.image_format;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentDescription attachments[] = {colorAttachment};
+
+    VkRenderPassCreateInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.pAttachments = attachments;
+
+    VkAttachmentReference colorAttachmentRef{};
+    colorAttachmentRef.attachment = 0;
+    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorAttachmentRef;
+
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+
+    VkResult createRenderPassResult = vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass);
+    if (createRenderPassResult != VK_SUCCESS)
+    {
+        throw std::runtime_error("[ERROR] Failed to create render pass.");
+    }
+
+    // Create framebuffers.
+    framebuffers.resize(imageCount);
+    for (uint32_t i = 0; i < imageCount; i++)
+    {
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = renderPass;
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = &imageViews[i];
+        framebufferInfo.width = swapchain.extent.width;
+        framebufferInfo.height = swapchain.extent.height;
+        framebufferInfo.layers = 1;
+
+        VkResult createFramebufferResult = vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffers[i]);
+        if (createFramebufferResult != VK_SUCCESS)
+        {
+            throw std::runtime_error("[ERROR] Failed to create framebuffer.");
+        }
+    }
+
+    // Create the graphics pipeline.
+    CreateGraphicsPipeline();
+
+    // Create command pool and command buffers.
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.queueFamilyIndex = graphicsQueueFamilyIndex;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; // Allow re-recording
+
+    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create command pool!");
+    }
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 3;
+
+    if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffers)) {
+        throw std::runtime_error("Failed to allocate command buffers!");
+    }
+
+    // Create semaphores and fences.
+    VkSemaphoreCreateInfo semaphoreInfo{};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    for (int i = 0; i < 3; i++) {
+        vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]);
+        vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]);
+        vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]);
+    }
 }
 
 void Cleanup()
@@ -152,12 +258,6 @@ void Cleanup()
     {
         vkb::destroy_swapchain(swapchain);
     }
-}
-
-// Getters:
-VkDevice GetDevice()
-{
-    return device;
 }
 
 // Setters:

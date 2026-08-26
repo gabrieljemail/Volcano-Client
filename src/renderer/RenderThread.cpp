@@ -96,17 +96,94 @@ void RenderThread::DrawFrame()
 
 void RenderThread::AcquireImage()
 {
-    // TODO: vkAcquireNextImageKHR.
+    // Have the CPU wait for fences.
+    vkWaitForFences(GetDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+
+    // Acquire the next image's index.
+    VkResult result = vkAcquireNextImageKHR(
+        GetDevice(),
+        GetSwapchain(),
+        UINT64_MAX,
+        imageAvailableSemaphores[currentFrame],
+        VK_NULL_HANDLE,
+        &imageIndex
+    );
+
+    if (result != VK_SUCCESS)
+    {
+        throw runtime_error("[ERROR] Failed to acquire swapchain image!");
+    }
+
+    // Reset the fence.
+    vkResetFences(GetDevice(), 1, &inFlightFences[currentFrame]);
 }
 
 void RenderThread::RecordAndSubmitFrame()
 {
-    // TODO: vkBeginCommandBuffer -> Draw -> vkQueueSubmit.
+    VkCommandBuffer cmd = commandBuffers[currentFrame];
+
+    // Recording.
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    // Clear the screen.
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = renderPass;
+    renderPassInfo.framebuffer = framebuffers[currentFrame];
+    renderPassInfo.renderArea.extent = swapchainExtent;
+
+    VkClearValue clearColor = {{{0.0f, 0.0f, 1.0f, 1.0f}}};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+    // TODO: Draw something real.
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
+    vkCmdEndRenderPass(cmd);
+    vkEndCommandBuffer(cmd);
+
+    // Submit the frame.
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    // Wait for the swapchain to begin rendering.
+    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+
+    submitInfo.pCommandBuffers = &cmd;
+
+    // Set up a GPU signal to the semaphore when done.
+    vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
 }
 
 void RenderThread::PresentFrame()
 {
-    // TODO: vkQueuePresentKHR.
+    VkPresentInfoKHR presentInfo{};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+    // Wait for the RenderFinished semaphore to present.
+    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = waitSemaphores;
+
+    VkSwapchainKHR swapchains[] = {GetSwapchain()};
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapchains;
+    presentInfo.pImageIndices = &imageIndex;
+
+    // Flip the buffer to the display.
+    vkQueuePresentKHR(presentQueue, &presentInfo);
+
+    // Move to the next frame slot.
+    currentFrame = (currentFrame + 1) % 3; // 0 -> 1 -> 2 -> 0.
 }
 
 }

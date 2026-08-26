@@ -31,6 +31,14 @@ private:
     VkSemaphore renderFinishedSemaphores[3]; // GPU: "I finished drawing."
     VkFence inFlightFences[3];               // CPU: "The GPU is done with this frame."
     uint32_t currentFrame = 0;
+    uint32_t imageIndex = 0;
+    VkCommandBuffer commandBuffers[3];
+    VkRenderPass renderPass;
+    VkPipeline graphicsPipeline;
+    VkFramebuffer framebuffers[3];
+    VkQueue graphicsQueue;
+    VkQueue presentQueue;
+    VkExtent2D swapchainExtent;
 
     void ThreadEntry(stop_token stopToken);
     void RenderLoop(stop_token stopToken);
