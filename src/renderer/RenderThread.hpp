@@ -29,6 +29,7 @@ private:
     double averageWorkTime = 0.5;
     uint32_t currentFrame = 0;
     uint32_t imageIndex = 0;
+    uint32_t maxFramesInFlight = 2;
 
     void ThreadEntry(stop_token stopToken);
     void RenderLoop(stop_token stopToken);

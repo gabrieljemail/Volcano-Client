@@ -203,7 +203,7 @@ void Init()
         .set_engine_name(ENGINE_NAME)
         .set_engine_version(ENGINE_VERSION)
         .require_api_version(1,1,0)
-        .request_validation_layers()
+        // .request_validation_layers()
         .build();
     
     if (!instanceReturn)
@@ -279,6 +279,8 @@ void Init()
     graphicsQueue = device.get_queue(vkb::QueueType::graphics).value();
     presentQueue  = device.get_queue(vkb::QueueType::present).value();
     graphicsQueueFamilyIndex = device.get_queue_index(vkb::QueueType::graphics).value();
+    cout << "[DEBUG] Graphics queue: " << graphicsQueue << endl;
+    cout << "[DEBUG] Present queue: " << presentQueue << endl;
 
     // Set swapchainExtent.
     swapchainExtent = swapchain.extent;
@@ -421,40 +423,37 @@ void Init()
 
 void Cleanup()
 {
-    // 1. Destroy swapchain first
-    if (swapchain.swapchain != VK_NULL_HANDLE)
-    {
-        vkb::destroy_swapchain(swapchain);
-        swapchain.swapchain = VK_NULL_HANDLE;
+    if (device.device != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(device.device);
     }
 
-    // 2. Destroy logical device
-    if (device.device != VK_NULL_HANDLE)
-    {
-        vkb::destroy_device(device);
-        device.device = VK_NULL_HANDLE;
+    // 1. Destroy manually created objects.
+    for (int i = 0; i < 3; i++) {
+        vkDestroySemaphore(device.device, imageAvailableSemaphores[i], nullptr);
+        vkDestroySemaphore(device.device, renderFinishedSemaphores[i], nullptr);
+        vkDestroyFence(device.device, inFlightFences[i], nullptr);
     }
 
-    // 3. Destroy surface BEFORE instance
-    if (surface != VK_NULL_HANDLE && instance.instance != VK_NULL_HANDLE)
-    {
-        vkb::destroy_surface(instance, surface);
-        surface = VK_NULL_HANDLE;
+    for (auto framebuffer : framebuffers) {
+        vkDestroyFramebuffer(device.device, framebuffer, nullptr);
     }
 
-    // 4. Destroy instance last
-    if (instance.instance != VK_NULL_HANDLE)
-    {
-        vkb::destroy_instance(instance);
-        instance.instance = VK_NULL_HANDLE;
+    for (auto view : imageViews) {
+        vkDestroyImageView(device.device, view, nullptr);
     }
 
-    // 5. Clean up GLFW
-    if (window != nullptr)
-    {
-        glfwDestroyWindow(window);
-        window = nullptr;
-    }
+    vkDestroyPipeline(device.device, graphicsPipeline, nullptr);
+    vkDestroyPipelineLayout(device.device, pipelineLayout, nullptr);
+    vkDestroyCommandPool(device.device, commandPool, nullptr);
+    vkDestroyRenderPass(device.device, renderPass, nullptr);
+
+    // Destroy the bootstrap wrappers.
+    if (swapchain.swapchain != VK_NULL_HANDLE) vkb::destroy_swapchain(swapchain);
+    if (device.device != VK_NULL_HANDLE) vkb::destroy_device(device);
+    if (surface != VK_NULL_HANDLE) vkb::destroy_surface(instance, surface);
+    if (instance.instance != VK_NULL_HANDLE) vkb::destroy_instance(instance);
+
+    if (window != nullptr) glfwDestroyWindow(window);
     glfwTerminate();
 }
 

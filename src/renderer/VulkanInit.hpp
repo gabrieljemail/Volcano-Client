@@ -14,8 +14,8 @@ constexpr const char* ENGINE_NAME       = "Volcano Game Engine";
 constexpr const uint32_t ENGINE_VERSION = VK_MAKE_API_VERSION(1,0,1,1);
 constexpr const uint32_t WINDOW_WIDTH   = 854;
 constexpr const uint32_t WINDOW_HEIGHT  = 480;
-constexpr const auto PRESENT_MODE       = VK_PRESENT_MODE_MAILBOX_KHR;
-constexpr const uint8_t BUFFER_SIZE     = 3;
+constexpr const auto PRESENT_MODE       = VK_PRESENT_MODE_FIFO_KHR; // VSync.
+constexpr const uint8_t BUFFER_SIZE     = 2;
 constexpr const uint16_t TARGET_FPS     = 60;
 
 // Global handles:

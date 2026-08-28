@@ -103,6 +103,7 @@ void RenderThread::DrawFrame()
 
     AcquireImage();
     RecordAndSubmitFrame();
+    vkWaitForFences(GetDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
     PresentFrame();
 
     auto workEnd = chrono::steady_clock::now();
@@ -192,6 +193,7 @@ void RenderThread::RecordAndSubmitFrame()
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
 
+    submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmd;
 
     // When rendering is complete, have the GPU signal this semaphore.
@@ -200,18 +202,17 @@ void RenderThread::RecordAndSubmitFrame()
     submitInfo.pSignalSemaphores = signalSemaphores;
 
     // Set up a GPU signal to the semaphore when done.
-    vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
+    VkResult queueResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
+    if (queueResult != VK_SUCCESS)
+    {
+        throw runtime_error("[ERROR] Failed to submit semaphore to graphics queue.");
+    }
 }
 
 void RenderThread::PresentFrame()
 {
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-
-    // Wait for the RenderFinished semaphore to present.
-    VkSemaphore waitSemaphores[] = {renderFinishedSemaphores[currentFrame]};
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = waitSemaphores;
 
     VkSwapchainKHR swapchains[] = {GetSwapchain()};
     presentInfo.swapchainCount = 1;
@@ -222,7 +223,7 @@ void RenderThread::PresentFrame()
     vkQueuePresentKHR(presentQueue, &presentInfo);
 
     // Move to the next frame slot.
-    currentFrame = (currentFrame + 1) % 3; // 0 -> 1 -> 2 -> 0.
+    currentFrame = (currentFrame + 1) % maxFramesInFlight; // 0 -> 1 -> 2 -> 0.
 }
 
 }
