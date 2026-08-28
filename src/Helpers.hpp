@@ -10,20 +10,20 @@
 
 using namespace std;
 
-vector<char>* ReadFile(const string& path)
+vector<char> ReadFile(const string& path)
 {
     ifstream file(path, ios::ate | ios::binary);
 
     if (!file.is_open())
     {
-        return nullptr;
+        return {};
     }
 
     size_t fileSize = file.tellg();
-    vector<char>* buffer;
-    buffer->resize(fileSize);
+    vector<char> buffer;
+    buffer.resize(fileSize);
     file.seekg(0);
-    file.read(buffer->data(), fileSize);
+    file.read(buffer.data(), fileSize);
     file.close();
 
     return buffer;

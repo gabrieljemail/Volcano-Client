@@ -10,7 +10,15 @@ using namespace std;
 namespace Volcano {
 
 RenderThread::RenderThread(Volcano::GlobalState* globalState) : state(globalState)
-{}
+{
+    if (state && state->targetFPS > 0)
+    {
+        targetFrameTime = 1000.0 / static_cast<double>(state->targetFPS);
+    } else
+    {
+        targetFrameTime = 1000.0 / 60.0;
+    }
+}
 
 RenderThread::~RenderThread()
 {}
@@ -27,7 +35,6 @@ void RenderThread::ThreadEntry(stop_token stopToken)
     cout << "[INFO] Render thread created." << endl;
 
     try {
-        Init(); // From VulkanInit.hpp.
         RenderLoop(stopToken);
     } catch (const exception& e) {
         cerr << "[ERROR] Render thread crashed during startup: " << e.what() << endl;
@@ -39,12 +46,17 @@ void RenderThread::RenderLoop(stop_token stopToken)
     frameStartTime = chrono::steady_clock::now();
     nextFrameTarget = frameStartTime + chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
 
-    while (!stopToken.stop_requested())
+    while (!stopToken.stop_requested() && !state->shouldClose)
     {
         WaitForTargetFrame();
         PollInputs();
         DrawFrame();
     }
+
+    Cleanup();
+    // When the render loop exits for some reason, tell the main thread to shut down.
+    state->shouldClose = true;
+    // And then continue to the destructor to join the thread.
 }
 
 void RenderThread::WaitForTargetFrame()
@@ -74,7 +86,14 @@ void RenderThread::WaitForTargetFrame()
 
 void RenderThread::PollInputs()
 {
-    glfwPollEvents();
+    // Bind the close button (and Alt+F4).
+    if (glfwWindowShouldClose(window))
+    {
+        state->shouldClose = true;
+    }
+
+    // Process inputs.
+    // TODO: Do something with inputs.
 }
 
 void RenderThread::DrawFrame()
@@ -131,7 +150,7 @@ void RenderThread::RecordAndSubmitFrame()
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderPassInfo.renderPass = renderPass;
-    renderPassInfo.framebuffer = framebuffers[currentFrame];
+    renderPassInfo.framebuffer = framebuffers[imageIndex];
     renderPassInfo.renderArea.extent = swapchainExtent;
 
     VkClearValue clearColor = {{{0.0f, 0.0f, 1.0f, 1.0f}}};
@@ -140,6 +159,21 @@ void RenderThread::RecordAndSubmitFrame()
 
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+    // Set the dynamic viewport.
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(swapchainExtent.width);
+    viewport.height = static_cast<float>(swapchainExtent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = swapchainExtent;
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
 
     // TODO: Draw something real.
     vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -160,6 +194,11 @@ void RenderThread::RecordAndSubmitFrame()
 
     submitInfo.pCommandBuffers = &cmd;
 
+    // When rendering is complete, have the GPU signal this semaphore.
+    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
     // Set up a GPU signal to the semaphore when done.
     vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
 }
@@ -170,7 +209,7 @@ void RenderThread::PresentFrame()
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
     // Wait for the RenderFinished semaphore to present.
-    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+    VkSemaphore waitSemaphores[] = {renderFinishedSemaphores[currentFrame]};
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = waitSemaphores;
 

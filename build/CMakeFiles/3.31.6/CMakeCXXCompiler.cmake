@@ -1,7 +1,7 @@
-set(CMAKE_CXX_COMPILER "/usr/bin/clang++")
+set(CMAKE_CXX_COMPILER "/usr/bin/c++")
 set(CMAKE_CXX_COMPILER_ARG1 "")
-set(CMAKE_CXX_COMPILER_ID "Clang")
-set(CMAKE_CXX_COMPILER_VERSION "19.1.7")
+set(CMAKE_CXX_COMPILER_ID "GNU")
+set(CMAKE_CXX_COMPILER_VERSION "14.2.0")
 set(CMAKE_CXX_COMPILER_VERSION_INTERNAL "")
 set(CMAKE_CXX_COMPILER_WRAPPER "")
 set(CMAKE_CXX_STANDARD_COMPUTED_DEFAULT "17")
@@ -25,10 +25,10 @@ set(CMAKE_CXX_SIMULATE_VERSION "")
 
 
 set(CMAKE_AR "/usr/bin/ar")
-set(CMAKE_CXX_COMPILER_AR "/usr/bin/llvm-ar-19")
+set(CMAKE_CXX_COMPILER_AR "/usr/bin/gcc-ar-14")
 set(CMAKE_RANLIB "/usr/bin/ranlib")
-set(CMAKE_CXX_COMPILER_RANLIB "/usr/bin/llvm-ranlib-19")
-set(CMAKE_LINKER "/usr/bin/ld.lld")
+set(CMAKE_CXX_COMPILER_RANLIB "/usr/bin/gcc-ranlib-14")
+set(CMAKE_LINKER "/usr/bin/ld")
 set(CMAKE_LINKER_LINK "")
 set(CMAKE_LINKER_LLD "")
 set(CMAKE_CXX_COMPILER_LINKER "/usr/bin/ld")
@@ -37,7 +37,7 @@ set(CMAKE_CXX_COMPILER_LINKER_VERSION 2.44)
 set(CMAKE_CXX_COMPILER_LINKER_FRONTEND_VARIANT GNU)
 set(CMAKE_MT "")
 set(CMAKE_TAPI "CMAKE_TAPI-NOTFOUND")
-set(CMAKE_COMPILER_IS_GNUCXX )
+set(CMAKE_COMPILER_IS_GNUCXX 1)
 set(CMAKE_CXX_COMPILER_LOADED 1)
 set(CMAKE_CXX_COMPILER_WORKS TRUE)
 set(CMAKE_CXX_ABI_COMPILED TRUE)
@@ -87,19 +87,19 @@ endif()
 
 
 
-set(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES "/usr/include/c++/14;/usr/include/x86_64-linux-gnu/c++/14;/usr/include/c++/14/backward;/usr/lib/llvm-19/lib/clang/19/include;/usr/local/include;/usr/include/x86_64-linux-gnu;/usr/include")
+set(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES "/usr/include/c++/14;/usr/include/x86_64-linux-gnu/c++/14;/usr/include/c++/14/backward;/usr/lib/gcc/x86_64-linux-gnu/14/include;/usr/local/include;/usr/include/x86_64-linux-gnu;/usr/include")
 set(CMAKE_CXX_IMPLICIT_LINK_LIBRARIES "stdc++;m;gcc_s;gcc;c;gcc_s;gcc")
-set(CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES "/usr/lib/gcc/x86_64-linux-gnu/14;/usr/lib64;/lib/x86_64-linux-gnu;/lib64;/usr/lib/x86_64-linux-gnu;/lib;/usr/lib")
+set(CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES "/usr/lib/gcc/x86_64-linux-gnu/14;/usr/lib/x86_64-linux-gnu;/usr/lib;/lib/x86_64-linux-gnu;/lib")
 set(CMAKE_CXX_IMPLICIT_LINK_FRAMEWORK_DIRECTORIES "")
-set(CMAKE_CXX_COMPILER_CLANG_RESOURCE_DIR "/usr/lib/llvm-19/lib/clang/19")
+set(CMAKE_CXX_COMPILER_CLANG_RESOURCE_DIR "")
 
 set(CMAKE_CXX_COMPILER_IMPORT_STD "")
 ### Imported target for C++23 standard library
-set(CMAKE_CXX23_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE "Experimental `import std` support not enabled when detecting toolchain; it must be set before `CXX` is enabled (usually a `project()` call)")
+set(CMAKE_CXX23_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE "Toolchain does not support discovering `import std` support")
 
 
 ### Imported target for C++26 standard library
-set(CMAKE_CXX26_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE "Experimental `import std` support not enabled when detecting toolchain; it must be set before `CXX` is enabled (usually a `project()` call)")
+set(CMAKE_CXX26_COMPILER_IMPORT_STD_NOT_FOUND_MESSAGE "Toolchain does not support discovering `import std` support")
 
 
 

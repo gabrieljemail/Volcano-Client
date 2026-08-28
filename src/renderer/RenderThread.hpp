@@ -25,20 +25,10 @@ private:
     // Timing variables:
     chrono::steady_clock::time_point frameStartTime;
     chrono::steady_clock::time_point nextFrameTarget;
-    double targetFrameTime = 1000.0 / state->targetFPS;
+    double targetFrameTime = 1000.0 / 60.0;
     double averageWorkTime = 0.5;
-    VkSemaphore imageAvailableSemaphores[3]; // GPU: "I have the image ready."
-    VkSemaphore renderFinishedSemaphores[3]; // GPU: "I finished drawing."
-    VkFence inFlightFences[3];               // CPU: "The GPU is done with this frame."
     uint32_t currentFrame = 0;
     uint32_t imageIndex = 0;
-    VkCommandBuffer commandBuffers[3];
-    VkRenderPass renderPass;
-    VkPipeline graphicsPipeline;
-    VkFramebuffer framebuffers[3];
-    VkQueue graphicsQueue;
-    VkQueue presentQueue;
-    VkExtent2D swapchainExtent;
 
     void ThreadEntry(stop_token stopToken);
     void RenderLoop(stop_token stopToken);

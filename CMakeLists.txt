@@ -12,7 +12,7 @@ set(CMAKE_CXX_COMPILER clang++)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=lld")
 
 # Enable Interprocedural Optimization (LTO) - Critical for HD 530 performance
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+# set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 
 # -----------------------------------------------------------------------------
 # 2. Find Dependencies
@@ -43,6 +43,9 @@ include_directories(
 # We use GLOB_RECURSE to find all .cpp files in src/ automatically
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 
+# Add vk-bootstrap.
+list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/lib/vk-bootstrap/src/VkBootstrap.cpp")
+
 # -----------------------------------------------------------------------------
 # 5. Executable & Linking
 # -----------------------------------------------------------------------------
@@ -50,8 +53,10 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 
 target_compile_options(${PROJECT_NAME} PRIVATE 
     -Wall 
-    -Wextra 
-    -O3               # Maximum optimization
+    -Wextra
+    -pthread
+    -g                # Keep debugging symbols.
+    -Og               # Debugger optimization
     -march=native     # Optimize for your specific OptiPlex CPU
     -ffast-math       # Faster floating point math (fine for games)
 )

@@ -3,6 +3,7 @@
 #define VULKAN_INIT_H
 
 #include <cstdint>
+#include <vector>
 #include <vulkan/vulkan.hpp>
 #include <VkBootstrap.h>
 
@@ -18,42 +19,48 @@ constexpr const uint8_t BUFFER_SIZE     = 3;
 constexpr const uint16_t TARGET_FPS     = 60;
 
 // Global handles:
-vkb::Instance instance;
-vkb::PhysicalDevice physicalDevice;
-vkb::Device device;
-VkSurfaceKHR surface;
-vkb::Swapchain swapchain;
-GLFWwindow* window;
-VkRenderPass renderPass;
-vector<VkFramebuffer> framebuffers;
-vector<VkImageView> imageViews;
-VkPipeline graphicsPipeline;
-uint32_t graphicsQueueFamilyIndex;
-VkCommandPool commandPool;
-VkCommandBuffer commandBuffers;
-VkSemaphore imageAvailableSemaphores[3];
-VkSemaphore renderFinishedSemaphores[3];
-VkFence inFlightFences[3];
+inline vkb::Instance instance;
+inline vkb::PhysicalDevice physicalDevice;
+inline vkb::Device device;
+inline VkSurfaceKHR surface;
+inline vkb::Swapchain swapchain;
+inline VkExtent2D swapchainExtent;
+inline GLFWwindow* window;
+inline VkRenderPass renderPass;
+inline std::vector<VkFramebuffer> framebuffers;
+inline std::vector<VkImageView> imageViews;
+inline VkPipeline graphicsPipeline;
+inline VkPipelineLayout pipelineLayout;
+inline VkQueue graphicsQueue;
+inline VkQueue presentQueue;
+inline uint32_t graphicsQueueFamilyIndex;
+inline VkCommandPool commandPool;
+inline VkCommandBuffer commandBuffers[3];
+inline VkSemaphore imageAvailableSemaphores[3];
+inline VkSemaphore renderFinishedSemaphores[3];
+inline VkFence inFlightFences[3];
 
 // Getters:
-VkInstance GetInstance() { return instance; }
-VkPhysicalDevice GetPhysicalDevice() { return physicalDevice; }
-VkDevice GetDevice() { return device; }
-VkSurfaceKHR GetSurface() { return surface; }
-VkSwapchainKHR GetSwapchain() { return swapchain; }
-VkRenderPass GetRenderPass() { return renderPass; }
-vector<VkFramebuffer> GetSwapchainFramebuffers() { return framebuffers; }
-vector<VkImageView> GetSwapchainImageViews() { return imageViews; }
-VkPipeline GetGraphicsPipeline() { return graphicsPipeline; }
-uint32_t GetGraphicsQueueFamilyIndex() { return graphicsQueueFamilyIndex; }
-VkCommandPool GetCommandPool() { return commandPool; }
-VkCommandBuffer GetCommandBuffers() { return commandBuffers; }
-void GetImageAvailableSemaphores(VkSemaphore*& outVar) { outVar = imageAvailableSemaphores; }
-void GetRenderFinishedSemaphores(VkSemaphore*& outVar) { outVar = renderFinishedSemaphores; }
-void GetInFlightFences(VkFence*& outVar) { outVar = inFlightFences; }
+inline VkInstance GetInstance() { return instance.instance; }
+inline VkPhysicalDevice GetPhysicalDevice() { return physicalDevice.physical_device; }
+inline VkDevice GetDevice() { return device.device; }
+inline VkSurfaceKHR GetSurface() { return surface; }
+inline VkSwapchainKHR GetSwapchain() { return swapchain.swapchain; }
+inline VkRenderPass GetRenderPass() { return renderPass; }
+// inline vector<VkFramebuffer> GetSwapchainFramebuffers() { return framebuffers; }
+// inline vector<VkImageView> GetSwapchainImageViews() { return imageViews; }
+inline VkPipeline GetGraphicsPipeline() { return graphicsPipeline; }
+inline VkPipelineLayout GetPipelineLayout() { return pipelineLayout; }
+inline uint32_t GetGraphicsQueueFamilyIndex() { return graphicsQueueFamilyIndex; }
+inline VkCommandPool GetCommandPool() { return commandPool; }
+inline void GetCommandBuffers(VkCommandBuffer*& outVar) { outVar = commandBuffers; }
+inline void GetImageAvailableSemaphores(VkSemaphore*& outVar) { outVar = imageAvailableSemaphores; }
+inline void GetRenderFinishedSemaphores(VkSemaphore*& outVar) { outVar = renderFinishedSemaphores; }
+inline void GetInFlightFences(VkFence*& outVar) { outVar = inFlightFences; }
 
 // Functions:
 void CreateGraphicsPipeline();
 void Init();
+void Cleanup();
 
 #endif
