@@ -10,7 +10,7 @@
 
 using namespace std;
 
-vector<char> ReadFile(const string& path)
+inline vector<char> ReadFile(const string& path)
 {
     ifstream file(path, ios::ate | ios::binary);
 

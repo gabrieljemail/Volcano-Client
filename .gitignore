@@ -1,1 +1,4 @@
-lib/*
+lib/
+resources/minecraft/
+build/
+CMakeFiles/

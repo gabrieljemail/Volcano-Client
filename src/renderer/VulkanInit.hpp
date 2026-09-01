@@ -6,6 +6,11 @@
 #include <vector>
 #include <vulkan/vulkan.hpp>
 #include <VkBootstrap.h>
+#include <vk_mem_alloc.h>
+#include "GlobalState.hpp"
+#include "models/AllocatedBuffer.hpp"
+
+using namespace Volcano;
 
 // Setting placeholders:
 constexpr const char* APP_NAME          = "Volcano Client";
@@ -19,6 +24,7 @@ constexpr const uint8_t BUFFER_SIZE     = 2;
 constexpr const uint16_t TARGET_FPS     = 60;
 
 // Global handles:
+struct GLFWwindow;
 inline vkb::Instance instance;
 inline vkb::PhysicalDevice physicalDevice;
 inline vkb::Device device;
@@ -39,6 +45,19 @@ inline VkCommandBuffer commandBuffers[3];
 inline VkSemaphore imageAvailableSemaphores[3];
 inline VkSemaphore renderFinishedSemaphores[3];
 inline VkFence inFlightFences[3];
+inline VmaAllocator vmaAllocator;
+inline VkDescriptorSetLayout cameraSetLayout;
+inline VkDescriptorPool descriptorPool;
+inline VkDescriptorSet cameraSets[3];
+inline AllocatedBuffer cameraUBOs[3];
+inline void* cameraUBOsMapped[3];
+inline std::vector<AllocatedBuffer> allocatedBuffers;
+
+// Depth Buffer:
+inline VkImage depthImage;
+inline VmaAllocation depthImageAllocation;
+inline VkImageView depthImageView;
+inline VkFormat depthFormat;
 
 // Getters:
 inline VkInstance GetInstance() { return instance.instance; }
@@ -60,7 +79,8 @@ inline void GetInFlightFences(VkFence*& outVar) { outVar = inFlightFences; }
 
 // Functions:
 void CreateGraphicsPipeline();
-void Init();
+AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA = false);
+void Init(GlobalState* state);
 void Cleanup();
 
 #endif

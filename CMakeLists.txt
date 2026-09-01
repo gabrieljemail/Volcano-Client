@@ -35,6 +35,7 @@ include_directories(
     # Third party headers
     lib/vk-bootstrap/src
     lib/vulkanmemory/include
+    lib/stb
 )
 
 # -----------------------------------------------------------------------------
@@ -45,6 +46,9 @@ file(GLOB_RECURSE SOURCES "src/*.cpp")
 
 # Add vk-bootstrap.
 list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/lib/vk-bootstrap/src/VkBootstrap.cpp")
+
+# Add VMA.
+list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/lib/vulkanmemory/include/vk_mem_alloc.h")
 
 # -----------------------------------------------------------------------------
 # 5. Executable & Linking

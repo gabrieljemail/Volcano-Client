@@ -4,9 +4,15 @@
 #include <vector>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#define VMA_IMPLEMENTATION
+#include "GlobalState.hpp"
 #include "VulkanInit.hpp"
 #include "RenderThread.hpp"
 #include "../Helpers.hpp"
+#include "models/Mesh.hpp"
+#include "models/CameraUBO.hpp"
+#include "models/PackedVertex.hpp"
+#include "terrain/ChunkMesher.hpp"
 
 using namespace std;
 
@@ -33,6 +39,10 @@ void CreateGraphicsPipeline()
     std::vector<char> vertShaderCode = ReadFile("resources/shaders/terrain.vert.spv");
     std::vector<char> fragShaderCode = ReadFile("resources/shaders/terrain.frag.spv");
 
+    if (vertShaderCode.empty() || fragShaderCode.empty()) {
+        throw std::runtime_error("[ERROR] Failed to read shader files: resources/shaders/terrain.vert.spv or resources/shaders/terrain.frag.spv");
+    }
+
     VkShaderModule vertShaderModule = CreateShaderModule(dev, vertShaderCode);
     VkShaderModule fragShaderModule = CreateShaderModule(dev, fragShaderCode);
 
@@ -41,7 +51,7 @@ void CreateGraphicsPipeline()
     vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
     vertShaderStageInfo.module = vertShaderModule;
-    vertShaderStageInfo.pName = "main"; // Entry point name in GLSL
+    vertShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
     fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -52,14 +62,17 @@ void CreateGraphicsPipeline()
     VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
     // 3. VERTEX INPUT STATE
-    // For the Hello Triangle, positions are hardcoded inside the vertex shader,
-    // so binding & attribute descriptions are 0 for now.
+    // The terrain pipeline's only vertex format is the packed uvec2 chunk mesh
+    // format (see PackedVertex.hpp / terrain.vert), not the generic float Vertex.
+    auto bindingDescription = Volcano::PackedVertex::getBindingDescription();
+    auto attributeDescriptions = Volcano::PackedVertex::getAttributeDescriptions();
+
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.pVertexBindingDescriptions = nullptr;
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
-    vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
     // 4. INPUT ASSEMBLY
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -92,22 +105,36 @@ void CreateGraphicsPipeline()
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_NONE; // TODO: Change this ASAP once you get geometry to render.
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    // The projection matrix flips clip-space Y (p[1][1] *= -1) to account for
+    // Vulkan's top-down NDC convention. That flip mirrors the winding of every
+    // triangle as the rasterizer sees it, so the front-face convention has to
+    // be flipped to match the actual (unflipped) winding baked into the chunk
+    // mesh's vertex order — otherwise front/back faces are swapped, and you
+    // end up seeing through "invisible" near faces into the far interior ones.
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     // 7. SINGLE-PASS SAMPLING (MULTISAMPLING)
-    // 1 sample per pixel = standard single-pass rendering (no MSAA overhead on HD 530)
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.sampleShadingEnable = VK_FALSE;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+    // DEPTH AND STENCIL STATE
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
     // 8. COLOR BLENDING
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | 
-                                          VK_COLOR_COMPONENT_G_BIT | 
-                                          VK_COLOR_COMPONENT_B_BIT | 
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                          VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT |
                                           VK_COLOR_COMPONENT_A_BIT;
     colorBlendAttachment.blendEnable = VK_FALSE; // Direct write for opaque geometry.
 
@@ -118,12 +145,18 @@ void CreateGraphicsPipeline()
     colorBlending.pAttachments = &colorBlendAttachment;
 
     // 9. PIPELINE LAYOUT (Push Constants & Descriptors)
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(glm::mat4);
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 0;
-    pipelineLayoutInfo.pSetLayouts = nullptr;
-    pipelineLayoutInfo.pushConstantRangeCount = 0;
-    pipelineLayoutInfo.pPushConstantRanges = nullptr;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushRange;
+    pipelineLayoutInfo.setLayoutCount = 2;
+    VkDescriptorSetLayout setLayouts[] = { cameraSetLayout, textureSetLayout };
+    pipelineLayoutInfo.pSetLayouts = setLayouts;
 
     if (vkCreatePipelineLayout(dev, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
         throw std::runtime_error("[ERROR] Failed to create pipeline layout.");
@@ -141,7 +174,7 @@ void CreateGraphicsPipeline()
     pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pDepthStencilState = nullptr; // None needed for 2D triangle test
+    pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicStateInfo;
     pipelineInfo.layout = pipelineLayout;
@@ -160,8 +193,26 @@ void CreateGraphicsPipeline()
     std::cout << "[INFO] Graphics pipeline successfully initialized." << std::endl;
 }
 
+// Create a buffer with VMA.
+AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA)
+{
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    allocInfo.flags = isUMA ? VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT : 0;
+
+    AllocatedBuffer result{};
+    vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &result.buffer, &result.allocation, &result.info);
+    allocatedBuffers.push_back(result);
+    return result;
+}
+
 // Main function.
-void Init()
+void Init(GlobalState* state)
 {
     // On Linux, try to use Wayland instead of X11.
     #ifdef __linux__
@@ -194,6 +245,7 @@ void Init()
         exit(6);
         return;
     }
+    state->window = window;
 
     // Make an instance.
     vkb::InstanceBuilder instanceBuilder;
@@ -205,7 +257,7 @@ void Init()
         .require_api_version(1,1,0)
         // .request_validation_layers()
         .build();
-    
+
     if (!instanceReturn)
     {
         cerr << "[ERROR] Failed to create Vulkan instance: " << instanceReturn.error().message() << endl;
@@ -231,7 +283,7 @@ void Init()
     auto physDeviceSelectorReturn = physDeviceSelector
         .set_surface(surface)
         .select(); // TODO: Read settings.json if the user has a preferred device name.
-    
+
     if (!physDeviceSelectorReturn)
     {
         cerr << "[ERROR] No suitable Vulkan devices: " << physDeviceSelectorReturn.error().message() << endl;
@@ -246,7 +298,7 @@ void Init()
     // Get the logical device.
     vkb::DeviceBuilder deviceBuilder{physicalDevice};
     auto deviceBuilderReturn = deviceBuilder.build();
-    
+
     if (!deviceBuilderReturn)
     {
         cerr << "[ERROR] Device creation failed: " << deviceBuilderReturn.error().message() << endl;
@@ -256,6 +308,14 @@ void Init()
     }
     device = deviceBuilderReturn.value();
     cout << "[INFO] Vulkan device initialized." << endl;
+
+    // Set up the VMA allocator.
+    VmaAllocatorCreateInfo allocInfo{};
+    allocInfo.physicalDevice = physicalDevice.physical_device;
+    allocInfo.device = device.device;
+    allocInfo.instance = instance.instance;
+    allocInfo.vulkanApiVersion = instance.api_version;
+    vmaCreateAllocator(&allocInfo, &vmaAllocator);
 
     // Create the swapchain.
     vkb::SwapchainBuilder swapchainBuilder{device, surface};
@@ -285,6 +345,47 @@ void Init()
     // Set swapchainExtent.
     swapchainExtent = swapchain.extent;
 
+    // Create Depth Buffer
+    depthFormat = VK_FORMAT_D32_SFLOAT; // We could find supported format, but D32 is widely supported
+
+    VkImageCreateInfo depthImageInfo{};
+    depthImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    depthImageInfo.imageType = VK_IMAGE_TYPE_2D;
+    depthImageInfo.extent.width = swapchainExtent.width;
+    depthImageInfo.extent.height = swapchainExtent.height;
+    depthImageInfo.extent.depth = 1;
+    depthImageInfo.mipLevels = 1;
+    depthImageInfo.arrayLayers = 1;
+    depthImageInfo.format = depthFormat;
+    depthImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    depthImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthImageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    depthImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo depthAllocInfo{};
+    depthAllocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    depthAllocInfo.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+    if (vmaCreateImage(vmaAllocator, &depthImageInfo, &depthAllocInfo, &depthImage, &depthImageAllocation, nullptr) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create depth image!");
+    }
+
+    VkImageViewCreateInfo depthViewInfo{};
+    depthViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    depthViewInfo.image = depthImage;
+    depthViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    depthViewInfo.format = depthFormat;
+    depthViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthViewInfo.subresourceRange.baseMipLevel = 0;
+    depthViewInfo.subresourceRange.levelCount = 1;
+    depthViewInfo.subresourceRange.baseArrayLayer = 0;
+    depthViewInfo.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(device.device, &depthViewInfo, nullptr, &depthImageView) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create depth image view!");
+    }
+
     // Create image views.
     imageViews.resize(imageCount);
     for (uint32_t i = 0; i < imageCount; i++)
@@ -297,7 +398,7 @@ void Init()
         viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         viewInfo.subresourceRange.levelCount = 1;
         viewInfo.subresourceRange.layerCount = 1;
-        
+
         VkResult createViewResult = vkCreateImageView(device.device, &viewInfo, nullptr, &imageViews[i]);
         if (createViewResult != VK_SUCCESS)
         {
@@ -316,29 +417,44 @@ void Init()
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-    VkAttachmentDescription attachments[] = {colorAttachment};
+    VkAttachmentDescription depthAttachment{};
+    depthAttachment.format = depthFormat;
+    depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription attachments[] = {colorAttachment, depthAttachment};
 
     VkRenderPassCreateInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
+    renderPassInfo.attachmentCount = 2;
     renderPassInfo.pAttachments = attachments;
 
     VkAttachmentReference colorAttachmentRef{};
     colorAttachmentRef.attachment = 0;
     colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+    VkAttachmentReference depthAttachmentRef{};
+    depthAttachmentRef.attachment = 1;
+    depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &colorAttachmentRef;
+    subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
     VkSubpassDependency dependency{};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     dependency.srcAccessMask = 0;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
@@ -355,11 +471,16 @@ void Init()
     framebuffers.resize(imageCount);
     for (uint32_t i = 0; i < imageCount; i++)
     {
+        VkImageView fbAttachments[] = {
+            imageViews[i],
+            depthImageView
+        };
+
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = &imageViews[i];
+        framebufferInfo.attachmentCount = 2;
+        framebufferInfo.pAttachments = fbAttachments;
         framebufferInfo.width = swapchain.extent.width;
         framebufferInfo.height = swapchain.extent.height;
         framebufferInfo.layers = 1;
@@ -371,26 +492,93 @@ void Init()
         }
     }
 
+    // Set up set layout bindings.
+    VkDescriptorSetLayoutBinding cameraBinding{};
+    cameraBinding.binding = 0;
+    cameraBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    cameraBinding.descriptorCount = 1;
+    cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutBinding textureBinding{};
+    textureBinding.binding = 0;
+    textureBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    textureBinding.descriptorCount = 1;
+    textureBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &cameraBinding;
+    vkCreateDescriptorSetLayout(GetDevice(), &layoutInfo, nullptr, &cameraSetLayout);
+
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &textureBinding;
+    vkCreateDescriptorSetLayout(GetDevice(), &layoutInfo, nullptr, &textureSetLayout);
+
+    layoutInfo.setLayoutCount = 2;
+    layoutInfo.pSetLayouts = setLayouts;
+
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = 3;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    VkDescriptorPoolSize poolSizes[] = {
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 }
+    };
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
+    poolInfo.maxSets = 4; // 3 camera sets + 1 texture set
+    vkCreateDescriptorPool(GetDevice(), &poolInfo, nullptr, &descriptorPool);
+
+    for (int i = 0; i < 3; i++)
+    {
+        cameraUBOs[i] = CreateBuffer(sizeof(CameraUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, true);
+        vmaMapMemory(vmaAllocator, cameraUBOs[i].allocation, &cameraUBOsMapped[i]); // stays mapped
+
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &cameraSetLayout;
+        vkAllocateDescriptorSets(GetDevice(), &allocInfo, &cameraSets[i]);
+
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = cameraUBOs[i].buffer;
+        bufferInfo.range = sizeof(CameraUBO);
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = cameraSets[i];
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        write.pBufferInfo = &bufferInfo;
+        vkUpdateDescriptorSets(GetDevice(), 1, &write, 0, nullptr);
+    }
+
     // Create the graphics pipeline.
     CreateGraphicsPipeline();
 
     // Create command pool and command buffers.
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.queueFamilyIndex = graphicsQueueFamilyIndex;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; // Allow re-recording
+    VkCommandPoolCreateInfo cmdPoolInfo{};
+    cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    cmdPoolInfo.queueFamilyIndex = graphicsQueueFamilyIndex;
+    cmdPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; // Allow re-recording
 
-    if (vkCreateCommandPool(device.device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+    if (vkCreateCommandPool(device.device, &cmdPoolInfo, nullptr, &commandPool) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create command pool!");
     }
 
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 3;
+    VkCommandBufferAllocateInfo bufferAllocInfo{};
+    bufferAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    bufferAllocInfo.commandPool = commandPool;
+    bufferAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    bufferAllocInfo.commandBufferCount = 3;
 
-    if (vkAllocateCommandBuffers(device.device, &allocInfo, commandBuffers)) {
+    if (vkAllocateCommandBuffers(device.device, &bufferAllocInfo, commandBuffers)) {
         throw std::runtime_error("Failed to allocate command buffers!");
     }
 
@@ -446,6 +634,25 @@ void Cleanup()
     vkDestroyPipelineLayout(device.device, pipelineLayout, nullptr);
     vkDestroyCommandPool(device.device, commandPool, nullptr);
     vkDestroyRenderPass(device.device, renderPass, nullptr);
+
+    if (depthImageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device.device, depthImageView, nullptr);
+    }
+    if (depthImage != VK_NULL_HANDLE) {
+        vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
+    }
+    for (auto& buf : allocatedBuffers)
+    {
+        vmaDestroyBuffer(vmaAllocator, buf.buffer, buf.allocation);
+    }
+    allocatedBuffers.clear();
+
+    ChunkMesher::Shutdown();
+
+    if (vmaAllocator != VK_NULL_HANDLE) {
+        vmaDestroyAllocator(vmaAllocator);
+        vmaAllocator = VK_NULL_HANDLE;
+    }
 
     // Destroy the bootstrap wrappers.
     if (swapchain.swapchain != VK_NULL_HANDLE) vkb::destroy_swapchain(swapchain);

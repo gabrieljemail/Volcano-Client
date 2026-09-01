@@ -7,7 +7,11 @@
 #include <string>
 #include <variant>
 #include <atomic>
-
+#include <GLFW/glfw3.h>
+#include <glm/gtc/matrix_transform.hpp>
+#include "renderer/models/Mesh.hpp"
+#include "InputHandler.hpp"
+#include "Player.hpp"
 
 namespace Volcano {
 
@@ -16,27 +20,20 @@ struct Resolution {
     uint16_t y;
 };
 
-struct InputState {
-    // The camera yaw, usually controlled by the mouse or a gamepad collective input.
-    float cameraX = 0.0;
-    // The camera pitch, usually controlled by the mouse or a gamepad collective input.
-    float cameraY = 0.0;
-
-    // Keys currently pressed.
-    std::vector<uint32_t> keysDown();
-    // Keys pressed this frame.
-    std::vector<uint32_t> keysPressed();
-};
-
 struct GlobalState {
     std::map<std::string, std::variant<uint8_t, uint16_t, uint32_t, const char*>*> settings;
-    InputState input;
+    InputHandler* input;
+    Player* player;
+    GLFWwindow* window;
 
     // Current state:
     bool shouldClose{false};
     Resolution resolution;
     uint16_t targetFPS{60};
     uint16_t currentFPS{0};
+    std::vector<Mesh> renderList = {};
+
+    glm::vec3 cameraPosition{0.0f, 0.0f, 5.0f};
 
     // Load settings.
     void LoadSettings()

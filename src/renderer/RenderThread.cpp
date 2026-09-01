@@ -1,9 +1,13 @@
 #include <iostream>
 #include <chrono>
+#include <array>
+#include <algorithm>
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
 #include "RenderThread.hpp"
 #include "VulkanInit.hpp"
+#include "models/CameraUBO.hpp"
+#include "models/Mesh.hpp"
 
 using namespace std;
 
@@ -93,7 +97,11 @@ void RenderThread::PollInputs()
     }
 
     // Process inputs.
-    // TODO: Do something with inputs.
+    state->input->UpdateAxes();
+    // Mouse:
+    float dx = state->input->GetAxis("Camera.X");
+    float dy = state->input->GetAxis("Camera.Y");
+    state->player->camera.ApplyMouseDelta(dx, dy, 1.0f);
 }
 
 void RenderThread::DrawFrame()
@@ -103,7 +111,6 @@ void RenderThread::DrawFrame()
 
     AcquireImage();
     RecordAndSubmitFrame();
-    vkWaitForFences(GetDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
     PresentFrame();
 
     auto workEnd = chrono::steady_clock::now();
@@ -154,9 +161,12 @@ void RenderThread::RecordAndSubmitFrame()
     renderPassInfo.framebuffer = framebuffers[imageIndex];
     renderPassInfo.renderArea.extent = swapchainExtent;
 
-    VkClearValue clearColor = {{{0.0f, 0.0f, 1.0f, 1.0f}}};
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
+    std::array<VkClearValue, 2> clearValues{};
+    clearValues[0].color = {{0.52941f, 0.80784f, 0.92157f, 1.00000f}}; // Sky blue.
+    clearValues[1].depthStencil = {1.0f, 0};
+
+    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+    renderPassInfo.pClearValues = clearValues.data();
 
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
@@ -176,8 +186,43 @@ void RenderThread::RecordAndSubmitFrame()
     scissor.extent = swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    // TODO: Draw something real.
-    vkCmdDraw(cmd, 3, 1, 0, 0);
+    // Set up camera UBOs.
+    // We do this before mesh binding to support culling in the future.
+    CameraUBO ubo{
+        state->player->camera.GetViewMatrix(state->player->GetPosition()),
+        [&] {
+            float aspect = static_cast<float>(swapchainExtent.width) / swapchainExtent.height;
+            glm::mat4 p = glm::perspective(glm::radians(70.0f), aspect, 0.05f, 1000.0f);
+            p[1][1] *= -1.0f;
+            return p;
+        }()
+    };
+    memcpy(cameraUBOsMapped[currentFrame], &ubo, sizeof(ubo));
+
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
+        0, 1, &cameraSets[currentFrame], 0, nullptr);
+
+    // Bind texture descriptor set.
+    VkDescriptorSet sets[] = { cameraSets[currentFrame], textureSet };
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
+
+    // Bind each mesh.
+    for (const Mesh& mesh : state->renderList)
+    {
+        VkDeviceSize offsets[] = {mesh.vertexOffset};
+        vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer, offsets);
+
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mesh.modelMatrix);
+
+        if (mesh.indexCount > 0)
+        {
+            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+        } else
+        {
+            vkCmdDraw(cmd, mesh.vertexCount, 1, 0, 0);
+        }
+    }
 
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
@@ -214,6 +259,10 @@ void RenderThread::PresentFrame()
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
+    VkSemaphore waitSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = waitSemaphores;
+
     VkSwapchainKHR swapchains[] = {GetSwapchain()};
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapchains;
@@ -223,7 +272,7 @@ void RenderThread::PresentFrame()
     vkQueuePresentKHR(presentQueue, &presentInfo);
 
     // Move to the next frame slot.
-    currentFrame = (currentFrame + 1) % maxFramesInFlight; // 0 -> 1 -> 2 -> 0.
+    currentFrame = (currentFrame + 1) % maxFramesInFlight;
 }
 
 }
