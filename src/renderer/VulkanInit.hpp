@@ -52,6 +52,9 @@ inline VkDescriptorSet cameraSets[3];
 inline AllocatedBuffer cameraUBOs[3];
 inline void* cameraUBOsMapped[3];
 inline std::vector<AllocatedBuffer> allocatedBuffers;
+inline std::vector<AllocatedImage> allocatedImages;
+inline VkDescriptorSetLayout textureSetLayout;
+inline VkDescriptorSet textureSet;
 
 // Depth Buffer:
 inline VkImage depthImage;
@@ -76,11 +79,18 @@ inline void GetCommandBuffers(VkCommandBuffer*& outVar) { outVar = commandBuffer
 inline void GetImageAvailableSemaphores(VkSemaphore*& outVar) { outVar = imageAvailableSemaphores; }
 inline void GetRenderFinishedSemaphores(VkSemaphore*& outVar) { outVar = renderFinishedSemaphores; }
 inline void GetInFlightFences(VkFence*& outVar) { outVar = inFlightFences; }
+inline VkDescriptorSet GetTextureSet() { return textureSet; }
 
 // Functions:
 void CreateGraphicsPipeline();
 AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA = false);
 void Init(GlobalState* state);
 void Cleanup();
+VkRenderPass GetRenderPass();
+
+// Texture helper functions:
+VkCommandBuffer BeginOneShotCommands();
+void EndOneShotCommands(VkCommandBuffer cmd);
+void TransitionImageLayout(VkCommandBuffer cmd, VkImage image, uint32_t baseMipLevel, uint32_t mipLevels, uint32_t baseArrayLayer, uint32_t layerCount, VkImageLayout oldLayout, VkImageLayout newLayout);
 
 #endif

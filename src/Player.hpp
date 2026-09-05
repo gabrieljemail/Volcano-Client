@@ -30,11 +30,9 @@ public:
     }
 
 private:
-    // Spawn just outside the test chunk (which occupies x:[0,16), z:[0,16), y:[0,4)),
-    // at block height, facing +Z toward it. Mouse-look isn't wired up yet (yaw/pitch
-    // stay 0), so this position/orientation is chosen so the default forward view
-    // actually looks straight at the test geometry.
-    std::atomic<float> x{8.0f}, y{2.0f}, z{-5.0f};
+    // Spawn position in center of 4-chunk grid (chunks 0-1 in both axes)
+    // Each chunk is 16 blocks, so center is at (16, 5, 16) to see all terrain
+    std::atomic<float> x{16.0f}, y{5.0f}, z{16.0f};
 };
 
 } // namespace Volcano

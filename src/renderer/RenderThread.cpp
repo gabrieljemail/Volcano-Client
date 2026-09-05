@@ -8,10 +8,13 @@
 #include "VulkanInit.hpp"
 #include "models/CameraUBO.hpp"
 #include "models/Mesh.hpp"
+#include "gui/GUIController.hpp"
 
 using namespace std;
 
 namespace Volcano {
+
+constexpr float CAMERA_FOV = 100.0f;
 
 RenderThread::RenderThread(Volcano::GlobalState* globalState) : state(globalState)
 {
@@ -22,6 +25,8 @@ RenderThread::RenderThread(Volcano::GlobalState* globalState) : state(globalStat
     {
         targetFrameTime = 1000.0 / 60.0;
     }
+
+    lastFrameTime = chrono::steady_clock::now();
 }
 
 RenderThread::~RenderThread()
@@ -43,6 +48,9 @@ void RenderThread::ThreadEntry(stop_token stopToken)
     } catch (const exception& e) {
         cerr << "[ERROR] Render thread crashed during startup: " << e.what() << endl;
     }
+
+    // Cleanup GUI controller
+    GUIController::Shutdown();
 }
 
 void RenderThread::RenderLoop(stop_token stopToken)
@@ -57,7 +65,6 @@ void RenderThread::RenderLoop(stop_token stopToken)
         DrawFrame();
     }
 
-    Cleanup();
     // When the render loop exits for some reason, tell the main thread to shut down.
     state->shouldClose = true;
     // And then continue to the destructor to join the thread.
@@ -91,14 +98,15 @@ void RenderThread::WaitForTargetFrame()
 void RenderThread::PollInputs()
 {
     // Bind the close button (and Alt+F4).
-    if (glfwWindowShouldClose(window))
+    if (glfwWindowShouldClose(state->window))
     {
         state->shouldClose = true;
     }
 
     // Process inputs.
-    state->input->UpdateAxes();
-    // Mouse:
+    state->input->ProcessFrame();
+
+    // Just apply the camera deltas (input processing happens in main thread)
     float dx = state->input->GetAxis("Camera.X");
     float dy = state->input->GetAxis("Camera.Y");
     state->player->camera.ApplyMouseDelta(dx, dy, 1.0f);
@@ -109,9 +117,19 @@ void RenderThread::DrawFrame()
     // Time the current frame.
     auto workStart = chrono::steady_clock::now();
 
-    AcquireImage();
-    RecordAndSubmitFrame();
-    PresentFrame();
+    // Calculate delta time for FPS tracking (from previous frame)
+    float deltaTime = chrono::duration<float>(workStart - lastFrameTime).count();
+    lastFrameTime = workStart;
+
+    // Update GUI with new frame
+    GUIController::NewFrame();
+    GUIController::Update(deltaTime);
+
+    if (AcquireImage())
+    {
+        RecordAndSubmitFrame();
+        PresentFrame();
+    }
 
     auto workEnd = chrono::steady_clock::now();
 
@@ -121,7 +139,7 @@ void RenderThread::DrawFrame()
     nextFrameTarget += std::chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
 }
 
-void RenderThread::AcquireImage()
+bool RenderThread::AcquireImage()
 {
     // Have the CPU wait for fences.
     vkWaitForFences(GetDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
@@ -136,13 +154,25 @@ void RenderThread::AcquireImage()
         &imageIndex
     );
 
-    if (result != VK_SUCCESS)
+    // The swapchain is stale (e.g. surface no longer matches, minimized window
+    // on some platforms) — skip this frame instead of crashing. There's no
+    // swapchain recreation path yet since the window is currently non-resizable,
+    // so just wait for the next frame to try again.
+    if (result == VK_ERROR_OUT_OF_DATE_KHR)
+    {
+        return false;
+    }
+
+    // Suboptimal still yields a presentable image; only VK_SUCCESS and
+    // VK_SUBOPTIMAL_KHR are non-fatal per the Vulkan spec.
+    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
     {
         throw runtime_error("[ERROR] Failed to acquire swapchain image!");
     }
 
     // Reset the fence.
     vkResetFences(GetDevice(), 1, &inFlightFences[currentFrame]);
+    return true;
 }
 
 void RenderThread::RecordAndSubmitFrame()
@@ -192,15 +222,12 @@ void RenderThread::RecordAndSubmitFrame()
         state->player->camera.GetViewMatrix(state->player->GetPosition()),
         [&] {
             float aspect = static_cast<float>(swapchainExtent.width) / swapchainExtent.height;
-            glm::mat4 p = glm::perspective(glm::radians(70.0f), aspect, 0.05f, 1000.0f);
+            glm::mat4 p = glm::perspective(glm::radians(CAMERA_FOV), aspect, 0.05f, 1000.0f);
             p[1][1] *= -1.0f;
             return p;
         }()
     };
     memcpy(cameraUBOsMapped[currentFrame], &ubo, sizeof(ubo));
-
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout,
-        0, 1, &cameraSets[currentFrame], 0, nullptr);
 
     // Bind texture descriptor set.
     VkDescriptorSet sets[] = { cameraSets[currentFrame], textureSet };
@@ -223,6 +250,9 @@ void RenderThread::RecordAndSubmitFrame()
             vkCmdDraw(cmd, mesh.vertexCount, 1, 0, 0);
         }
     }
+
+    // Render ImGui GUI
+    GUIController::Render(cmd);
 
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
@@ -273,6 +303,12 @@ void RenderThread::PresentFrame()
 
     // Move to the next frame slot.
     currentFrame = (currentFrame + 1) % maxFramesInFlight;
+}
+
+void RenderThread::Cleanup()
+{
+    // Render thread cleanup - currently no specific resources to clean up
+    // The main Vulkan resources are cleaned up in VulkanInit::Cleanup()
 }
 
 }

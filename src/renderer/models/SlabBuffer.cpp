@@ -33,8 +33,13 @@ bool SlabBuffer::Allocate(const void* data, VkDeviceSize size, VkDeviceSize alig
         return true;
     }
 
+    // Division-based rounding: alignment (e.g. sizeof(PackedVertex) == 12) is
+    // not always a power of two, so the classic `& ~(alignment - 1)` bitmask
+    // trick doesn't round up correctly here — it silently produces offsets
+    // that are neither a multiple of `alignment` nor even always divisible
+    // by it, since that trick is only valid for power-of-two alignments.
     VkDeviceSize alignedOffset = alignment > 0
-        ? (cursor + alignment - 1) & ~(alignment - 1)
+        ? ((cursor + alignment - 1) / alignment) * alignment
         : cursor;
 
     if (alignedOffset + size > capacity) {

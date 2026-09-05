@@ -1,3 +1,5 @@
+#version 450
+
 layout(set = 1, binding = 0) uniform sampler2DArray textureArray;
 
 layout(location = 0) in vec2 fragUV;

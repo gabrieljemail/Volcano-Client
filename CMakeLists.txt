@@ -36,6 +36,8 @@ include_directories(
     lib/vk-bootstrap/src
     lib/vulkanmemory/include
     lib/stb
+    lib/imgui
+    lib/imgui/backends
 )
 
 # -----------------------------------------------------------------------------
@@ -49,6 +51,17 @@ list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/lib/vk-bootstrap/src/VkBootstrap.cpp")
 
 # Add VMA.
 list(APPEND SOURCES "${CMAKE_SOURCE_DIR}/lib/vulkanmemory/include/vk_mem_alloc.h")
+
+# Add ImGui core and backends
+list(APPEND SOURCES 
+    "${CMAKE_SOURCE_DIR}/lib/imgui/imgui.cpp"
+    "${CMAKE_SOURCE_DIR}/lib/imgui/imgui_demo.cpp"
+    "${CMAKE_SOURCE_DIR}/lib/imgui/imgui_draw.cpp"
+    "${CMAKE_SOURCE_DIR}/lib/imgui/imgui_tables.cpp"
+    "${CMAKE_SOURCE_DIR}/lib/imgui/imgui_widgets.cpp"
+    "${CMAKE_SOURCE_DIR}/lib/imgui/backends/imgui_impl_glfw.cpp"
+    "${CMAKE_SOURCE_DIR}/lib/imgui/backends/imgui_impl_vulkan.cpp"
+)
 
 # -----------------------------------------------------------------------------
 # 5. Executable & Linking

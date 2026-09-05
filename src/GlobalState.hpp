@@ -1,4 +1,5 @@
 #pragma once
+#include "models/GUIWindow.hpp"
 #ifndef GLOBAL_STATE_H
 #define GLOBAL_STATE_H
 
@@ -10,6 +11,7 @@
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include "renderer/models/Mesh.hpp"
+#include "renderer/gui/models/GUIWindow.hpp"
 #include "InputHandler.hpp"
 #include "Player.hpp"
 

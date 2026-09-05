@@ -44,16 +44,45 @@ static const glm::vec3 voxelVertices[6][4] = {
 };
 
 // Corner UV per vertex, matching the winding order above (0,0)-(1,0)-(1,1)-(0,1).
-static const uint8_t uvCorners[4][2] = { {0,0}, {1,0}, {1,1}, {0,1} };
+// Values are in 0-255 range for 8-bit precision in packed vertex format.
+static const uint8_t uvCorners[4][2] = { {0,0}, {255,0}, {255,255}, {0,255} };
 static const uint32_t voxelIndices[6] = { 0, 1, 2, 2, 3, 0 };
 
-// Placeholder: block palette index, NOT a real texture atlas layer yet.
-// Fragment shader will switch on this to pick a solid color.
-static uint16_t GetPaletteIndex(BlockType type) {
-    return static_cast<uint16_t>(type);
+// Maps a block type (and, for blocks whose faces differ, which face is being
+// meshed) to the resource-pack texture name, then resolves that name to its
+// array layer via the TextureManager. The array layer for a texture is
+// assigned by load order (see TextureManager::LoadResourcePack), which has no
+// relation to the BlockType enum's numeric value, so the two must never be
+// conflated the way this used to (using `type` directly as the layer index).
+static uint16_t GetTextureLayer(BlockType type, int face, const TextureManager& textureManager) {
+    const char* name = "stone";
+
+    switch (type) {
+        case BlockType::Stone:
+            name = "stone";
+            break;
+        case BlockType::Dirt:
+            name = "dirt";
+            break;
+        case BlockType::Grass:
+            if (face == 0) name = "grass_block_top";
+            else if (face == 1) name = "dirt";
+            else name = "grass_block_side";
+            break;
+        case BlockType::Wood:
+            name = (face == 0 || face == 1) ? "oak_log_top" : "oak_log";
+            break;
+        case BlockType::Leaves:
+            name = "oak_leaves";
+            break;
+        default:
+            break;
+    }
+
+    return textureManager.GetLayerIndex(name);
 }
 
-Mesh ChunkMesher::MeshChunk(const Chunk& chunk) {
+Mesh ChunkMesher::MeshChunk(const Chunk& chunk, const TextureManager& textureManager) {
     std::vector<PackedVertex> vertices;
     std::vector<uint32_t> indices;
 
@@ -62,8 +91,6 @@ Mesh ChunkMesher::MeshChunk(const Chunk& chunk) {
             for (int x = 0; x < CHUNK_SIZE_X; x++) {
                 Block block = chunk.getBlock(x, y, z);
                 if (!block.isOpaque()) continue;
-
-                uint16_t palette = GetPaletteIndex(block.type);
 
                 struct Dir { int x, y, z, face; };
                 Dir dirs[6] = {
@@ -76,8 +103,10 @@ Mesh ChunkMesher::MeshChunk(const Chunk& chunk) {
                     Block neighbor = chunk.getBlock(x + dir.x, y + dir.y, z + dir.z);
                     if (neighbor.isOpaque()) continue;
 
+                    uint16_t textureLayer = GetTextureLayer(block.type, dir.face, textureManager);
+
                     // Same faux-lighting scheme as before, now packed into skyLight (0-15).
-                    float light = 12.0f; // TODO: Don't hardcode this.
+                    float light = 1.0f; // Up: full brightness (direct sky exposure). TODO: Don't hardcode this.
                     if (dir.face == 1) light = 0.5f;
                     else if (dir.face == 2 || dir.face == 3) light = 0.8f;
                     else if (dir.face == 4 || dir.face == 5) light = 0.6f;
@@ -95,7 +124,7 @@ Mesh ChunkMesher::MeshChunk(const Chunk& chunk) {
                             static_cast<uint8_t>(dir.face), // normalIndex, 0-5 fits in 3 bits
                             0,                     // AO — not computed yet
                             uvCorners[i][0], uvCorners[i][1],
-                            palette,
+                            textureLayer,
                             0,                     // blockLight — not tracked yet
                             skyLight
                         ));

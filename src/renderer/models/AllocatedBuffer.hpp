@@ -13,6 +13,12 @@ struct AllocatedBuffer {
     VmaAllocationInfo info{};
 };
 
+struct AllocatedImage {
+    VkImage image;
+    VmaAllocation allocation;
+    VmaAllocationInfo info{};
+};
+
 } // namespace Volcano
 
 #endif

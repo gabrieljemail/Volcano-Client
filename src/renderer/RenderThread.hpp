@@ -7,6 +7,7 @@
 #include <stop_token>
 #include <memory>
 #include "../GlobalState.hpp"
+#include "gui/GUIController.hpp"
 
 using namespace std;
 
@@ -30,15 +31,19 @@ private:
     uint32_t currentFrame = 0;
     uint32_t imageIndex = 0;
     uint32_t maxFramesInFlight = 2;
+    
+    // FPS tracking
+    chrono::steady_clock::time_point lastFrameTime;
 
     void ThreadEntry(stop_token stopToken);
     void RenderLoop(stop_token stopToken);
     void WaitForTargetFrame();
     void PollInputs();
     void DrawFrame();
-    void AcquireImage();
+    bool AcquireImage();
     void RecordAndSubmitFrame();
     void PresentFrame();
+    void Cleanup();
 };
 
 }; // namespace Volcano

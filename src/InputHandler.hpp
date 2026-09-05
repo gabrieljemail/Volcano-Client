@@ -57,7 +57,7 @@ public:
         glfwSetWindowUserPointer(window, this);
         glfwSetKeyCallback(window, KeyCallback);
         glfwSetCursorPosCallback(window, CursorPosCallback);
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        // glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     }
 
     void ProcessFrame()
@@ -66,8 +66,6 @@ public:
         state.keysReleasedThisFrame.reset();
         mouseDeltaX = 0.0;
         mouseDeltaY = 0.0;
-
-        glfwPollEvents(); // callbacks fire synchronously within this call
 
         UpdateAxes();
     }
@@ -154,6 +152,9 @@ private:
     static void CursorPosCallback(GLFWwindow* win, double xpos, double ypos)
     {
         auto* self = static_cast<InputHandler*>(glfwGetWindowUserPointer(win));
+        #ifdef _DEBUG
+            if (!self) throw std::runtime_error("[ERROR] Failed to get self (InputHandler) instance.");
+        #endif
         if (!self) return;
 
         if (self->firstMouseEvent)
