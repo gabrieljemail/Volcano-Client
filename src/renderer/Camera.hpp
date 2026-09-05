@@ -21,6 +21,10 @@ public:
         pitch.store(newPitch, std::memory_order_relaxed);
     }
 
+    // Yaw only (no pitch): the horizontal-plane heading used to project
+    // WASD-style movement input into world-space forward/right vectors.
+    float GetYaw() const { return yaw.load(std::memory_order_relaxed); }
+
     glm::vec3 GetEyePosition(glm::vec3 playerFeetPosition) const
     {
         return playerFeetPosition + eyeOffset;

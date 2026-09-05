@@ -57,17 +57,18 @@ public:
         glfwSetWindowUserPointer(window, this);
         glfwSetKeyCallback(window, KeyCallback);
         glfwSetCursorPosCallback(window, CursorPosCallback);
-        // glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     }
 
     void ProcessFrame()
     {
         state.keysPressedThisFrame.reset();
         state.keysReleasedThisFrame.reset();
+
+        UpdateAxes(); // Reads mouseDeltaX/Y, so this must run before they're cleared below.
+
         mouseDeltaX = 0.0;
         mouseDeltaY = 0.0;
-
-        UpdateAxes();
     }
 
     void RegisterAction(const std::string& name, InputActionTriggerType triggerType,
@@ -120,6 +121,20 @@ public:
         auto it = axes.find(std::string(name));
         if (it == axes.end()) return 0.0f;
         return it->second.value;
+    }
+
+    // Raw key queries, for one-off bindings (e.g. Esc closing a Screen)
+    // that don't warrant registering a named action.
+    bool IsKeyDown(int key) const
+    {
+        if (key < 0 || static_cast<size_t>(key) >= MAX_KEYS) return false;
+        return state.keysDown[key];
+    }
+
+    bool IsKeyPressed(int key) const
+    {
+        if (key < 0 || static_cast<size_t>(key) >= MAX_KEYS) return false;
+        return state.keysPressedThisFrame[key];
     }
 
 private:
@@ -186,10 +201,10 @@ private:
                     break;
                 }
                 case AxisSourceType::MouseX:
-                    axis.value = static_cast<float>(mouseDeltaX) * axis.sensitivity;
+                    axis.value = static_cast<float>(mouseDeltaX) * -axis.sensitivity;
                     break;
                 case AxisSourceType::MouseY:
-                    axis.value = static_cast<float>(mouseDeltaY) * axis.sensitivity;
+                    axis.value = static_cast<float>(mouseDeltaY) * -axis.sensitivity;
                     break;
             }
         }

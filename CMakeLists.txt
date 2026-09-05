@@ -20,6 +20,7 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=lld")
 find_package(Vulkan REQUIRED)
 find_package(glfw3 REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(OpenSSL REQUIRED) # libcrypto: MD5 for offline-mode UUIDs, later AES/RSA for encryption
 # GLM and ASIO are header-only; we just need to ensure the paths are known
 
 # -----------------------------------------------------------------------------
@@ -78,11 +79,12 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     -ffast-math       # Faster floating point math (fine for games)
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE 
-    Vulkan::Vulkan 
-    glfw 
-    ZLIB::ZLIB 
-    pthread 
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    Vulkan::Vulkan
+    glfw
+    ZLIB::ZLIB
+    OpenSSL::Crypto
+    pthread
     dl
 )
 

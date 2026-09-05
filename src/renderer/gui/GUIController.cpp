@@ -10,7 +10,9 @@
 namespace Volcano {
 
 GlobalState* GUIController::state = nullptr;
+GLFWwindow* GUIController::windowHandle = nullptr;
 std::vector<GUI::GUIWindow*> GUIController::windows = {};
+GUI::Screen* GUIController::activeScreen = nullptr;
 ImGuiVulkanContext GUIController::imguiContext;
 bool GUIController::initialized = false;
 float GUIController::fps = 0.0f;
@@ -23,12 +25,23 @@ GUI::GUIComponent* GUIController::debugText = nullptr;
 void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState)
 {
     state = globalState;
+    windowHandle = window;
 
     // Initialize ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+    // The default font (ProggyClean) is a hand-drawn bitmap font that's
+    // deliberately not anti-aliased. Swap in a real TrueType font — its
+    // glyphs are rasterized with actual alpha-coverage antialiasing — so
+    // menu/HUD text doesn't look jagged. This only affects the font atlas,
+    // not the world renderer's pipeline/render pass.
+    ImFontConfig fontConfig;
+    fontConfig.OversampleH = 2;
+    fontConfig.OversampleV = 2;
+    io.Fonts->AddFontFromFileTTF("resources/fonts/DroidSans.ttf", 16.0f, &fontConfig);
 
     // Initialize ImGui for GLFW
     ImGui_ImplGlfw_InitForVulkan(window, true);
@@ -74,6 +87,12 @@ void GUIController::Update(float deltaTime)
 {
     if (!initialized) return;
 
+    // Esc closes whatever screen is open, same as Minecraft's menus.
+    if (activeScreen != nullptr && activeScreen->closable && state->input->IsKeyPressed(GLFW_KEY_ESCAPE))
+    {
+        CloseScreen();
+    }
+
     // FPS calculation
     frameCount++;
     fpsTimer += deltaTime;
@@ -89,7 +108,16 @@ void GUIController::Update(float deltaTime)
         // std::cout << "[DEBUG] FPS: " << fps << " | Frame Time: " << frameTime << "ms" << std::endl;
 
         // Update debug window text.
-        if (debugText) debugText->SetLabel("FPS: " + std::to_string(fps) + " | Frame Time: " + std::to_string(frameTime) + "ms");
+        if (debugText)
+        {
+            float mouseX = state->input->GetAxis("Camera.X");
+            float mouseY = state->input->GetAxis("Camera.Y");
+            debugText->SetLabel(
+                "FPS: " + std::to_string(fps) +
+                "\nFrame Time: " + std::to_string(frameTime) + "ms" +
+                "\nMouse X: " + std::to_string(mouseX) +
+                "\nMouse Y: " + std::to_string(mouseY));
+        }
     }
 }
 
@@ -113,49 +141,105 @@ void GUIController::Render(VkCommandBuffer commandBuffer)
     ImGui::Text("Mouse Input Y: %.4f px", state->input->GetAxis("Camera.Y"));
     */
 
-    // Recursively render UI components.
-    for (GUI::GUIWindow* window : windows)
+    // A screen (e.g. the connect screen) takes over the whole frame — it
+    // hides every other window, including the debug HUD, while it's open.
+    if (activeScreen != nullptr)
     {
-        // Avoid SIGSEGV by skipping windows with empty names.
-        // Satisfies an assertion in ImGui::Begin at 0x10000000e.
-        if (window == nullptr) continue;
-        if (window->name.empty()) continue;
-
-        ImGui::SetNextWindowPos(ImVec2(window->positionX, window->positionY), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(window->sizeX, window->sizeY), ImGuiCond_Always);
-        ImGui::Begin(window->name.c_str(), nullptr,
-            ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoTitleBar |
-            ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoCollapse);
-
-        for (GUI::GUIComponent* component : window->components)
+        RenderScreen(*activeScreen);
+    }
+    else
+    {
+        // Recursively render UI components.
+        for (GUI::GUIWindow* window : windows)
         {
-            switch (component->GetType())
-            {
-                default:
-                case GUI::GUIComponentType::TEXT: {
-                    ImGui::Text("%s", component->GetLabel().c_str());
-                    break;
-                }
-                case GUI::GUIComponentType::BUTTON: {
-                    if (ImGui::Button(component->GetLabel().c_str()))
-                    {
-                        // reinterpret_cast<GUI::Button>(component)->Click();
-                        component->Click();
-                        std::cout << "[DEBUG] Button named '" << component->GetLabel() << "' clicked." << std::endl;
-                    }
-                    break;
-                }
-            }
-        }
+            // Avoid SIGSEGV by skipping windows with empty names.
+            // Satisfies an assertion in ImGui::Begin at 0x10000000e.
+            if (window == nullptr) continue;
+            if (window->name.empty()) continue;
 
-        ImGui::End();
+            ImGui::SetNextWindowPos(ImVec2(window->positionX, window->positionY), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(window->sizeX, window->sizeY), ImGuiCond_Always);
+            ImGui::Begin(window->name.c_str(), nullptr,
+                ImGuiWindowFlags_AlwaysAutoResize |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoCollapse);
+
+            for (GUI::GUIComponent* component : window->components)
+            {
+                RenderComponent(component);
+            }
+
+            ImGui::End();
+        }
     }
 
     ImGui::Render();
     ImGuiVulkan::RenderDrawData(imguiContext, commandBuffer);
+}
+
+// Render a single component the same way regardless of whether it lives in
+// a HUD window or a fullscreen Screen.
+void GUIController::RenderComponent(GUI::GUIComponent* component)
+{
+    if (component == nullptr || !component->IsVisible()) return;
+
+    switch (component->GetType())
+    {
+        default:
+        case GUI::GUIComponentType::TEXT: {
+            ImGui::Text("%s", component->GetLabel().c_str());
+            break;
+        }
+        case GUI::GUIComponentType::BUTTON: {
+            if (ImGui::Button(component->GetLabel().c_str(), ImVec2(240.0f, 0.0f)))
+            {
+                component->Click();
+                std::cout << "[DEBUG] Button named '" << component->GetLabel() << "' clicked." << std::endl;
+            }
+            break;
+        }
+        case GUI::GUIComponentType::INPUT: {
+            char* buffer = component->GetTextBuffer();
+            if (buffer != nullptr)
+            {
+                ImGui::SetNextItemWidth(240.0f);
+                ImGui::InputText(component->GetLabel().c_str(), buffer, component->GetTextBufferCapacity());
+            }
+            break;
+        }
+    }
+}
+
+// Draw the active Screen fullscreen, title first, then its components
+// stacked and centered — the ImGui equivalent of Minecraft's GuiScreen.
+void GUIController::RenderScreen(GUI::Screen& screen)
+{
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)), ImGuiCond_Always);
+    ImGui::Begin("##screen", nullptr,
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    ImVec2 titleSize = ImGui::CalcTextSize(screen.title.c_str());
+    ImGui::SetCursorPos(ImVec2((ImGui::GetWindowWidth() - titleSize.x) * 0.5f, 24.0f));
+    ImGui::Text("%s", screen.title.c_str());
+
+    ImGui::Dummy(ImVec2(0.0f, 16.0f));
+
+    constexpr float contentWidth = 240.0f;
+    for (GUI::GUIComponent* component : screen.components)
+    {
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - contentWidth) * 0.5f);
+        RenderComponent(component);
+    }
+
+    ImGui::End();
 }
 
 // Create a new GUI window.
@@ -214,6 +298,37 @@ GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, WindowAlign
 
     windows.push_back(window);
     return window;
+}
+
+// Create a fullscreen menu screen. Not shown until passed to OpenScreen.
+GUI::Screen* GUIController::CreateScreen(const std::string& title, bool closable)
+{
+    GUI::Screen* screen = new GUI::Screen{title};
+    screen->components = {};
+    screen->closable = closable;
+    return screen;
+}
+
+// Show a screen fullscreen, hiding the HUD and releasing the mouse cursor
+// so ImGui (rather than the fly-cam) drives it.
+void GUIController::OpenScreen(GUI::Screen* screen)
+{
+    activeScreen = screen;
+    if (windowHandle != nullptr)
+    {
+        glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+}
+
+// Close whatever screen is open, restoring the HUD and re-capturing the
+// mouse cursor for the fly-cam.
+void GUIController::CloseScreen()
+{
+    activeScreen = nullptr;
+    if (windowHandle != nullptr)
+    {
+        glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    }
 }
 
 } // namespace Volcano

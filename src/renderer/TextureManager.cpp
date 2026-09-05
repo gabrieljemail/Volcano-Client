@@ -32,7 +32,7 @@ void TextureManager::CreateArrayImage(uint32_t layerCount)
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.arrayLayers = layerCount; // ADD THIS — this is what was missing
+    imageInfo.arrayLayers = layerCount;
 
     VmaAllocationCreateInfo allocInfo{};
     allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;

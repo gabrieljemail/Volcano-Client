@@ -14,6 +14,7 @@ layout(location = 0) in uvec3 packedData;
 layout(location = 0) out vec2 fragUV;
 layout(location = 1) flat out uint fragLayer;
 layout(location = 2) out float fragLight;
+layout(location = 3) flat out uint fragBiomeTinted;
 
 void main() {
     uint word0 = packedData.x;
@@ -24,7 +25,10 @@ void main() {
     float x = float(bitfieldExtract(word0, 0, 6));
     float y = float(bitfieldExtract(word0, 6, 6));
     float z = float(bitfieldExtract(word0, 12, 6));
-    
+
+    // Extract biome-tint flag (see BiomeColors.hpp for the placeholder color).
+    fragBiomeTinted = bitfieldExtract(word0, 23, 1);
+
     // Extract lighting
     uint blockLight = bitfieldExtract(word1, 16, 4);
     uint skyLight   = bitfieldExtract(word1, 20, 4);

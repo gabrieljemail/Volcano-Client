@@ -23,6 +23,10 @@ enum ButtonHoverState {
 
 class Button : public GUI::GUIComponent {
 public:
+    explicit Button(const std::string& label, ButtonPriority buttonPriority = ButtonPriority::NORMAL)
+        : GUIComponent(GUIComponentType::BUTTON, label), priority(buttonPriority), hoverState(ButtonHoverState::NONE)
+    {}
+
     virtual void AddClickHandler(std::function<void()>* callback) override { clickHandlers.push_back(callback); }
     virtual void RemoveClickHandler(std::function<void()>* callback) override { std::erase(clickHandlers, callback); }
     void SetHoverState(ButtonHoverState newHoverState) { hoverState = newHoverState; }

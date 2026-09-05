@@ -42,6 +42,12 @@ public:
     // virtual void SetHoverState(ButtonHoverState newHoverState) {}
     virtual void Click() {}
 
+    // Overridden by text-editable components (e.g. TextInput) so the
+    // GUIController can render them generically without knowing the
+    // concrete component type.
+    virtual char* GetTextBuffer() { return nullptr; }
+    virtual size_t GetTextBufferCapacity() { return 0; }
+
 private:
     GUIComponentType type;
     bool visible = true;

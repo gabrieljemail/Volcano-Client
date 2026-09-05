@@ -35,9 +35,16 @@ private:
     // FPS tracking
     chrono::steady_clock::time_point lastFrameTime;
 
+    // Elapsed time (seconds) since the previous frame, computed once per loop
+    // iteration so both movement (in PollInputs) and the GUI's FPS counter
+    // (in DrawFrame) use the exact same value instead of sampling the clock
+    // twice and drifting apart.
+    float frameDeltaTime = 0.0f;
+
     void ThreadEntry(stop_token stopToken);
     void RenderLoop(stop_token stopToken);
     void WaitForTargetFrame();
+    void UpdateDeltaTime();
     void PollInputs();
     void DrawFrame();
     bool AcquireImage();

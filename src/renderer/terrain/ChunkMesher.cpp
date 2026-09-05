@@ -2,6 +2,7 @@
 #include "models/PackedVertex.hpp"
 #include "../models/SlabBuffer.hpp"
 #include "../VulkanInit.hpp"
+#include "../BiomeColors.hpp"
 #include <glm/ext/matrix_transform.hpp>
 #include <vector>
 #include <cstring>
@@ -48,13 +49,18 @@ static const glm::vec3 voxelVertices[6][4] = {
 static const uint8_t uvCorners[4][2] = { {0,0}, {255,0}, {255,255}, {0,255} };
 static const uint32_t voxelIndices[6] = { 0, 1, 2, 2, 3, 0 };
 
+struct FaceTexture {
+    uint16_t layer;
+    bool biomeTinted;
+};
+
 // Maps a block type (and, for blocks whose faces differ, which face is being
 // meshed) to the resource-pack texture name, then resolves that name to its
 // array layer via the TextureManager. The array layer for a texture is
 // assigned by load order (see TextureManager::LoadResourcePack), which has no
 // relation to the BlockType enum's numeric value, so the two must never be
 // conflated the way this used to (using `type` directly as the layer index).
-static uint16_t GetTextureLayer(BlockType type, int face, const TextureManager& textureManager) {
+static FaceTexture GetFaceTexture(BlockType type, int face, const TextureManager& textureManager) {
     const char* name = "stone";
 
     switch (type) {
@@ -79,7 +85,7 @@ static uint16_t GetTextureLayer(BlockType type, int face, const TextureManager& 
             break;
     }
 
-    return textureManager.GetLayerIndex(name);
+    return { textureManager.GetLayerIndex(name), IsBiomeTinted(name) };
 }
 
 Mesh ChunkMesher::MeshChunk(const Chunk& chunk, const TextureManager& textureManager) {
@@ -103,7 +109,7 @@ Mesh ChunkMesher::MeshChunk(const Chunk& chunk, const TextureManager& textureMan
                     Block neighbor = chunk.getBlock(x + dir.x, y + dir.y, z + dir.z);
                     if (neighbor.isOpaque()) continue;
 
-                    uint16_t textureLayer = GetTextureLayer(block.type, dir.face, textureManager);
+                    FaceTexture faceTexture = GetFaceTexture(block.type, dir.face, textureManager);
 
                     // Same faux-lighting scheme as before, now packed into skyLight (0-15).
                     float light = 1.0f; // Up: full brightness (direct sky exposure). TODO: Don't hardcode this.
@@ -124,9 +130,10 @@ Mesh ChunkMesher::MeshChunk(const Chunk& chunk, const TextureManager& textureMan
                             static_cast<uint8_t>(dir.face), // normalIndex, 0-5 fits in 3 bits
                             0,                     // AO — not computed yet
                             uvCorners[i][0], uvCorners[i][1],
-                            textureLayer,
+                            faceTexture.layer,
                             0,                     // blockLight — not tracked yet
-                            skyLight
+                            skyLight,
+                            faceTexture.biomeTinted
                         ));
                     }
 

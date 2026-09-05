@@ -12,10 +12,17 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "renderer/models/Mesh.hpp"
 #include "renderer/gui/models/GUIWindow.hpp"
+#include "renderer/terrain/models/World.hpp"
 #include "InputHandler.hpp"
 #include "Player.hpp"
+#include "PlayerAttributes.hpp"
 
 namespace Volcano {
+
+// Defined in TickLoop.hpp, which includes this header (not the other way
+// around) since it needs the full GlobalState — a forward declaration is
+// enough here for a pointer member.
+class TickLoop;
 
 struct Resolution {
     uint16_t x;
@@ -27,6 +34,9 @@ struct GlobalState {
     InputHandler* input;
     Player* player;
     GLFWwindow* window;
+    World* world;
+    PlayerAttributes* attributes;
+    TickLoop* tickLoop;
 
     // Current state:
     bool shouldClose{false};

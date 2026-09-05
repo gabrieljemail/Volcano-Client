@@ -9,6 +9,7 @@
 #include "models/CameraUBO.hpp"
 #include "models/Mesh.hpp"
 #include "gui/GUIController.hpp"
+#include "../TickLoop.hpp"
 
 using namespace std;
 
@@ -61,6 +62,7 @@ void RenderThread::RenderLoop(stop_token stopToken)
     while (!stopToken.stop_requested() && !state->shouldClose)
     {
         WaitForTargetFrame();
+        UpdateDeltaTime();
         PollInputs();
         DrawFrame();
     }
@@ -95,6 +97,13 @@ void RenderThread::WaitForTargetFrame()
     }
 }
 
+void RenderThread::UpdateDeltaTime()
+{
+    auto now = chrono::steady_clock::now();
+    frameDeltaTime = chrono::duration<float>(now - lastFrameTime).count();
+    lastFrameTime = now;
+}
+
 void RenderThread::PollInputs()
 {
     // Bind the close button (and Alt+F4).
@@ -106,10 +115,21 @@ void RenderThread::PollInputs()
     // Process inputs.
     state->input->ProcessFrame();
 
-    // Just apply the camera deltas (input processing happens in main thread)
+    // While a Screen (connect screen, future pause menu, etc.) is open,
+    // ImGui owns the mouse/keyboard — don't let them also fly the camera
+    // or move the player underneath it.
+    if (GUIController::IsScreenOpen()) return;
+
+    // Mouse sensitivity is applied entirely at the axis level (see the
+    // Camera.X/Y registration in VolcanoClient.cpp) — pass 1.0f here so
+    // there's exactly one sensitivity knob, not two multiplied together.
     float dx = state->input->GetAxis("Camera.X");
     float dy = state->input->GetAxis("Camera.Y");
     state->player->camera.ApplyMouseDelta(dx, dy, 1.0f);
+
+    // Gravity/collision/movement now live in TickLoop, run at a fixed 20Hz
+    // regardless of render framerate — see the tick-loop plan.
+    state->tickLoop->Advance(frameDeltaTime);
 }
 
 void RenderThread::DrawFrame()
@@ -117,13 +137,9 @@ void RenderThread::DrawFrame()
     // Time the current frame.
     auto workStart = chrono::steady_clock::now();
 
-    // Calculate delta time for FPS tracking (from previous frame)
-    float deltaTime = chrono::duration<float>(workStart - lastFrameTime).count();
-    lastFrameTime = workStart;
-
     // Update GUI with new frame
     GUIController::NewFrame();
-    GUIController::Update(deltaTime);
+    GUIController::Update(frameDeltaTime);
 
     if (AcquireImage())
     {
@@ -219,7 +235,7 @@ void RenderThread::RecordAndSubmitFrame()
     // Set up camera UBOs.
     // We do this before mesh binding to support culling in the future.
     CameraUBO ubo{
-        state->player->camera.GetViewMatrix(state->player->GetPosition()),
+        state->player->camera.GetViewMatrix(state->tickLoop->GetRenderPosition()),
         [&] {
             float aspect = static_cast<float>(swapchainExtent.width) / swapchainExtent.height;
             glm::mat4 p = glm::perspective(glm::radians(CAMERA_FOV), aspect, 0.05f, 1000.0f);
