@@ -18,6 +18,12 @@ public:
     explicit RenderThread(Volcano::GlobalState* globalState);
     ~RenderThread();
     void Start();
+    // Blocks until the render thread has fully exited. Must be called
+    // before VulkanInit::Cleanup() destroys the device/window out from
+    // under it — jthread's own destructor does this too, but only once the
+    // RenderThread object itself is destroyed, which on a normal shutdown
+    // happens after main() has already returned.
+    void Stop();
 
 private:
     Volcano::GlobalState* state;

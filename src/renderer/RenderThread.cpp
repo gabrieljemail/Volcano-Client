@@ -40,6 +40,15 @@ void RenderThread::Start()
     });
 }
 
+void RenderThread::Stop()
+{
+    worker.request_stop();
+    if (worker.joinable())
+    {
+        worker.join();
+    }
+}
+
 void RenderThread::ThreadEntry(stop_token stopToken)
 {
     cout << "[INFO] Render thread created." << endl;
@@ -115,6 +124,13 @@ void RenderThread::PollInputs()
     // Process inputs.
     state->input->ProcessFrame();
 
+    // F11 cycles window modes regardless of whether a Screen is open, same
+    // as it would in most games.
+    if (state->input->IsKeyPressed(GLFW_KEY_F11))
+    {
+        ToggleWindowMode();
+    }
+
     // While a Screen (connect screen, future pause menu, etc.) is open,
     // ImGui owns the mouse/keyboard — don't let them also fly the camera
     // or move the player underneath it.
@@ -136,6 +152,15 @@ void RenderThread::DrawFrame()
 {
     // Time the current frame.
     auto workStart = chrono::steady_clock::now();
+
+    // Resize requests land here (set by VulkanInit's GLFW framebuffer-size
+    // callback, running on the main thread) — this is the only thread
+    // allowed to touch the swapchain, so recreation happens here, between
+    // frames, rather than in the callback itself.
+    if (state->framebufferResized.exchange(false))
+    {
+        RecreateSwapchain(state->pendingFramebufferWidth.load(), state->pendingFramebufferHeight.load());
+    }
 
     // Update GUI with new frame
     GUIController::NewFrame();
@@ -170,12 +195,14 @@ bool RenderThread::AcquireImage()
         &imageIndex
     );
 
-    // The swapchain is stale (e.g. surface no longer matches, minimized window
-    // on some platforms) — skip this frame instead of crashing. There's no
-    // swapchain recreation path yet since the window is currently non-resizable,
-    // so just wait for the next frame to try again.
+    // The swapchain is stale (surface no longer matches — a resize/fullscreen
+    // toggle that outran the framebuffer-size callback, or a minimized
+    // window). Skip this frame; RecreateSwapchain runs at the top of the
+    // next DrawFrame once a resize is flagged (see below for the case where
+    // no callback fired at all).
     if (result == VK_ERROR_OUT_OF_DATE_KHR)
     {
+        state->framebufferResized = true;
         return false;
     }
 
@@ -315,7 +342,15 @@ void RenderThread::PresentFrame()
     presentInfo.pImageIndices = &imageIndex;
 
     // Flip the buffer to the display.
-    vkQueuePresentKHR(presentQueue, &presentInfo);
+    VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+    {
+        state->framebufferResized = true;
+    }
+    else if (result != VK_SUCCESS)
+    {
+        throw runtime_error("[ERROR] Failed to present swapchain image!");
+    }
 
     // Move to the next frame slot.
     currentFrame = (currentFrame + 1) % maxFramesInFlight;

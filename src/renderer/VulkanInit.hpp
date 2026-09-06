@@ -88,6 +88,17 @@ void Init(GlobalState* state);
 void Cleanup();
 VkRenderPass GetRenderPass();
 
+// Resizing: rebuilds the swapchain (and everything sized off it — depth
+// buffer, image views, framebuffers) in place, reusing the old swapchain
+// per Vulkan's recommended resize path. Only safe to call from the render
+// thread, between frames (never mid-recording).
+void RecreateSwapchain(int width, int height);
+
+// Window-mode toggling (F11). Exclusive fullscreen is intentionally left
+// unimplemented/unselected for now — see ToggleWindowMode's definition.
+WindowMode GetWindowMode();
+void ToggleWindowMode();
+
 // Texture helper functions:
 VkCommandBuffer BeginOneShotCommands();
 void EndOneShotCommands(VkCommandBuffer cmd);

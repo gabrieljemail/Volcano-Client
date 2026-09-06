@@ -227,5 +227,15 @@ int main()
         this_thread::sleep_for(chrono::milliseconds(1));
     }
 
+    // The render thread must fully stop touching Vulkan/GLFW before we tear
+    // either down below — jthread's destructor would do this for us, but
+    // only once `renderer` itself goes out of scope, which is after main()
+    // returns. Previously nothing ever called VulkanInit::Cleanup() at all:
+    // the process just exited with the Vulkan device, swapchain, surface,
+    // instance and GLFW window all still alive, which is what was hanging
+    // the graphics driver on shutdown (observed on Windows/Intel Gen9).
+    renderer.Stop();
+    Cleanup();
+
     return 0;
 }

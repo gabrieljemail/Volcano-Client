@@ -19,6 +19,15 @@
 
 namespace Volcano {
 
+// Window mode cycled by F11 (VulkanInit.hpp's ToggleWindowMode). Exclusive
+// fullscreen is a real mode here so the enum/cycle shape doesn't need to
+// change when it's enabled, but ToggleWindowMode skips it for now.
+enum class WindowMode : uint8_t {
+    Windowed,
+    BorderlessFullscreen,
+    ExclusiveFullscreen,
+};
+
 // Defined in TickLoop.hpp, which includes this header (not the other way
 // around) since it needs the full GlobalState — a forward declaration is
 // enough here for a pointer member.
@@ -46,6 +55,13 @@ struct GlobalState {
     std::vector<Mesh> renderList = {};
 
     glm::vec3 cameraPosition{0.0f, 0.0f, 5.0f};
+
+    // Set by VulkanInit's GLFW framebuffer-size callback (main thread) and
+    // consumed by RenderThread (its own thread) to recreate the swapchain —
+    // atomics so no lock is needed across that handoff.
+    std::atomic<bool> framebufferResized{false};
+    std::atomic<int> pendingFramebufferWidth{0};
+    std::atomic<int> pendingFramebufferHeight{0};
 
     // Load settings.
     void LoadSettings()

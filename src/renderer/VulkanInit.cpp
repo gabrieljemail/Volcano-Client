@@ -16,6 +16,45 @@
 
 using namespace std;
 
+// Set once in Init(). Kept as a plain module-local pointer rather than the
+// GLFW window user pointer, since InputHandler already claims that slot for
+// its own key/cursor callbacks.
+static GlobalState* g_globalState = nullptr;
+
+// Current window mode and the windowed geometry to restore when leaving
+// fullscreen (captured right before switching away from Windowed).
+static WindowMode g_windowMode = WindowMode::Windowed;
+static int g_windowedX = 0, g_windowedY = 0;
+static int g_windowedWidth = WINDOW_WIDTH, g_windowedHeight = WINDOW_HEIGHT;
+
+static void FramebufferSizeCallback(GLFWwindow* /*win*/, int width, int height)
+{
+    if (!g_globalState) return;
+    g_globalState->pendingFramebufferWidth = width;
+    g_globalState->pendingFramebufferHeight = height;
+    g_globalState->framebufferResized = true;
+}
+
+#ifdef _WIN32
+static void WindowFocusCallback(GLFWwindow* win, int focused)
+{
+    if (focused)
+    {
+        // Don't steal the cursor back from ImGui while a Screen (connect
+        // screen, pause menu, etc.) is open — GUIController itself owns
+        // cursor mode in that case (see OpenScreen/CloseScreen).
+        if (!GUIController::IsScreenOpen())
+        {
+            glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
+    }
+    else
+    {
+        glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+}
+#endif
+
 // Helper to create a ShaderModule from raw SPIR-V bytecode
 VkShaderModule CreateShaderModule(VkDevice dev, const std::vector<char>& code)
 {
@@ -211,6 +250,103 @@ AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool i
     return result;
 }
 
+// Depth buffer, swapchain image views, and framebuffers are all sized off
+// the swapchain extent, so both Init() and RecreateSwapchain() (after a
+// resize / F11 mode change) rebuild them the same way via these helpers.
+static void CreateDepthResources()
+{
+    depthFormat = VK_FORMAT_D32_SFLOAT; // We could find supported format, but D32 is widely supported
+
+    VkImageCreateInfo depthImageInfo{};
+    depthImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    depthImageInfo.imageType = VK_IMAGE_TYPE_2D;
+    depthImageInfo.extent.width = swapchainExtent.width;
+    depthImageInfo.extent.height = swapchainExtent.height;
+    depthImageInfo.extent.depth = 1;
+    depthImageInfo.mipLevels = 1;
+    depthImageInfo.arrayLayers = 1;
+    depthImageInfo.format = depthFormat;
+    depthImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    depthImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depthImageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    depthImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    depthImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo depthAllocInfo{};
+    depthAllocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    depthAllocInfo.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+    if (vmaCreateImage(vmaAllocator, &depthImageInfo, &depthAllocInfo, &depthImage, &depthImageAllocation, nullptr) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create depth image!");
+    }
+
+    VkImageViewCreateInfo depthViewInfo{};
+    depthViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    depthViewInfo.image = depthImage;
+    depthViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    depthViewInfo.format = depthFormat;
+    depthViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthViewInfo.subresourceRange.baseMipLevel = 0;
+    depthViewInfo.subresourceRange.levelCount = 1;
+    depthViewInfo.subresourceRange.baseArrayLayer = 0;
+    depthViewInfo.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(device.device, &depthViewInfo, nullptr, &depthImageView) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create depth image view!");
+    }
+}
+
+static void CreateSwapchainImageViews()
+{
+    uint32_t imageCount = swapchain.image_count;
+    imageViews.resize(imageCount);
+    for (uint32_t i = 0; i < imageCount; i++)
+    {
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = swapchain.get_images().value()[i];
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = swapchain.image_format;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VkResult createViewResult = vkCreateImageView(device.device, &viewInfo, nullptr, &imageViews[i]);
+        if (createViewResult != VK_SUCCESS)
+        {
+            throw runtime_error("[ERROR] Failed to create swapchain image view.");
+        }
+    }
+}
+
+static void CreateFramebuffers()
+{
+    uint32_t imageCount = swapchain.image_count;
+    framebuffers.resize(imageCount);
+    for (uint32_t i = 0; i < imageCount; i++)
+    {
+        VkImageView fbAttachments[] = {
+            imageViews[i],
+            depthImageView
+        };
+
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = renderPass;
+        framebufferInfo.attachmentCount = 2;
+        framebufferInfo.pAttachments = fbAttachments;
+        framebufferInfo.width = swapchain.extent.width;
+        framebufferInfo.height = swapchain.extent.height;
+        framebufferInfo.layers = 1;
+
+        VkResult createFramebufferResult = vkCreateFramebuffer(device.device, &framebufferInfo, nullptr, &framebuffers[i]);
+        if (createFramebufferResult != VK_SUCCESS)
+        {
+            throw std::runtime_error("[ERROR] Failed to create framebuffer.");
+        }
+    }
+}
+
 // Main function.
 void Init(GlobalState* state)
 {
@@ -231,7 +367,7 @@ void Init(GlobalState* state)
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // Prevent GLFW from creating an OpenGL context.
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); // Prevent resizing the window.
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE); // Show system window decorations.
 
     // Create the window.
@@ -246,6 +382,26 @@ void Init(GlobalState* state)
         return;
     }
     state->window = window;
+    g_globalState = state;
+    glfwGetWindowPos(window, &g_windowedX, &g_windowedY);
+    glfwGetWindowSize(window, &g_windowedWidth, &g_windowedHeight);
+
+    // Framebuffer-size changes (user resize, and F11's glfwSetWindowMonitor
+    // calls) land here on the main thread; the render thread picks the flag
+    // up between frames and recreates the swapchain there, since that's the
+    // only thread allowed to touch it.
+    glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
+
+    #ifdef _WIN32
+        // Windows-only fallback: on some setups (seen on Intel Gen9 HD 530,
+        // driver 31.0.101.2115) the window doesn't actually have input focus
+        // the moment it's created, so the GLFW_CURSOR_DISABLED set below
+        // never takes effect until the user manually minimizes/restores the
+        // window. Re-apply the cursor lock whenever the window actually
+        // gains focus, and release it on focus loss so a captured cursor
+        // doesn't trap the user's mouse/Alt+Tab when the game is unfocused.
+        glfwSetWindowFocusCallback(window, WindowFocusCallback);
+    #endif
 
     // Make an instance.
     vkb::InstanceBuilder instanceBuilder;
@@ -333,7 +489,6 @@ void Init(GlobalState* state)
         return;
     }
     swapchain = swapchainBuilderReturn.value();
-    uint32_t imageCount = swapchain.image_count;
 
     // Get the queues from vkb::Device.
     graphicsQueue = device.get_queue(vkb::QueueType::graphics).value();
@@ -345,66 +500,8 @@ void Init(GlobalState* state)
     // Set swapchainExtent.
     swapchainExtent = swapchain.extent;
 
-    // Create Depth Buffer
-    depthFormat = VK_FORMAT_D32_SFLOAT; // We could find supported format, but D32 is widely supported
-
-    VkImageCreateInfo depthImageInfo{};
-    depthImageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    depthImageInfo.imageType = VK_IMAGE_TYPE_2D;
-    depthImageInfo.extent.width = swapchainExtent.width;
-    depthImageInfo.extent.height = swapchainExtent.height;
-    depthImageInfo.extent.depth = 1;
-    depthImageInfo.mipLevels = 1;
-    depthImageInfo.arrayLayers = 1;
-    depthImageInfo.format = depthFormat;
-    depthImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    depthImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depthImageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    depthImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    depthImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VmaAllocationCreateInfo depthAllocInfo{};
-    depthAllocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-    depthAllocInfo.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-
-    if (vmaCreateImage(vmaAllocator, &depthImageInfo, &depthAllocInfo, &depthImage, &depthImageAllocation, nullptr) != VK_SUCCESS) {
-        throw std::runtime_error("[ERROR] Failed to create depth image!");
-    }
-
-    VkImageViewCreateInfo depthViewInfo{};
-    depthViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    depthViewInfo.image = depthImage;
-    depthViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    depthViewInfo.format = depthFormat;
-    depthViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    depthViewInfo.subresourceRange.baseMipLevel = 0;
-    depthViewInfo.subresourceRange.levelCount = 1;
-    depthViewInfo.subresourceRange.baseArrayLayer = 0;
-    depthViewInfo.subresourceRange.layerCount = 1;
-
-    if (vkCreateImageView(device.device, &depthViewInfo, nullptr, &depthImageView) != VK_SUCCESS) {
-        throw std::runtime_error("[ERROR] Failed to create depth image view!");
-    }
-
-    // Create image views.
-    imageViews.resize(imageCount);
-    for (uint32_t i = 0; i < imageCount; i++)
-    {
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = swapchain.get_images().value()[i];
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = swapchain.image_format;
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.layerCount = 1;
-
-        VkResult createViewResult = vkCreateImageView(device.device, &viewInfo, nullptr, &imageViews[i]);
-        if (createViewResult != VK_SUCCESS)
-        {
-            throw runtime_error("[ERROR] Failed to create swapchain image view.");
-        }
-    }
+    CreateDepthResources();
+    CreateSwapchainImageViews();
 
     // Create the render pass.
     VkAttachmentDescription colorAttachment{};
@@ -468,29 +565,7 @@ void Init(GlobalState* state)
     }
 
     // Create framebuffers.
-    framebuffers.resize(imageCount);
-    for (uint32_t i = 0; i < imageCount; i++)
-    {
-        VkImageView fbAttachments[] = {
-            imageViews[i],
-            depthImageView
-        };
-
-        VkFramebufferCreateInfo framebufferInfo{};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = renderPass;
-        framebufferInfo.attachmentCount = 2;
-        framebufferInfo.pAttachments = fbAttachments;
-        framebufferInfo.width = swapchain.extent.width;
-        framebufferInfo.height = swapchain.extent.height;
-        framebufferInfo.layers = 1;
-
-        VkResult createFramebufferResult = vkCreateFramebuffer(device.device, &framebufferInfo, nullptr, &framebuffers[i]);
-        if (createFramebufferResult != VK_SUCCESS)
-        {
-            throw std::runtime_error("[ERROR] Failed to create framebuffer.");
-        }
-    }
+    CreateFramebuffers();
 
     // Set up set layout bindings.
     VkDescriptorSetLayoutBinding cameraBinding{};
@@ -610,6 +685,107 @@ void Init(GlobalState* state)
         if (vkCreateFence(device.device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS)
         {
             throw runtime_error("[ERROR] Failed to create in flight fences.");
+        }
+    }
+}
+
+// Rebuilds everything sized off the swapchain extent, reusing the old
+// swapchain (per Vulkan's recommended resize path) instead of tearing
+// everything down and starting over. renderPass/pipeline/descriptor sets
+// don't depend on the extent, so they're left alone. Only ever called from
+// the render thread, between frames.
+void RecreateSwapchain(int width, int height)
+{
+    if (width <= 0 || height <= 0) return; // Minimized — nothing to rebuild yet.
+
+    vkDeviceWaitIdle(device.device);
+
+    for (auto framebuffer : framebuffers) {
+        vkDestroyFramebuffer(device.device, framebuffer, nullptr);
+    }
+    framebuffers.clear();
+
+    for (auto view : imageViews) {
+        vkDestroyImageView(device.device, view, nullptr);
+    }
+    imageViews.clear();
+
+    if (depthImageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(device.device, depthImageView, nullptr);
+        depthImageView = VK_NULL_HANDLE;
+    }
+    if (depthImage != VK_NULL_HANDLE) {
+        vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
+        depthImage = VK_NULL_HANDLE;
+    }
+
+    vkb::Swapchain oldSwapchain = swapchain;
+
+    vkb::SwapchainBuilder swapchainBuilder{device, surface};
+    swapchainBuilder.set_desired_extent(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+    swapchainBuilder.set_desired_present_mode(PRESENT_MODE);
+    swapchainBuilder.set_desired_min_image_count(BUFFER_SIZE);
+    swapchainBuilder.set_old_swapchain(oldSwapchain);
+    auto swapchainBuilderReturn = swapchainBuilder.build();
+
+    vkb::destroy_swapchain(oldSwapchain);
+
+    if (!swapchainBuilderReturn)
+    {
+        throw std::runtime_error("[ERROR] Failed to recreate swapchain: " + swapchainBuilderReturn.error().message());
+    }
+    swapchain = swapchainBuilderReturn.value();
+    swapchainExtent = swapchain.extent;
+
+    CreateDepthResources();
+    CreateSwapchainImageViews();
+    CreateFramebuffers();
+}
+
+WindowMode GetWindowMode()
+{
+    return g_windowMode;
+}
+
+// F11 handler. Cycles Windowed <-> BorderlessFullscreen; ExclusiveFullscreen
+// is deliberately skipped for now (see SetExclusiveFullscreen below) but the
+// mode still exists so enabling it later doesn't need to reshape this enum
+// or the cycle logic — just add it back into the switch.
+void ToggleWindowMode()
+{
+    switch (g_windowMode)
+    {
+        case WindowMode::Windowed:
+        {
+            GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+            if (!monitor) return;
+            const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+
+            // Remember the windowed geometry so we can restore it later.
+            glfwGetWindowPos(window, &g_windowedX, &g_windowedY);
+            glfwGetWindowSize(window, &g_windowedWidth, &g_windowedHeight);
+
+            int monitorX, monitorY;
+            glfwGetMonitorPos(monitor, &monitorX, &monitorY);
+
+            // "Borderless fullscreen" here means a plain undecorated window
+            // sized to cover the monitor, not a real (exclusive) mode
+            // switch — this avoids the driver/OS display-mode change that
+            // exclusive fullscreen would need.
+            glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_FALSE);
+            glfwSetWindowMonitor(window, nullptr, monitorX, monitorY, mode->width, mode->height, 0);
+
+            g_windowMode = WindowMode::BorderlessFullscreen;
+            break;
+        }
+        case WindowMode::BorderlessFullscreen:
+        case WindowMode::ExclusiveFullscreen:
+        {
+            glfwSetWindowMonitor(window, nullptr, g_windowedX, g_windowedY, g_windowedWidth, g_windowedHeight, 0);
+            glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
+
+            g_windowMode = WindowMode::Windowed;
+            break;
         }
     }
 }
