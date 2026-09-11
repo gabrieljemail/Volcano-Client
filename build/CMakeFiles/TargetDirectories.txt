@@ -1,3 +1,4 @@
-/home/badimo57/Projects/VolcanoClient/build/CMakeFiles/VolcanoClient.dir
-/home/badimo57/Projects/VolcanoClient/build/CMakeFiles/edit_cache.dir
-/home/badimo57/Projects/VolcanoClient/build/CMakeFiles/rebuild_cache.dir
+C:/Users/Gabriel Jemail/Projects/Volcano Client/build/CMakeFiles/VolcanoClient.dir
+C:/Users/Gabriel Jemail/Projects/Volcano Client/build/CMakeFiles/NetDiag.dir
+C:/Users/Gabriel Jemail/Projects/Volcano Client/build/CMakeFiles/edit_cache.dir
+C:/Users/Gabriel Jemail/Projects/Volcano Client/build/CMakeFiles/rebuild_cache.dir
