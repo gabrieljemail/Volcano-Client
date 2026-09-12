@@ -20,6 +20,30 @@ TickLoop::TickLoop(GlobalState* stateIn) : state(stateIn)
 
 void TickLoop::Advance(float frameDeltaTime)
 {
+    // Hold off simulating entirely until the world has something to stand
+    // on — otherwise gravity runs from frame one against an empty World
+    // (every lookup reads Air) and the player free-falls before any chunk
+    // has had a chance to load. See GlobalState::worldReady for the
+    // ordering guarantee that makes reading cached position state below
+    // safe once this becomes true.
+    if (!state->worldReady.load()) return;
+
+    // Apply any teleport the server sent since the last frame. Done here,
+    // on the render thread, because past this point this thread owns the
+    // position/velocity state below — see QueueTeleport's comment.
+    {
+        std::lock_guard<std::mutex> lock(teleportMutex);
+        if (pendingTeleport.has_value())
+        {
+            previousPosition = currentPosition = *pendingTeleport;
+            state->player->SetPosition(currentPosition);
+            velocity = glm::vec3(0.0f);
+            grounded = false;
+            accumulator = 0.0f;
+            pendingTeleport.reset();
+        }
+    }
+
     jumpQueued = jumpQueued || state->input->WasActivated("Jump");
 
     accumulator += frameDeltaTime;
@@ -38,13 +62,37 @@ glm::vec3 TickLoop::GetRenderPosition() const
     return glm::mix(previousPosition, currentPosition, alpha);
 }
 
+void TickLoop::SyncToPlayerPosition()
+{
+    previousPosition = currentPosition = state->player->GetPosition();
+    velocity = glm::vec3(0.0f);
+    grounded = false;
+    accumulator = 0.0f;
+}
+
+void TickLoop::QueueTeleport(glm::vec3 position)
+{
+    std::lock_guard<std::mutex> lock(teleportMutex);
+    pendingTeleport = position;
+}
+
 void TickLoop::Tick()
 {
     previousPosition = currentPosition;
 
-    // Horizontal velocity is set directly from input each tick (no
-    // momentum/friction — see the plan's scope note), rotated by camera
-    // yaw the same way the old fly-cam ApplyMovement did.
+    // Horizontal movement follows vanilla's real per-tick model: accelerate
+    // toward the input direction, then apply momentum-preserving friction,
+    // rather than snapping straight to a target speed — this is what gives
+    // vanilla its short ramp-up/slide-to-a-stop feel instead of an instant
+    // start/stop. All constants below are vanilla's own (see
+    // PlayerAttributes::Defaults() for the attribute defaults they read):
+    // default block slipperiness (0.6) * 0.91 gives the well-known 0.546
+    // ground friction, which combined with the 0.098 blocks/tick ground
+    // acceleration converges to vanilla's documented terminal speed of
+    // 0.2159 blocks/tick (4.317 blocks/sec). Airborne friction/acceleration
+    // (0.91 / 0.02) are vanilla's own too — much less momentum lost per
+    // tick, and a much smaller push from input, which is exactly why
+    // vanilla air control feels so limited compared to ground movement.
     float forwardInput = state->input->GetAxis("Move.Forward");
     float rightInput = state->input->GetAxis("Move.Right");
 
@@ -53,44 +101,60 @@ void TickLoop::Tick()
     glm::vec3 right = glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f));
 
     glm::vec3 horizontalDir = forward * forwardInput + right * rightInput;
-    float walkSpeed = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 4.317));
-    if (glm::length(horizontalDir) > 0.0001f)
-    {
-        horizontalDir = glm::normalize(horizontalDir);
-        velocity.x = horizontalDir.x * walkSpeed;
-        velocity.z = horizontalDir.z * walkSpeed;
-    }
-    else
-    {
-        velocity.x = 0.0f;
-        velocity.z = 0.0f;
-    }
+    if (glm::length(horizontalDir) > 1.0f) horizontalDir = glm::normalize(horizontalDir);
 
-    // Gravity applies every tick regardless of grounded state; resting on
-    // the ground works because the resulting downward move gets collided
-    // and zeroed back out below, every tick, not because gravity itself
-    // stops.
-    float gravity = static_cast<float>(state->attributes->GetDouble("generic.gravity", 32.0));
-    velocity.y -= gravity * FIXED_DT;
+    constexpr float GROUND_FRICTION = 0.546f; // default block slipperiness (0.6) * 0.91
+    constexpr float AIR_FRICTION = 0.91f;
+    constexpr float AIR_ACCELERATION = 0.02f; // flat, unlike ground accel below — not attribute-scaled in vanilla either
 
+    float movementSpeed = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1));
+    float friction = grounded ? GROUND_FRICTION : AIR_FRICTION;
+    // *0.98 reproduces vanilla's verified terminal walking speed (0.2159
+    // blocks/tick) from the default 0.1 attribute value.
+    float acceleration = grounded ? (movementSpeed * 0.98f) : AIR_ACCELERATION;
+
+    velocity.x = velocity.x * friction + horizontalDir.x * acceleration;
+    velocity.z = velocity.z * friction + horizontalDir.z * acceleration;
+
+    // Jump is an instant velocity set, exactly like vanilla's
+    // jumpFromGround(). It has to land before this tick's move below, not
+    // before gravity/drag, or the jump gets decayed before it ever displaces
+    // anything — vanilla moves with the raw 0.42 on the jump tick itself and
+    // only decays velocity afterward, in prep for next tick.
     if (jumpQueued)
     {
         if (grounded)
         {
-            float jumpStrength = static_cast<float>(state->attributes->GetDouble("generic.jump_strength", 9.0));
-            velocity.y = jumpStrength;
+            float jumpVelocity = static_cast<float>(state->attributes->GetDouble("generic.jump_strength", 0.42));
+            velocity.y = jumpVelocity;
             grounded = false;
         }
         jumpQueued = false;
     }
 
+    // velocity is in blocks/tick (matching vanilla) and FIXED_DT is exactly
+    // one Minecraft tick, so each component IS this tick's displacement —
+    // no further dt scaling needed.
     glm::vec3 pos = currentPosition;
-    MoveAxis(pos, velocity, 1, velocity.y * FIXED_DT); // Y first: settles grounded state before horizontal collision.
-    MoveAxis(pos, velocity, 0, velocity.x * FIXED_DT);
-    MoveAxis(pos, velocity, 2, velocity.z * FIXED_DT);
+    MoveAxis(pos, velocity, 1, velocity.y); // Y first: settles grounded state before horizontal collision.
+    MoveAxis(pos, velocity, 0, velocity.x);
+    MoveAxis(pos, velocity, 2, velocity.z);
 
     currentPosition = pos;
     state->player->SetPosition(currentPosition);
+
+    // Gravity + drag apply every tick regardless of grounded state, but only
+    // AFTER this tick's move — resting on the ground works because the
+    // resulting downward move next tick gets collided and zeroed back out,
+    // not because gravity itself stops. Applying this before the move (as a
+    // previous version did) decays the jump before it ever moves anything,
+    // shaving well over a third off the actual jump height. Constants and
+    // the sub-0.005 snap-to-zero are vanilla's own per-tick formula:
+    // velocity.y = (velocity.y - gravity) * 0.98.
+    float gravity = static_cast<float>(state->attributes->GetDouble("generic.gravity", 0.08));
+    constexpr float VERTICAL_DRAG = 0.98f;
+    velocity.y = (velocity.y - gravity) * VERTICAL_DRAG;
+    if (std::fabs(velocity.y) < 0.005f) velocity.y = 0.0f;
 }
 
 void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float delta)
@@ -111,7 +175,10 @@ void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float del
 
 bool TickLoop::IsSolid(int x, int y, int z) const
 {
-    return state->world->GetBlock(x, y, z).isOpaque();
+    // hasCollision() also covers transparent-cube/partial non-cube shapes
+    // (glass, slabs, ...) — only cross-shaped plants (grass, flowers, ...)
+    // are non-solid despite having a non-cube visual. See Block::hasCollision.
+    return state->world->GetBlock(x, y, z).hasCollision();
 }
 
 bool TickLoop::AabbOverlapsSolid(glm::vec3 center) const

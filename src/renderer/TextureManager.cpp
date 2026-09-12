@@ -3,9 +3,9 @@
 #include <stb_image.h>
 #include <filesystem>
 #include <vector>
-#include <iostream>
 #include <cstring>
 #include "VulkanInit.hpp"
+#include "Logger.hpp"
 
 namespace fs = std::filesystem;
 
@@ -95,10 +95,10 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
                 texturePaths.push_back(entry.path());
     }
 
-    std::cout << "[INFO] Found " << texturePaths.size() << " texture files" << std::endl;
+    Log::Info("[INFO] Found " + std::to_string(texturePaths.size()) + " texture files");
 
     if (texturePaths.empty()) {
-        std::cerr << "[ERROR] No textures found! Cannot create texture array." << std::endl;
+        Log::Error("[ERROR] No textures found! Cannot create texture array.");
         return;
     }
 
@@ -131,7 +131,7 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
     }
 
     if (skipped > 0) {
-        std::cout << "[WARN] Skipped " << skipped << " non-16x16 textures" << std::endl;
+        Log::Info("[WARN] Skipped " + std::to_string(skipped) + " non-16x16 textures");
     }
 
     CreateArrayImage(static_cast<uint32_t>(validPaths.size()));
@@ -143,7 +143,7 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
         uint8_t* pixels = stbi_load(path.string().c_str(), &w, &h, &channels, STBI_rgb_alpha);
         if (!pixels)
         {
-            std::cerr << "[WARN] Failed to load texture: " << path << std::endl;
+            Log::Error("[WARN] Failed to load texture: " + path.string());
             continue;
         }
 
@@ -158,7 +158,7 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
     GenerateMipmaps();
     CreateSampler();
 
-    std::cout << "[INFO] Loaded " << layer << " textures into array." << std::endl;
+    Log::Info("[INFO] Loaded " + std::to_string(layer) + " textures into array.");
 }
 
 uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
@@ -166,7 +166,7 @@ uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
     auto it = layerLookup.find(textureName);
     // return it != layerLookup.end() ? it->second : 0;
     if (it == layerLookup.end()) {
-        std::cerr << "[WARN] Texture not found: " << textureName << std::endl;
+        Log::Error("[WARN] Texture not found: " + textureName);
         return 0;
     }
     return it->second;

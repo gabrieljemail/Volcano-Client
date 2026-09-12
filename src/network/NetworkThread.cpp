@@ -1,6 +1,6 @@
 #include "NetworkThread.hpp"
+#include "../Logger.hpp"
 #include <chrono>
-#include <iostream>
 
 namespace Volcano {
 
@@ -17,14 +17,22 @@ void NetworkThread::Start()
 
 void NetworkThread::ThreadEntry(std::stop_token stopToken)
 {
-    std::cout << "[INFO] Network thread created." << std::endl;
+    Log::Info("[INFO] Network thread created.");
 
     NetworkClient client(ioContext);
-    client.ConnectAndLogin(host, port, username);
+    if (client.ConnectAndLogin(host, port, username)) {
+        // Published only once Configuration is behind us and the Play loop
+        // is about to start — see GlobalState::activeConnection's own
+        // comment. Cleared unconditionally afterward: RunSession's internal
+        // try/catch means it always returns normally, never throws, but
+        // this doesn't rely on that — it runs whether or not it did.
+        state->activeConnection.store(&client.GetConnection());
+        client.RunSession(state, stopToken);
+        state->activeConnection.store(nullptr);
+    }
 
-    // Configuration/Play-state packet pumping (driven by ioContext.run())
-    // lands in a later pass. For now, just stay alive/joinable alongside
-    // the render thread instead of exiting the moment login finishes.
+    // Stay alive/joinable alongside the render thread even after the
+    // session ends (login failure, disconnect, or stop requested).
     while (!stopToken.stop_requested() && !state->shouldClose)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));

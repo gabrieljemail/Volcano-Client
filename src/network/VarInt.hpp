@@ -42,6 +42,37 @@ public:
         bytes.push_back(static_cast<uint8_t>(value & 0xFF));
     }
 
+    void WriteBool(bool value)
+    {
+        bytes.push_back(value ? 1u : 0u);
+    }
+
+    void WriteLong(int64_t value)
+    {
+        uint64_t v = static_cast<uint64_t>(value);
+        for (int shift = 56; shift >= 0; shift -= 8) {
+            bytes.push_back(static_cast<uint8_t>((v >> shift) & 0xFFu));
+        }
+    }
+
+    void WriteFloat(float value)
+    {
+        uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            bytes.push_back(static_cast<uint8_t>((bits >> shift) & 0xFFu));
+        }
+    }
+
+    void WriteDouble(double value)
+    {
+        uint64_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        for (int shift = 56; shift >= 0; shift -= 8) {
+            bytes.push_back(static_cast<uint8_t>((bits >> shift) & 0xFFu));
+        }
+    }
+
     void WriteBytes(const uint8_t* src, size_t count)
     {
         bytes.insert(bytes.end(), src, src + count);
@@ -94,7 +125,62 @@ public:
         pos += count;
     }
 
+    void Skip(size_t count)
+    {
+        if (count > Remaining()) throw std::runtime_error("Unexpected end of packet");
+        pos += count;
+    }
+
+    bool ReadBool()
+    {
+        return ReadByte() != 0;
+    }
+
+    int16_t ReadShort()
+    {
+        uint16_t value = static_cast<uint16_t>(ReadByte()) << 8;
+        value |= ReadByte();
+        return static_cast<int16_t>(value);
+    }
+
+    int32_t ReadInt()
+    {
+        uint32_t value = 0;
+        for (int i = 0; i < 4; i++) value = (value << 8) | ReadByte();
+        return static_cast<int32_t>(value);
+    }
+
+    int64_t ReadLong()
+    {
+        uint64_t value = 0;
+        for (int i = 0; i < 8; i++) value = (value << 8) | ReadByte();
+        return static_cast<int64_t>(value);
+    }
+
+    float ReadFloat()
+    {
+        uint32_t bits = static_cast<uint32_t>(ReadInt());
+        float value;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    }
+
+    double ReadDouble()
+    {
+        uint64_t bits = static_cast<uint64_t>(ReadLong());
+        double value;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    }
+
     size_t Remaining() const { return size - pos; }
+
+    // Pointer to the unread portion of the buffer. For handing a contiguous
+    // byte range to another parser that wants an istream (e.g. NBT::
+    // ReadPayload, used to bridge network-encoded NBT text components) —
+    // pair with Skip() afterward to re-sync this reader's position to
+    // however much the other parser actually consumed.
+    const uint8_t* Cursor() const { return data + pos; }
 
 private:
     const uint8_t* data;

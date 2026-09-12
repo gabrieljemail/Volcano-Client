@@ -31,6 +31,7 @@ std::vector<uint8_t> ZlibDecompress(const uint8_t* data, size_t size, int32_t un
 
 void Connection::SendPacket(int32_t packetId, const std::vector<uint8_t>& payload)
 {
+    std::lock_guard<std::mutex> lock(writeMutex);
     if (threshold < 0) SendUncompressed(packetId, payload);
     else SendCompressed(packetId, payload);
 }

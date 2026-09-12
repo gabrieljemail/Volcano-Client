@@ -4,13 +4,21 @@
 
 #include <asio.hpp>
 #include <cstdint>
+#include <stop_token>
 #include <string>
 #include "Connection.hpp"
+#include "../GlobalState.hpp"
 
 namespace Volcano {
 
-// Protocol 775 = Minecraft 1.21.2/1.21.3 (see the architecture spec).
-constexpr int32_t PROTOCOL_VERSION = 775;
+// Protocol 776 = Minecraft 26.2 (see resources/minecraft/version.json,
+// which is the extracted client/server data for the dev server we target).
+constexpr int32_t PROTOCOL_VERSION = 776;
+
+// Declared to the server via Client Information during Configuration state.
+// Not yet backed by any dynamic load/unload behavior (no
+// VisibleChunkController) — just what we ask the server to stream.
+constexpr int32_t VIEW_DISTANCE = 8;
 
 class NetworkClient {
 public:
@@ -18,13 +26,35 @@ public:
 
     // Connects and runs Handshake -> Login Start, then reads and logs the
     // server's first response (Login Success or Disconnect). Returns true
-    // on Login Success. Configuration and Play state handling land in a
-    // later pass — this only proves the pipe works end to end.
+    // on Login Success.
     bool ConnectAndLogin(const std::string& host, uint16_t port, const std::string& username);
+
+    // Runs Configuration state to completion, then pumps the Play state
+    // packet loop until disconnected or stopToken is cancelled. Parsed
+    // chunks and the server-reported spawn position are handed off via
+    // state->networkInbox for the main thread to consume — this method
+    // never touches state->world/renderList directly.
+    void RunSession(GlobalState* state, std::stop_token stopToken);
+
+    // Exposes the underlying Connection so NetworkThread can publish it to
+    // GlobalState::activeConnection once the Play session actually starts
+    // (see NetworkThread::ThreadEntry) — that's what lets
+    // NetworkClient::SendChatMessage reach it from another thread.
+    Connection& GetConnection() { return connection; }
 
 private:
     Connection connection;
+
+    bool RunConfiguration();
+    void RunPlayLoop(GlobalState* state, std::stop_token stopToken);
 };
+
+// Sends a plain (unsigned) chat message via state->activeConnection — a
+// no-op (logged, not thrown) if there's no live session, e.g. chat was
+// opened before connecting or the connection just dropped. Callable from
+// any thread; see PlayC2S::ChatMessage and Connection::SendPacket's own
+// comments for why this is safe to call from outside the network thread.
+void SendChatMessage(GlobalState* state, const std::string& message);
 
 } // namespace Volcano
 

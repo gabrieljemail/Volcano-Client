@@ -19,14 +19,16 @@ struct PackedVertex {
             uint8_t blockLight, uint8_t skyLight, bool biomeTinted = false)
     {
         PackedVertex vert{};
-        // word0: position (6+6+6=18 bits), normalIndex (3 bits), ao (2 bits),
-        // biomeTinted (1 bit), padding (8 bits)
+        // word0: x (6 bits, 0-15), z (6 bits, 0-15), y (9 bits, 0-383 —
+        // chunks now span the full -64..319 world-height range, offset into
+        // local Y by the chunk's model matrix), normalIndex (3 bits), ao (2
+        // bits), biomeTinted (1 bit), padding (5 bits)
         vert.word0 = (localPos.x & 0x3Fu)
-            | ((localPos.y & 0x3Fu) << 6)
-            | ((localPos.z & 0x3Fu) << 12)
-            | ((normalIndex & 0x7u) << 18)
-            | ((ao & 0x3u) << 21)
-            | ((biomeTinted ? 1u : 0u) << 23);
+            | ((localPos.z & 0x3Fu) << 6)
+            | ((localPos.y & 0x1FFu) << 12)
+            | ((normalIndex & 0x7u) << 21)
+            | ((ao & 0x3u) << 24)
+            | ((biomeTinted ? 1u : 0u) << 26);
         
         // word1: textureLayer (16 bits), blockLight (4 bits), skyLight (4 bits), padding (8 bits)
         vert.word1 = (static_cast<uint32_t>(textureLayer) & 0xFFFFu)
@@ -34,6 +36,9 @@ struct PackedVertex {
             | ((skyLight & 0xFu) << 20);
         
         // word2: u (8 bits), v (8 bits), padding (16 bits)
+        // u/v are raw block-space tile counts (not normalized 0-1) — see
+        // terrain.vert, which relies on this for greedy-meshed quads to tile
+        // their texture instead of stretching across the merged rect.
         vert.word2 = (static_cast<uint32_t>(u) & 0xFFu)
             | ((static_cast<uint32_t>(v) & 0xFFu) << 8);
         

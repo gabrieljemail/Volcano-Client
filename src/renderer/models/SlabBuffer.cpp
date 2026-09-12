@@ -1,7 +1,7 @@
 #include "SlabBuffer.hpp"
 #include "../VulkanInit.hpp"
+#include "Logger.hpp"
 #include <cstring>
-#include <iostream>
 
 namespace Volcano {
 
@@ -43,9 +43,9 @@ bool SlabBuffer::Allocate(const void* data, VkDeviceSize size, VkDeviceSize alig
         : cursor;
 
     if (alignedOffset + size > capacity) {
-        std::cerr << "[ERROR] SlabBuffer out of space (capacity " << capacity
-                  << " bytes, requested " << size << " bytes at offset " << alignedOffset
-                  << "). Consider increasing the slab size." << std::endl;
+        Log::Error("[ERROR] SlabBuffer out of space (capacity " + std::to_string(capacity)
+                  + " bytes, requested " + std::to_string(size) + " bytes at offset " + std::to_string(alignedOffset)
+                  + "). Consider increasing the slab size.");
         return false;
     }
 

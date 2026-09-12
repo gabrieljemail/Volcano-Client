@@ -149,6 +149,7 @@ add_executable(NetDiag
     src/network/TextComponent.cpp
     src/renderer/terrain/ChunkParser.cpp
     src/renderer/terrain/models/BlockRegistry.cpp
+    src/renderer/entity/models/EntityRegistry.cpp
     src/renderer/gui/models/Chat.cpp
 )
 

@@ -6,6 +6,7 @@
 #include <thread>
 #include <stop_token>
 #include <memory>
+#include <atomic>
 #include "../GlobalState.hpp"
 #include "gui/GUIController.hpp"
 
@@ -18,16 +19,32 @@ public:
     explicit RenderThread(Volcano::GlobalState* globalState);
     ~RenderThread();
     void Start();
+    // Signals the render loop to exit without waiting for it. The caller
+    // (the GLFW-owning main thread) must keep pumping glfwPollEvents() —
+    // via HasStopped() below — until the thread actually finishes, rather
+    // than blocking in Stop()/join() with no message pump running: on
+    // Windows, the render thread's last vkQueuePresentKHR can depend on the
+    // window's message queue being serviced, and a thread blocked in join()
+    // services no messages, which deadlocks the driver instead of raising a
+    // TDR (observed as a permanently frozen display on shutdown).
+    void RequestStop();
+    // True once the render thread has finished RenderLoop and its own
+    // GUIController::Shutdown() — i.e. it has stopped touching Vulkan/GLFW
+    // and it's safe to stop pumping messages and join.
+    bool HasStopped() const;
     // Blocks until the render thread has fully exited. Must be called
     // before VulkanInit::Cleanup() destroys the device/window out from
     // under it — jthread's own destructor does this too, but only once the
     // RenderThread object itself is destroyed, which on a normal shutdown
-    // happens after main() has already returned.
+    // happens after main() has already returned. Call RequestStop() and
+    // poll HasStopped() (while still pumping messages) first; by the time
+    // HasStopped() is true this just joins the (already finished) thread.
     void Stop();
 
 private:
     Volcano::GlobalState* state;
     jthread worker;
+    std::atomic<bool> finished{false};
 
     // Timing variables:
     chrono::steady_clock::time_point frameStartTime;
@@ -46,6 +63,14 @@ private:
     // (in DrawFrame) use the exact same value instead of sampling the clock
     // twice and drifting apart.
     float frameDeltaTime = 0.0f;
+
+    // F3 (see VolcanoClient.cpp's "ToggleWireframe" action) — a debug tool
+    // for telling "this face has no geometry at all" apart from "geometry
+    // exists but lost the depth/winding test," which fill-mode alone can't
+    // distinguish. RenderThread-owned since it's only ever read/written
+    // from this thread's own frame loop, unlike GlobalState's cross-thread
+    // fields.
+    bool wireframeMode = false;
 
     void ThreadEntry(stop_token stopToken);
     void RenderLoop(stop_token stopToken);

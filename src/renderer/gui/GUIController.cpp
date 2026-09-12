@@ -1,11 +1,21 @@
 #include "GUIController.hpp"
-#include <iostream>
+#include "Logger.hpp"
 #include <chrono>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <GLFW/glfw3.h>
 #include "gui/models/GUIComponent.hpp"
 #include "gui/models/Button.hpp"
+#include "gui/models/Chat.hpp"
+
+namespace Volcano {
+// Declared here rather than including network/NetworkClient.hpp: that
+// header drags in asio.hpp, which on Windows pulls in <windows.h> —
+// whose CreateWindowA/CreateWindow macros collide with
+// GUIController::CreateWindow below. This one free function is all
+// GUIController actually needs from it.
+void SendChatMessage(GlobalState* state, const std::string& message);
+}
 
 namespace Volcano {
 
@@ -21,6 +31,9 @@ int GUIController::frameCount = 0;
 float GUIController::fpsTimer = 0.0f;
 GUI::GUIWindow* GUIController::debugWindow = nullptr;
 GUI::GUIComponent* GUIController::debugText = nullptr;
+bool GUIController::chatInputOpen = false;
+bool GUIController::chatInputJustOpened = false;
+char GUIController::chatInputBuffer[256] = {};
 
 void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState)
 {
@@ -33,15 +46,20 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // The default font (ProggyClean) is a hand-drawn bitmap font that's
-    // deliberately not anti-aliased. Swap in a real TrueType font — its
-    // glyphs are rasterized with actual alpha-coverage antialiasing — so
-    // menu/HUD text doesn't look jagged. This only affects the font atlas,
-    // not the world renderer's pipeline/render pass.
     ImFontConfig fontConfig;
     fontConfig.OversampleH = 2;
     fontConfig.OversampleV = 2;
-    io.Fonts->AddFontFromFileTTF("resources/fonts/DroidSans.ttf", 16.0f, &fontConfig);
+    io.Fonts->AddFontFromFileTTF("resources/fonts/Minecraft.ttf", 16.0f, &fontConfig);
+
+    // TODO: once an icon font (FontAwesome/Material) lands in
+    // resources/fonts/, merge its glyphs into the same atlas here with
+    // MergeMode = true so icon glyphs share the primary font's baseline,
+    // e.g.:
+    //   ImFontConfig iconConfig;
+    //   iconConfig.MergeMode = true;
+    //   iconConfig.GlyphMinAdvanceX = 16.0f;
+    //   static const ImWchar iconRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
+    //   io.Fonts->AddFontFromFileTTF("resources/fonts/FontAwesome.ttf", 16.0f, &iconConfig, iconRanges);
 
     // Initialize ImGui for GLFW
     ImGui_ImplGlfw_InitForVulkan(window, true);
@@ -51,6 +69,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
 
     // Setup style
     ImGui::StyleColorsDark();
+    ApplyVolcanoTheme();
 
     // Create debug window.
     std::string debugWindowName = "Debug";
@@ -58,7 +77,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     debugText = new GUI::GUIComponent(GUI::GUIComponentType::TEXT, "");
     debugWindow->components.push_back(debugText);
 
-    std::cout << "[INFO] GUI Controller initialized with ImGui" << std::endl;
+    Log::Info("[INFO] GUI Controller initialized with ImGui");
     initialized = true;
 }
 
@@ -70,7 +89,7 @@ void GUIController::Shutdown()
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    std::cout << "[INFO] GUI Controller shutdown" << std::endl;
+    Log::Info("[INFO] GUI Controller shutdown");
     initialized = false;
 }
 
@@ -93,6 +112,19 @@ void GUIController::Update(float deltaTime)
         CloseScreen();
     }
 
+    // "T" opens the chat input box, same key Minecraft uses — but not while
+    // a Screen already owns input, and not if it's already open (PRESS is
+    // edge-triggered so this only fires once per keypress anyway, but the
+    // guard makes the intent explicit).
+    if (!chatInputOpen && activeScreen == nullptr && state->input->WasActivated("OpenChat"))
+    {
+        OpenChatInput();
+    }
+    else if (chatInputOpen && state->input->IsKeyPressed(GLFW_KEY_ESCAPE))
+    {
+        CloseChatInput();
+    }
+
     // FPS calculation
     frameCount++;
     fpsTimer += deltaTime;
@@ -110,13 +142,13 @@ void GUIController::Update(float deltaTime)
         // Update debug window text.
         if (debugText)
         {
-            float mouseX = state->input->GetAxis("Camera.X");
-            float mouseY = state->input->GetAxis("Camera.Y");
+            glm::vec3 position = state->player->GetPosition();
             debugText->SetLabel(
                 "FPS: " + std::to_string(fps) +
                 "\nFrame Time: " + std::to_string(frameTime) + "ms" +
-                "\nMouse X: " + std::to_string(mouseX) +
-                "\nMouse Y: " + std::to_string(mouseY));
+                "\nPosition X: " + std::to_string(position.x) +
+                "\nPosition Y: " + std::to_string(position.y) +
+                "\nPosition Z: " + std::to_string(position.z));
         }
     }
 }
@@ -173,6 +205,9 @@ void GUIController::Render(VkCommandBuffer commandBuffer)
 
             ImGui::End();
         }
+
+        RenderChatWindow();
+        if (chatInputOpen) RenderChatInputBox();
     }
 
     ImGui::Render();
@@ -193,10 +228,10 @@ void GUIController::RenderComponent(GUI::GUIComponent* component)
             break;
         }
         case GUI::GUIComponentType::BUTTON: {
-            if (ImGui::Button(component->GetLabel().c_str(), ImVec2(240.0f, 0.0f)))
+            if (DrawStyledButton(component->GetLabel(), ImVec2(240.0f, 0.0f)))
             {
                 component->Click();
-                std::cout << "[DEBUG] Button named '" << component->GetLabel() << "' clicked." << std::endl;
+                Log::Debug("[DEBUG] Button named '" + component->GetLabel() + "' clicked.");
             }
             break;
         }
@@ -218,13 +253,17 @@ void GUIController::RenderScreen(GUI::Screen& screen)
 {
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)), ImGuiCond_Always);
+    // No window background — RecordAndSubmitFrame draws the Vulkan 3D scene
+    // into this same render pass before GUIController::Render runs, so the
+    // world shows through behind the screen's own components.
     ImGui::Begin("##screen", nullptr,
         ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoBackground);
 
     ImVec2 titleSize = ImGui::CalcTextSize(screen.title.c_str());
     ImGui::SetCursorPos(ImVec2((ImGui::GetWindowWidth() - titleSize.x) * 0.5f, 24.0f));
@@ -240,6 +279,193 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     }
 
     ImGui::End();
+}
+
+// Read-only, always-on chat/log scrollback — bottom-left, semi-transparent,
+// no input capture (there's no chat box to type into yet, just the
+// incoming-message + debug-log display). Drawn as a plain ImGui window
+// rather than through the GUIComponent/GUIWindow system since it needs
+// per-segment colored runs and auto-scroll that GUIWindow's generic
+// TEXT/BUTTON/INPUT rendering doesn't support.
+// Shared with RenderChatInputBox so the two stay lined up: the input box
+// sits in the margin-height strip at the very bottom, and the scrollback
+// above it shifts up by exactly that much (+ a little breathing room)
+// while chatInputOpen, rather than the two ever overlapping.
+namespace { constexpr float CHAT_WIDTH = 480.0f, CHAT_INPUT_HEIGHT = 32.0f; }
+
+void GUIController::RenderChatWindow()
+{
+    std::vector<GUI::ChatLine> lines = GUI::Chat::GetLines();
+
+    constexpr float height = 220.0f, margin = 8.0f;
+    float bottom = static_cast<float>(WINDOW_HEIGHT) - margin
+        - (chatInputOpen ? CHAT_INPUT_HEIGHT + margin : 0.0f);
+    ImGui::SetNextWindowPos(ImVec2(margin, bottom - height), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(CHAT_WIDTH, height), ImGuiCond_Always);
+    // No SetNextWindowBgAlpha override — inherits ImGuiCol_WindowBg from
+    // ApplyVolcanoTheme (panelDark, alpha 0.96), same as the debug window.
+    ImGui::Begin("##chat", nullptr,
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoInputs);
+
+    for (const GUI::ChatLine& line : lines)
+    {
+        bool first = true;
+        for (const ChatSegment& segment : line.segments)
+        {
+            if (!first) ImGui::SameLine(0.0f, 0.0f);
+            first = false;
+
+            ImVec4 color(
+                static_cast<float>((segment.colorRGB >> 16) & 0xFF) / 255.0f,
+                static_cast<float>((segment.colorRGB >> 8) & 0xFF) / 255.0f,
+                static_cast<float>(segment.colorRGB & 0xFF) / 255.0f,
+                1.0f);
+            ImGui::TextColored(color, "%s", segment.text.c_str());
+        }
+    }
+
+    ImGui::SetScrollHereY(1.0f); // keep pinned to the newest line
+
+    ImGui::End();
+}
+
+// The actual typeable box, only drawn while chatInputOpen — sits directly
+// below RenderChatWindow's (shifted-up) scrollback, in the margin strip it
+// vacated. Enter sends the typed text (see GUIController.hpp's own comment
+// on IsChatInputOpen) and closes the box.
+void GUIController::RenderChatInputBox()
+{
+    constexpr float margin = 8.0f;
+    ImGui::SetNextWindowPos(
+        ImVec2(margin, static_cast<float>(WINDOW_HEIGHT) - CHAT_INPUT_HEIGHT - margin), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(CHAT_WIDTH, CHAT_INPUT_HEIGHT), ImGuiCond_Always);
+    ImGui::Begin("##chatinput", nullptr,
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoScrollbar);
+
+    if (chatInputJustOpened)
+    {
+        // The same "T" keypress that opened this box would otherwise still
+        // be sitting in ImGui's character queue and land as literal text
+        // the instant this InputText below gains focus.
+        ImGui::GetIO().InputQueueCharacters.resize(0);
+        ImGui::SetKeyboardFocusHere();
+        chatInputJustOpened = false;
+    }
+
+    ImGui::SetNextItemWidth(CHAT_WIDTH - 16.0f);
+    if (ImGui::InputText("##chatinputtext", chatInputBuffer, sizeof(chatInputBuffer), ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        if (chatInputBuffer[0] != '\0') SendChatMessage(state, chatInputBuffer);
+        CloseChatInput();
+    }
+
+    ImGui::End();
+}
+
+// Dark navy panels with a cyan border tint, laid on top of StyleColorsDark.
+// Called once at Init — component-level drawing (DrawStyledButton) pulls
+// its own hand-picked colors rather than reading these back, since ImGui's
+// built-in widget colors don't cover custom-drawn glow/border fills.
+void GUIController::ApplyVolcanoTheme()
+{
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 8.0f;
+    style.ChildRounding = 8.0f;
+    style.PopupRounding = 8.0f;
+    style.FrameRounding = 6.0f;
+    style.GrabRounding = 6.0f;
+    style.WindowBorderSize = 1.0f;
+    style.FrameBorderSize = 1.0f;
+
+    ImVec4* colors = style.Colors;
+    const ImVec4 panelDark  = ImVec4(0.04f, 0.06f, 0.10f, 0.96f);
+    const ImVec4 panelMid   = ImVec4(0.07f, 0.10f, 0.16f, 0.96f);
+    const ImVec4 panelLight = ImVec4(0.10f, 0.14f, 0.21f, 1.00f);
+    const ImVec4 cyan       = ImVec4(0.20f, 0.85f, 0.95f, 1.00f);
+    const ImVec4 cyanDim    = ImVec4(0.20f, 0.85f, 0.95f, 0.35f);
+    const ImVec4 cyanHover  = ImVec4(0.35f, 0.92f, 1.00f, 0.55f);
+
+    colors[ImGuiCol_WindowBg]         = panelDark;
+    colors[ImGuiCol_ChildBg]          = panelDark;
+    colors[ImGuiCol_PopupBg]          = panelDark;
+    colors[ImGuiCol_Border]           = cyanDim;
+    colors[ImGuiCol_BorderShadow]     = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    colors[ImGuiCol_FrameBg]          = panelMid;
+    colors[ImGuiCol_FrameBgHovered]   = panelLight;
+    colors[ImGuiCol_FrameBgActive]    = panelLight;
+    colors[ImGuiCol_TitleBg]          = panelDark;
+    colors[ImGuiCol_TitleBgActive]    = panelDark;
+    colors[ImGuiCol_TitleBgCollapsed] = panelDark;
+    colors[ImGuiCol_Button]           = panelMid;
+    colors[ImGuiCol_ButtonHovered]    = panelLight;
+    colors[ImGuiCol_ButtonActive]     = cyanDim;
+    colors[ImGuiCol_CheckMark]        = cyan;
+    colors[ImGuiCol_SliderGrab]       = cyan;
+    colors[ImGuiCol_SliderGrabActive] = cyanHover;
+    colors[ImGuiCol_Separator]        = cyanDim;
+    colors[ImGuiCol_SeparatorHovered] = cyanHover;
+    colors[ImGuiCol_Text]             = ImVec4(0.92f, 0.96f, 1.00f, 1.00f);
+    colors[ImGuiCol_TextDisabled]     = ImVec4(0.50f, 0.55f, 0.60f, 1.00f);
+}
+
+// See header: flat-glow button drawn with ImDrawList so it doesn't depend
+// on ImGui's built-in button skin. An InvisibleButton underneath handles
+// click/hover/active state; everything visible is drawn manually on top.
+bool GUIController::DrawStyledButton(const std::string& label, ImVec2 size)
+{
+    if (size.x <= 0.0f) size.x = ImGui::CalcTextSize(label.c_str()).x + 32.0f;
+    if (size.y <= 0.0f) size.y = ImGui::GetFrameHeight() + 8.0f;
+
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton(label.c_str(), size);
+    bool hovered = ImGui::IsItemHovered();
+    bool active = ImGui::IsItemActive();
+    bool clicked = ImGui::IsItemClicked();
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImVec2 rectMax = ImVec2(pos.x + size.x, pos.y + size.y);
+    constexpr float rounding = 6.0f;
+
+    ImU32 fill = active
+        ? IM_COL32(20, 60, 70, 255)
+        : hovered
+            ? IM_COL32(16, 48, 58, 255)
+            : IM_COL32(12, 32, 40, 235);
+    ImU32 border = (hovered || active)
+        ? IM_COL32(90, 235, 255, 255)
+        : IM_COL32(60, 170, 190, 160);
+
+    // Soft outer glow on hover/active — a slightly larger, low-alpha rect
+    // behind the button, since ImGui has no native blur/shadow primitive.
+    if (hovered || active)
+    {
+        drawList->AddRectFilled(
+            ImVec2(pos.x - 3.0f, pos.y - 3.0f),
+            ImVec2(rectMax.x + 3.0f, rectMax.y + 3.0f),
+            IM_COL32(60, 220, 255, active ? 60 : 35), rounding + 3.0f);
+    }
+
+    drawList->AddRectFilled(pos, rectMax, fill, rounding);
+    drawList->AddRect(pos, rectMax, border, rounding, 0, 1.5f);
+
+    ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+    ImVec2 textPos = ImVec2(
+        pos.x + (size.x - textSize.x) * 0.5f,
+        pos.y + (size.y - textSize.y) * 0.5f);
+    drawList->AddText(textPos, IM_COL32(235, 248, 255, 255), label.c_str());
+
+    return clicked;
 }
 
 // Create a new GUI window.
@@ -327,7 +553,53 @@ void GUIController::CloseScreen()
     activeScreen = nullptr;
     if (windowHandle != nullptr)
     {
-        glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        // Only re-capture the cursor if the window is actually focused right
+        // now. Locking unconditionally here caused a Windows-only feedback
+        // loop: closing a screen while the window was unfocused (e.g. right
+        // after alt-tabbing away) would re-clip the cursor to the window,
+        // which then fought with the OS over focus/mouse ownership. The
+        // window's own focus callback (see VulkanInit's WindowFocusCallback)
+        // is responsible for locking the cursor once real focus returns.
+#ifdef _WIN32
+        if (glfwGetWindowAttrib(windowHandle, GLFW_FOCUSED))
+#endif
+        {
+            glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
+    }
+}
+
+// Raise the chat input box and free the cursor, same reasoning OpenScreen
+// gives for doing so — mouse-look shouldn't fight with typing, and
+// RenderThread::PollInputs is the piece that actually stops reading
+// movement/camera input while this is open (see its own IsChatInputOpen()
+// check, right alongside the existing IsScreenOpen() one).
+void GUIController::OpenChatInput()
+{
+    chatInputOpen = true;
+    chatInputJustOpened = true;
+    chatInputBuffer[0] = '\0';
+    if (windowHandle != nullptr)
+    {
+        glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
+}
+
+// Close the chat input box and re-capture the cursor for the fly-cam —
+// same focus caveat CloseScreen's own comment explains (only re-lock if
+// the window is actually focused right now).
+void GUIController::CloseChatInput()
+{
+    chatInputOpen = false;
+    chatInputJustOpened = false;
+    if (windowHandle != nullptr)
+    {
+#ifdef _WIN32
+        if (glfwGetWindowAttrib(windowHandle, GLFW_FOCUSED))
+#endif
+        {
+            glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
     }
 }
 

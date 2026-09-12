@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.hpp>
+#include <imgui.h>
 #include "../VulkanInit.hpp"
 #include "ImGuiVulkan.hpp"
 #include "GlobalState.hpp"
@@ -53,6 +54,25 @@ public:
     static void CloseScreen();
     static bool IsScreenOpen() { return activeScreen != nullptr; }
 
+    // Chat input box — "T" (see VolcanoClient.cpp's "OpenChat" action)
+    // raises it; Enter sends the typed text (via NetworkClient::
+    // SendChatMessage, a no-op if there's no live connection) and closes
+    // it, Escape closes it without sending. Unlike a Screen this doesn't
+    // hide the HUD or the chat scrollback (which shifts up to make room
+    // for the input box instead) — it only needs to steal keyboard focus
+    // and stop the mouse-look/movement inputs RenderThread::PollInputs
+    // would otherwise also apply to whatever's being typed.
+    static bool IsChatInputOpen() { return chatInputOpen; }
+    static void OpenChatInput();
+    static void CloseChatInput();
+
+    // Draws a flat-glow button in the Volcano theme (filled rect + cyan
+    // border, brighter on hover/press) instead of ImGui's built-in button
+    // skin. Public/reusable so future custom widgets — nav rail, server
+    // list rows, partner cards — can share the same look. size.x/y <= 0
+    // auto-sizes that axis to fit the label.
+    static bool DrawStyledButton(const std::string& label, ImVec2 size = ImVec2(0.0f, 0.0f));
+
 private:
     static GlobalState* state;
     static GLFWwindow* windowHandle;
@@ -67,8 +87,15 @@ private:
     static GUI::GUIWindow* debugWindow;
     static GUI::GUIComponent* debugText;
 
+    static bool chatInputOpen;
+    static bool chatInputJustOpened; // Consumed once by RenderChatInputBox to grab keyboard focus the frame it opens.
+    static char chatInputBuffer[256];
+
     static void RenderComponent(GUI::GUIComponent* component);
     static void RenderScreen(GUI::Screen& screen);
+    static void RenderChatWindow();
+    static void RenderChatInputBox();
+    static void ApplyVolcanoTheme();
 };
 
 } // namespace Volcano

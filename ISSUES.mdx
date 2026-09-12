@@ -1,0 +1,7 @@
+# Volcano Client Issues
+> Format (where { and } represent insertions):
+> [{SELECT ' ' = not done, 'x' = done, '~' = in-progress, '-' = cancelled}] (Platform: {LIST Windows x64, Windows ARM, macOS x64, macOS ARM, Linux x64, Linux ARM}) \*\*{ISSUE}\*\* -- \*{LIST FILES}\*
+
+[x] (Platform: Windows x64, Windows ARM) **Mouse input requires minimize/restore to lock correctly.** -- *`InputHandler.hpp`, `VulkanInit.cpp`*
+[x] (Platform: Windows x64, Windows ARM) **Mouse input does not unlock.** -- *`InputHandler.hpp`, `VulkanInit.cpp`, `GUIController.cpp`*
+[x] (Platform: Windows x64) **Closing the game freezes Intel graphics drivers.** -- *`RenderThread.hpp`, `RenderThread.cpp`, `VolcanoClient.cpp`*

@@ -1,5 +1,6 @@
 #include "ChunkMesher.hpp"
 #include "models/PackedVertex.hpp"
+#include "models/BlockRegistry.hpp"
 #include "../models/SlabBuffer.hpp"
 #include "../VulkanInit.hpp"
 #include "../BiomeColors.hpp"
@@ -35,121 +36,224 @@ void ChunkMesher::Shutdown() {
 }
 
 // Faces: 0=Up, 1=Down, 2=North(-Z), 3=South(+Z), 4=East(+X), 5=West(-X)
-static const glm::vec3 voxelVertices[6][4] = {
-    { {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 0.0f} }, // Up
-    { {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 1.0f} }, // Down
-    { {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 0.0f} }, // North
-    { {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 1.0f} }, // South
-    { {1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {1.0f, 1.0f, 1.0f} }, // East
-    { {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 0.0f} }  // West
+
+// Reads a block that may be outside this chunk's own 0..CHUNK_SIZE_X-1 /
+// 0..CHUNK_SIZE_Z-1 horizontal range (the greedy sweep below deliberately
+// samples one step past each edge to test exposure there) by falling back
+// to World for anything horizontal that crosses into a neighboring chunk.
+// Vertical range never needs this — Chunk::getBlock's own bounds check
+// already returns Air above/below the world height correctly, no neighbor
+// chunk involved — so only lx/lz are tested here. The in-bounds case is a
+// plain array index (chunk.getBlock), same cost as before; only the two
+// edge planes per horizontal axis pay for a World lookup (chunk-map lookup
+// + shared_lock), not every sample.
+static Block GetBlockAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
+    if (lx >= 0 && lx < CHUNK_SIZE_X && lz >= 0 && lz < CHUNK_SIZE_Z) {
+        return chunk.getBlock(lx, ly, lz);
+    }
+
+    int worldX = chunk.getX() * CHUNK_SIZE_X + lx;
+    int worldZ = chunk.getZ() * CHUNK_SIZE_Z + lz;
+    return world.GetBlock(worldX, ly + WORLD_MIN_Y, worldZ);
+}
+
+// One cell of the 2D mask swept across a chunk during greedy meshing: which
+// block type is exposed at this cell, and which side of the sweep plane it
+// sits on (+1 = solid block is on the negative side of the boundary and its
+// face points in the positive axis direction, -1 = the opposite). A `normal`
+// of 0 means no face is exposed here (both sides agree — solid/solid or
+// air/air) and the cell is skipped.
+struct MaskCell {
+    uint16_t type = 0;
+    int8_t normal = 0;
+
+    bool IsEmpty() const { return normal == 0; }
+    bool operator==(const MaskCell& other) const {
+        return type == other.type && normal == other.normal;
+    }
+    bool operator!=(const MaskCell& other) const { return !(*this == other); }
 };
 
-// Corner UV per vertex, matching the winding order above (0,0)-(1,0)-(1,1)-(0,1).
-// Values are in 0-255 range for 8-bit precision in packed vertex format.
-static const uint8_t uvCorners[4][2] = { {0,0}, {255,0}, {255,255}, {0,255} };
-static const uint32_t voxelIndices[6] = { 0, 1, 2, 2, 3, 0 };
+// Maps a sweep axis (0=X, 1=Y, 2=Z) and the sign of the exposed face's normal
+// to the same face indices GetFaceTexture()/the lighting table below expect.
+static int FaceIndexFor(int axis, int normal) {
+    switch (axis) {
+        case 0: return normal > 0 ? 4 : 5; // East / West
+        case 1: return normal > 0 ? 0 : 1; // Up / Down
+        default: return normal > 0 ? 3 : 2; // South / North
+    }
+}
 
 struct FaceTexture {
     uint16_t layer;
     bool biomeTinted;
 };
 
-// Maps a block type (and, for blocks whose faces differ, which face is being
-// meshed) to the resource-pack texture name, then resolves that name to its
-// array layer via the TextureManager. The array layer for a texture is
-// assigned by load order (see TextureManager::LoadResourcePack), which has no
-// relation to the BlockType enum's numeric value, so the two must never be
-// conflated the way this used to (using `type` directly as the layer index).
-static FaceTexture GetFaceTexture(BlockType type, int face, const TextureManager& textureManager) {
-    const char* name = "stone";
-
-    switch (type) {
-        case BlockType::Stone:
-            name = "stone";
-            break;
-        case BlockType::Dirt:
-            name = "dirt";
-            break;
-        case BlockType::Grass:
-            if (face == 0) name = "grass_block_top";
-            else if (face == 1) name = "dirt";
-            else name = "grass_block_side";
-            break;
-        case BlockType::Wood:
-            name = (face == 0 || face == 1) ? "oak_log_top" : "oak_log";
-            break;
-        case BlockType::Leaves:
-            name = "oak_leaves";
-            break;
-        default:
-            break;
-    }
-
+// Maps a block's visual id (and, for blocks whose faces differ, which face
+// is being meshed) to the resource-pack texture name via BlockRegistry
+// (built from minecraft-data + the vanilla blockstate/model JSON at
+// startup), then resolves that name to its array layer via the
+// TextureManager. The array layer for a texture is assigned by load order
+// (see TextureManager::LoadResourcePack), which has no relation to the
+// visual id, so the two must never be conflated (using `visualId` directly
+// as the layer index).
+static FaceTexture GetFaceTexture(uint16_t visualId, int face, const TextureManager& textureManager) {
+    const std::string& name = BlockRegistry::GetFaceTextureName(visualId, face);
     return { textureManager.GetLayerIndex(name), IsBiomeTinted(name) };
 }
 
-Mesh ChunkMesher::MeshChunk(const Chunk& chunk, const TextureManager& textureManager) {
+// Sweeps every boundary plane perpendicular to `axis` (0=X, 1=Y, 2=Z), and for
+// each plane greedily merges the exposed faces on it into maximal rectangles
+// (standard "Meshing in a Minecraft Game" algorithm) instead of emitting one
+// quad per block face. `u`/`v` name the other two axes, in the order the mask
+// is swept in.
+static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, const TextureManager& textureManager,
+        std::vector<PackedVertex>& vertices, std::vector<uint32_t>& indices) {
+    const int dims[3] = { CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z };
+    const int u = (axis + 1) % 3;
+    const int v = (axis + 2) % 3;
+
+    std::vector<MaskCell> mask(dims[u] * dims[v]);
+
+    int x[3] = {0, 0, 0};
+    int q[3] = {0, 0, 0};
+    q[axis] = 1;
+
+    // Planes run from -1 (chunk's negative boundary, block A is out-of-bounds
+    // Air) through dims[axis]-1 (chunk's positive boundary, block B is Air).
+    // Chunk::getBlock() already clamps out-of-range coordinates to Air, so no
+    // special-casing is needed at the edges.
+    //
+    // No auto-increment here: the loop body already advances x[axis] by 1
+    // itself (the manual `x[axis]++` below, needed to turn the "a" sample
+    // coordinate into the plane coordinate quads are built at). Auto-
+    // incrementing here TOO meant x[axis] advanced by 2 every iteration,
+    // silently skipping every other boundary along this axis (testing
+    // -1|0, 1|2, 3|4, ... and never 0|1, 2|3, 4|5, ...) — roughly half of
+    // every chunk's internal block boundaries were never checked for
+    // exposure at all, on every axis. That's the actual "solid block with
+    // a missing face" bug, unrelated to winding/culling/merging.
+    for (x[axis] = -1; x[axis] < dims[axis]; ) {
+        int n = 0;
+        for (x[v] = 0; x[v] < dims[v]; x[v]++) {
+            for (x[u] = 0; x[u] < dims[u]; x[u]++, n++) {
+                Block a = GetBlockAcrossChunks(chunk, world, x[0], x[1], x[2]);
+                Block b = GetBlockAcrossChunks(chunk, world, x[0] + q[0], x[1] + q[1], x[2] + q[2]);
+                bool aOpaque = a.isOpaque();
+                bool bOpaque = b.isOpaque();
+
+                if (aOpaque == bOpaque) mask[n] = {};
+                else if (aOpaque) mask[n] = { a.visualId, 1 };
+                else mask[n] = { b.visualId, -1 };
+            }
+        }
+
+        x[axis]++; // x[axis] is now the coordinate of the plane the mask describes
+
+        n = 0;
+        for (int j = 0; j < dims[v]; j++) {
+            for (int i = 0; i < dims[u];) {
+                const MaskCell cell = mask[n];
+                if (cell.IsEmpty()) { i++; n++; continue; }
+
+                int w = 1;
+                while (i + w < dims[u] && mask[n + w] == cell) w++;
+
+                int h = 1;
+                bool done = false;
+                while (j + h < dims[v]) {
+                    for (int k = 0; k < w; k++) {
+                        if (mask[n + k + h * dims[u]] != cell) { done = true; break; }
+                    }
+                    if (done) break;
+                    h++;
+                }
+
+                x[u] = i;
+                x[v] = j;
+
+                int faceIndex = FaceIndexFor(axis, cell.normal);
+                FaceTexture faceTexture = GetFaceTexture(cell.type, faceIndex, textureManager);
+
+                // Same faux-lighting scheme as before, now packed into skyLight (0-15).
+                float light = 1.0f; // Up: full brightness (direct sky exposure). TODO: Don't hardcode this.
+                if (faceIndex == 1) light = 0.5f;
+                else if (faceIndex == 2 || faceIndex == 3) light = 0.8f;
+                else if (faceIndex == 4 || faceIndex == 5) light = 0.6f;
+                uint8_t skyLight = static_cast<uint8_t>(light * 15.0f);
+
+                // Quad corners as (u, v) offsets from (x[u], x[v]); the winding
+                // order differs by normal sign so the merged quad still faces
+                // outward correctly (matches the per-face winding the old
+                // per-voxel table used). Which specific winding is "correct"
+                // no longer matters for visual correctness — see
+                // VulkanInit.cpp's terrain pipeline, which now disables
+                // backface culling entirely rather than relying on getting
+                // this exactly right for every axis/viewing angle.
+                static const int positiveCorners[4][2] = { {0,0}, {1,0}, {1,1}, {0,1} };
+                static const int negativeCorners[4][2] = { {0,0}, {0,1}, {1,1}, {1,0} };
+                const auto& corners = cell.normal > 0 ? positiveCorners : negativeCorners;
+
+                uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
+                for (int c = 0; c < 4; c++) {
+                    int uOff = corners[c][0] * w;
+                    int vOff = corners[c][1] * h;
+
+                    // Local position: 0-15/0-63 range, NOT world-space — chunk
+                    // offset is applied via the push-constant model matrix instead.
+                    int localPos[3] = { x[0], x[1], x[2] };
+                    localPos[u] = x[u] + uOff;
+                    localPos[v] = x[v] + vOff;
+
+                    // UV is packed as raw block-space tile counts (not normalized
+                    // 0-1) so a merged quad tiles its texture `w` x `h` times via
+                    // the texture sampler's REPEAT wrap mode, rather than
+                    // stretching one texture across the whole rect.
+                    vertices.push_back(PackedVertex::Pack(
+                        glm::uvec3(localPos[0], localPos[1], localPos[2]),
+                        static_cast<uint8_t>(faceIndex), // normalIndex, 0-5 fits in 3 bits
+                        0,                     // AO — not computed yet
+                        static_cast<uint8_t>(uOff), static_cast<uint8_t>(vOff),
+                        faceTexture.layer,
+                        0,                     // blockLight — not tracked yet
+                        skyLight,
+                        faceTexture.biomeTinted
+                    ));
+                }
+
+                indices.push_back(baseIndex + 0);
+                indices.push_back(baseIndex + 1);
+                indices.push_back(baseIndex + 2);
+                indices.push_back(baseIndex + 2);
+                indices.push_back(baseIndex + 3);
+                indices.push_back(baseIndex + 0);
+
+                for (int hh = 0; hh < h; hh++) {
+                    for (int ww = 0; ww < w; ww++) {
+                        mask[n + ww + hh * dims[u]] = {};
+                    }
+                }
+
+                i += w;
+                n += w;
+            }
+        }
+    }
+}
+
+Mesh ChunkMesher::MeshChunk(const Chunk& chunk, const World& world, const TextureManager& textureManager) {
     std::vector<PackedVertex> vertices;
     std::vector<uint32_t> indices;
 
-    for (int y = 0; y < CHUNK_SIZE_Y; y++) {
-        for (int z = 0; z < CHUNK_SIZE_Z; z++) {
-            for (int x = 0; x < CHUNK_SIZE_X; x++) {
-                Block block = chunk.getBlock(x, y, z);
-                if (!block.isOpaque()) continue;
-
-                struct Dir { int x, y, z, face; };
-                Dir dirs[6] = {
-                    {0, 1, 0, 0}, {0, -1, 0, 1},
-                    {0, 0, -1, 2}, {0, 0, 1, 3},
-                    {1, 0, 0, 4}, {-1, 0, 0, 5}
-                };
-
-                for (const auto& dir : dirs) {
-                    Block neighbor = chunk.getBlock(x + dir.x, y + dir.y, z + dir.z);
-                    if (neighbor.isOpaque()) continue;
-
-                    FaceTexture faceTexture = GetFaceTexture(block.type, dir.face, textureManager);
-
-                    // Same faux-lighting scheme as before, now packed into skyLight (0-15).
-                    float light = 1.0f; // Up: full brightness (direct sky exposure). TODO: Don't hardcode this.
-                    if (dir.face == 1) light = 0.5f;
-                    else if (dir.face == 2 || dir.face == 3) light = 0.8f;
-                    else if (dir.face == 4 || dir.face == 5) light = 0.6f;
-                    uint8_t skyLight = static_cast<uint8_t>(light * 15.0f);
-
-                    uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
-
-                    for (int i = 0; i < 4; i++) {
-                        // Local position: 0-15 range, NOT world-space — chunk offset
-                        // is applied via the push-constant model matrix instead.
-                        glm::vec3 localPos = glm::vec3(x, y, z) + voxelVertices[dir.face][i];
-
-                        vertices.push_back(PackedVertex::Pack(
-                            glm::uvec3(localPos), // truncation is fine, corners are integral
-                            static_cast<uint8_t>(dir.face), // normalIndex, 0-5 fits in 3 bits
-                            0,                     // AO — not computed yet
-                            uvCorners[i][0], uvCorners[i][1],
-                            faceTexture.layer,
-                            0,                     // blockLight — not tracked yet
-                            skyLight,
-                            faceTexture.biomeTinted
-                        ));
-                    }
-
-                    for (int i = 0; i < 6; i++) {
-                        indices.push_back(baseIndex + voxelIndices[i]);
-                    }
-                }
-            }
-        }
+    for (int axis = 0; axis < 3; axis++) {
+        GreedyMeshAxis(chunk, world, axis, textureManager, vertices, indices);
     }
 
     Mesh mesh{};
     mesh.vertexCount = static_cast<uint32_t>(vertices.size());
     mesh.indexCount = static_cast<uint32_t>(indices.size());
     mesh.modelMatrix = glm::translate(glm::mat4(1.0f),
-        glm::vec3(chunk.getX() * CHUNK_SIZE_X, 0.0f, chunk.getZ() * CHUNK_SIZE_Z));
+        glm::vec3(chunk.getX() * CHUNK_SIZE_X, WORLD_MIN_Y, chunk.getZ() * CHUNK_SIZE_Z));
 
     if (mesh.vertexCount > 0) {
         EnsureSlabsInitialized();

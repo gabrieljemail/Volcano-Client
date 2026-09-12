@@ -1,11 +1,11 @@
 #include <thread>
 #include <memory>
-#include <iostream>
 #include <vector>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #define VMA_IMPLEMENTATION
 #include "GlobalState.hpp"
+#include "Logger.hpp"
 #include "VulkanInit.hpp"
 #include "RenderThread.hpp"
 #include "../Helpers.hpp"
@@ -13,6 +13,9 @@
 #include "models/CameraUBO.hpp"
 #include "models/PackedVertex.hpp"
 #include "terrain/ChunkMesher.hpp"
+#include "entity/EntityRenderer.hpp"
+#include "misc/MiscVertex.hpp"
+#include "misc/NonCubicMesher.hpp"
 
 using namespace std;
 
@@ -36,6 +39,17 @@ static void FramebufferSizeCallback(GLFWwindow* /*win*/, int width, int height)
 }
 
 #ifdef _WIN32
+// Set once the render thread has presented at least one frame — see
+// NotifyFramePresented(). GLFW_FOCUSED can already read true immediately
+// after glfwCreateWindow() even though Windows hasn't actually shown/
+// composited the window yet, so a focus-gained event (or an eager check at
+// InputHandler construction — since removed) can fire before the window is
+// really up. Locking the cursor at that point clips it to a window the
+// desktop hasn't painted, which looks like a visible cursor trapped in a
+// "ghost" window until the user clicks it. Withholding the lock until a
+// frame has genuinely been presented fixes that ordering.
+static bool g_firstFramePresented = false;
+
 static void WindowFocusCallback(GLFWwindow* win, int focused)
 {
     if (focused)
@@ -43,7 +57,7 @@ static void WindowFocusCallback(GLFWwindow* win, int focused)
         // Don't steal the cursor back from ImGui while a Screen (connect
         // screen, pause menu, etc.) is open — GUIController itself owns
         // cursor mode in that case (see OpenScreen/CloseScreen).
-        if (!GUIController::IsScreenOpen())
+        if (g_firstFramePresented && !GUIController::IsScreenOpen())
         {
             glfwSetInputMode(win, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         }
@@ -54,6 +68,23 @@ static void WindowFocusCallback(GLFWwindow* win, int focused)
     }
 }
 #endif
+
+void NotifyFramePresented()
+{
+#ifdef _WIN32
+    if (g_firstFramePresented) return;
+    g_firstFramePresented = true;
+
+    // The window may already have (real) focus by the time this first
+    // frame lands, in which case no further WindowFocusCallback will ever
+    // fire to lock the cursor — so apply the same check here once, now
+    // that the window is genuinely on screen.
+    if (window && glfwGetWindowAttrib(window, GLFW_FOCUSED) && !GUIController::IsScreenOpen())
+    {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    }
+#endif
+}
 
 // Helper to create a ShaderModule from raw SPIR-V bytecode
 VkShaderModule CreateShaderModule(VkDevice dev, const std::vector<char>& code)
@@ -144,14 +175,27 @@ void CreateGraphicsPipeline()
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    // The projection matrix flips clip-space Y (p[1][1] *= -1) to account for
-    // Vulkan's top-down NDC convention. That flip mirrors the winding of every
-    // triangle as the rasterizer sees it, so the front-face convention has to
-    // be flipped to match the actual (unflipped) winding baked into the chunk
-    // mesh's vertex order — otherwise front/back faces are swapped, and you
-    // end up seeing through "invisible" near faces into the far interior ones.
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // No backface culling for terrain. This used to be VK_CULL_MODE_BACK_BIT
+    // with VK_FRONT_FACE_CLOCKWISE, on the theory that ChunkMesher's greedy
+    // quads are consistently wound CCW-from-outside in world space (see
+    // GreedyMeshAxis's positiveCorners) and RenderThread's p[1][1] *= -1
+    // projection flip (needed to land the image right-side-up) inverts that
+    // to CW in framebuffer space uniformly for every face. In practice that
+    // held for wall faces (X/Z-swept) but NOT for floor/ceiling faces
+    // (Y-swept) — after correcting for the wall case, floors still rendered
+    // inside-out (visible from below, culled from above, letting you see
+    // through solid ground to bedrock) — a per-axis asymmetry the theory
+    // above says shouldn't exist, and repeated attempts to hand-derive the
+    // actual rule didn't resolve it. Rather than continue guessing, terrain
+    // just draws both sides now: every face renders regardless of view
+    // angle, so whichever winding is nearer the camera wins the depth test
+    // and looks correct either way. This also means a player wedged inside
+    // a solid block sees that block's own surface (like any other wall)
+    // instead of every face flipping to show the far side of the world —
+    // no more "wallhack" view from getting stuck. Costs roughly double the
+    // fragment work versus perfectly-tuned culling; not worth chasing
+    // further on an already-60fps-capped integrated GPU.
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     // 7. SINGLE-PASS SAMPLING (MULTISAMPLING)
@@ -225,11 +269,172 @@ void CreateGraphicsPipeline()
         throw std::runtime_error("Failed to create graphics pipeline!");
     }
 
+    // Wireframe variant of the same pipeline (F3, see RenderThread) — a
+    // debug tool for seeing where mesh geometry actually is versus what the
+    // fill-mode result implies, e.g. telling "this face is missing
+    // entirely" apart from "this face exists but lost the depth/winding
+    // test" (which polygon fill alone can't distinguish). Shares every
+    // other piece of state with the pipeline above — only polygonMode
+    // differs — so it's built from the exact same CreateInfo, not a
+    // parallel hand-copied one that could quietly drift out of sync.
+    VkPipelineRasterizationStateCreateInfo wireframeRasterizer = rasterizer;
+    wireframeRasterizer.polygonMode = VK_POLYGON_MODE_LINE;
+    wireframeRasterizer.cullMode = VK_CULL_MODE_NONE;
+    wireframeRasterizer.lineWidth = 1.0f; // >1.0 needs the wideLines feature, which isn't requested/guaranteed enabled.
+
+    VkGraphicsPipelineCreateInfo wireframePipelineInfo = pipelineInfo;
+    wireframePipelineInfo.pRasterizationState = &wireframeRasterizer;
+
+    if (vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &wireframePipelineInfo, nullptr, &wireframePipeline) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create wireframe graphics pipeline!");
+    }
+
     // 11. CLEANUP TEMPORARY SHADER MODULES
     vkDestroyShaderModule(dev, fragShaderModule, nullptr);
     vkDestroyShaderModule(dev, vertShaderModule, nullptr);
 
-    std::cout << "[INFO] Graphics pipeline successfully initialized." << std::endl;
+    Volcano::Log::Info("[INFO] Graphics pipeline successfully initialized.");
+}
+
+// Second pass for everything that isn't a fully opaque cube: transparent
+// full cubes (glass, slime, ice, ...), partial-volume boxes (slabs,
+// carpets, ...), and cross-shaped plants (grass, flowers, ...) — see
+// NonCubicMesher. Reuses the terrain pass's pipelineLayout (identical push
+// constant + descriptor set layout signature: camera UBO + texture array),
+// so only a new VkPipeline with different fixed-function state is needed:
+//  - No backface culling: this pass covers shapes meant to be seen from
+//    both sides (a cross billboard, the inner face of a glass pane) rather
+//    than closed solids, so the task's "shouldn't contribute to backface
+//    culling" is satisfied by disabling culling for the pass entirely.
+//  - Alpha blending on, depth WRITE off (but depth TEST still on): lets
+//    partially transparent geometry blend over whatever the opaque pass
+//    already wrote, without one piece of this pass's own geometry
+//    occluding another based on draw order alone.
+void CreateNonCubicPipeline()
+{
+    VkDevice dev = GetDevice();
+
+    std::vector<char> vertShaderCode = ReadFile("resources/shaders/misc.vert.spv");
+    std::vector<char> fragShaderCode = ReadFile("resources/shaders/misc.frag.spv");
+
+    if (vertShaderCode.empty() || fragShaderCode.empty()) {
+        throw std::runtime_error("[ERROR] Failed to read shader files: resources/shaders/misc.vert.spv or resources/shaders/misc.frag.spv");
+    }
+
+    VkShaderModule vertShaderModule = CreateShaderModule(dev, vertShaderCode);
+    VkShaderModule fragShaderModule = CreateShaderModule(dev, fragShaderCode);
+
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShaderModule;
+    vertShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShaderModule;
+    fragShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+    auto bindingDescription = Volcano::MiscVertex::getBindingDescription();
+    auto attributeDescriptions = Volcano::MiscVertex::getAttributeDescriptions();
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+
+    VkPipelineDynamicStateCreateInfo dynamicStateInfo{};
+    dynamicStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicStateInfo.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicStateInfo.pDynamicStates = dynamicStates.data();
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE; // See this function's own comment on why.
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE; // See this function's own comment on why.
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                          VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT |
+                                          VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicStateInfo;
+    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline — see this function's own comment.
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    if (vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &nonCubicPipeline) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create non-cubic graphics pipeline!");
+    }
+
+    vkDestroyShaderModule(dev, fragShaderModule, nullptr);
+    vkDestroyShaderModule(dev, vertShaderModule, nullptr);
+
+    Volcano::Log::Info("[INFO] Non-cubic graphics pipeline successfully initialized.");
 }
 
 // Create a buffer with VMA.
@@ -435,9 +640,18 @@ void Init(GlobalState* state)
     }
 
     // Get a device.
+    // fillModeNonSolid is required for the wireframe debug pipeline
+    // (VK_POLYGON_MODE_LINE) — see CreateGraphicsPipeline. Virtually every
+    // desktop/integrated GPU supports it; requiring it here just makes a
+    // device that somehow doesn't fail selection with a clear error instead
+    // of failing wireframe pipeline creation later with a validation error.
+    VkPhysicalDeviceFeatures requiredFeatures{};
+    requiredFeatures.fillModeNonSolid = VK_TRUE;
+
     vkb::PhysicalDeviceSelector physDeviceSelector(instance);
     auto physDeviceSelectorReturn = physDeviceSelector
         .set_surface(surface)
+        .set_required_features(requiredFeatures)
         .select(); // TODO: Read settings.json if the user has a preferred device name.
 
     if (!physDeviceSelectorReturn)
@@ -642,7 +856,17 @@ void Init(GlobalState* state)
     // Create the graphics pipeline.
     CreateGraphicsPipeline();
 
-    // Create command pool and command buffers.
+    // Non-cubic (transparent/cross/partial-shape) pass — needs
+    // pipelineLayout above, since it reuses it.
+    CreateNonCubicPipeline();
+
+    // Create command pool and command buffers. Must happen before
+    // EntityRenderer::Init() below: its UploadCubeMesh() uses
+    // BeginOneShotCommands()/EndOneShotCommands(), which allocate from the
+    // global `commandPool` — with no error checking on either the pool or
+    // the command-buffer allocation, running it against a not-yet-created
+    // (VK_NULL_HANDLE) pool crashed outright instead of throwing, which is
+    // why it showed no error log at all before the process just exited.
     VkCommandPoolCreateInfo cmdPoolInfo{};
     cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     cmdPoolInfo.queueFamilyIndex = graphicsQueueFamilyIndex;
@@ -661,6 +885,10 @@ void Init(GlobalState* state)
     if (vkAllocateCommandBuffers(device.device, &bufferAllocInfo, commandBuffers)) {
         throw std::runtime_error("Failed to allocate command buffers!");
     }
+
+    // Entity render pass — needs the render pass and camera descriptor set
+    // layout above, plus commandPool just above (see its own comment).
+    EntityRenderer::Init();
 
     // Create semaphores and fences.
     VkSemaphoreCreateInfo semaphoreInfo{};
@@ -812,6 +1040,8 @@ void Cleanup()
     }
 
     vkDestroyPipeline(device.device, graphicsPipeline, nullptr);
+    vkDestroyPipeline(device.device, wireframePipeline, nullptr);
+    vkDestroyPipeline(device.device, nonCubicPipeline, nullptr);
     vkDestroyPipelineLayout(device.device, pipelineLayout, nullptr);
     vkDestroyCommandPool(device.device, commandPool, nullptr);
     vkDestroyRenderPass(device.device, renderPass, nullptr);
@@ -822,6 +1052,16 @@ void Cleanup()
     if (depthImage != VK_NULL_HANDLE) {
         vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
     }
+
+    // The camera UBOs (in allocatedBuffers, below) were left persistently
+    // mapped by Init() — vmaDestroyBuffer asserts if its allocation still
+    // has an outstanding map, so unmap them first.
+    for (int i = 0; i < 3; i++) {
+        if (cameraUBOsMapped[i] != nullptr) {
+            vmaUnmapMemory(vmaAllocator, cameraUBOs[i].allocation);
+            cameraUBOsMapped[i] = nullptr;
+        }
+    }
     for (auto& buf : allocatedBuffers)
     {
         vmaDestroyBuffer(vmaAllocator, buf.buffer, buf.allocation);
@@ -829,6 +1069,8 @@ void Cleanup()
     allocatedBuffers.clear();
 
     ChunkMesher::Shutdown();
+    NonCubicMesher::Shutdown();
+    EntityRenderer::Shutdown();
 
     if (vmaAllocator != VK_NULL_HANDLE) {
         vmaDestroyAllocator(vmaAllocator);
@@ -849,6 +1091,15 @@ void Cleanup()
 
 VkCommandBuffer BeginOneShotCommands()
 {
+    // commandPool must already exist (Init() creates it before anything
+    // that calls this — see EntityRenderer::Init()'s own comment on why
+    // that order matters) — a null pool here used to fail both calls below
+    // silently and hand back/begin-record a garbage command buffer, which
+    // crashed the process outright instead of throwing.
+    if (commandPool == VK_NULL_HANDLE) {
+        throw std::runtime_error("[ERROR] BeginOneShotCommands called before commandPool was created.");
+    }
+
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -856,26 +1107,34 @@ VkCommandBuffer BeginOneShotCommands()
     allocInfo.commandBufferCount = 1;
 
     VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(GetDevice(), &allocInfo, &commandBuffer);
+    if (vkAllocateCommandBuffers(GetDevice(), &allocInfo, &commandBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to allocate one-shot command buffer.");
+    }
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to begin one-shot command buffer.");
+    }
     return commandBuffer;
 }
 
 void EndOneShotCommands(VkCommandBuffer cmd)
 {
-    vkEndCommandBuffer(cmd);
+    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to end one-shot command buffer.");
+    }
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmd;
 
-    vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to submit one-shot command buffer.");
+    }
     vkQueueWaitIdle(graphicsQueue);
 
     vkFreeCommandBuffers(GetDevice(), commandPool, 1, &cmd);

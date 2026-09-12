@@ -8,6 +8,8 @@
 #include "VulkanInit.hpp"
 #include "models/CameraUBO.hpp"
 #include "models/Mesh.hpp"
+#include "terrain/VisibleChunkController.hpp"
+#include "entity/EntityRenderer.hpp"
 #include "gui/GUIController.hpp"
 #include "../TickLoop.hpp"
 
@@ -40,6 +42,16 @@ void RenderThread::Start()
     });
 }
 
+void RenderThread::RequestStop()
+{
+    worker.request_stop();
+}
+
+bool RenderThread::HasStopped() const
+{
+    return finished.load();
+}
+
 void RenderThread::Stop()
 {
     worker.request_stop();
@@ -59,8 +71,19 @@ void RenderThread::ThreadEntry(stop_token stopToken)
         cerr << "[ERROR] Render thread crashed during startup: " << e.what() << endl;
     }
 
+    // The last submitted frame's command buffer may still be executing on
+    // the GPU (fences are only waited on at the *start* of the next frame,
+    // which never comes once the loop above has exited) and it references
+    // ImGui's descriptor pool/pipeline. GUIController::Shutdown() destroys
+    // those Vulkan objects outright, so without this wait it tears down
+    // resources the GPU is still using — previously masked entirely by the
+    // present-time deadlock this loop used to hit before ever reaching here.
+    vkDeviceWaitIdle(GetDevice());
+
     // Cleanup GUI controller
     GUIController::Shutdown();
+
+    finished.store(true);
 }
 
 void RenderThread::RenderLoop(stop_token stopToken)
@@ -74,6 +97,11 @@ void RenderThread::RenderLoop(stop_token stopToken)
         UpdateDeltaTime();
         PollInputs();
         DrawFrame();
+        // Both PollInputs (F11, TickLoop's jump check) and DrawFrame (via
+        // GUIController::Update()'s Escape check) read this frame's
+        // press/release edges above — only clear them now that both have
+        // had their chance, not before.
+        state->input->EndFrame();
     }
 
     // When the render loop exits for some reason, tell the main thread to shut down.
@@ -131,10 +159,15 @@ void RenderThread::PollInputs()
         ToggleWindowMode();
     }
 
-    // While a Screen (connect screen, future pause menu, etc.) is open,
-    // ImGui owns the mouse/keyboard — don't let them also fly the camera
-    // or move the player underneath it.
-    if (GUIController::IsScreenOpen()) return;
+    if (state->input->WasActivated("ToggleWireframe"))
+    {
+        wireframeMode = !wireframeMode;
+    }
+
+    // While a Screen (connect screen, future pause menu, etc.) or the chat
+    // input box is open, ImGui owns the mouse/keyboard — don't let them
+    // also fly the camera or move the player underneath it.
+    if (GUIController::IsScreenOpen() || GUIController::IsChatInputOpen()) return;
 
     // Mouse sensitivity is applied entirely at the axis level (see the
     // Camera.X/Y registration in VolcanoClient.cpp) — pass 1.0f here so
@@ -170,6 +203,7 @@ void RenderThread::DrawFrame()
     {
         RecordAndSubmitFrame();
         PresentFrame();
+        NotifyFramePresented();
     }
 
     auto workEnd = chrono::steady_clock::now();
@@ -242,7 +276,7 @@ void RenderThread::RecordAndSubmitFrame()
     renderPassInfo.pClearValues = clearValues.data();
 
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, wireframeMode ? wireframePipeline : graphicsPipeline);
 
     // Set the dynamic viewport.
     VkViewport viewport{};
@@ -276,21 +310,68 @@ void RenderThread::RecordAndSubmitFrame()
     VkDescriptorSet sets[] = { cameraSets[currentFrame], textureSet };
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
 
-    // Bind each mesh.
-    for (const Mesh& mesh : state->renderList)
+    // Bind each visible mesh. Locked against the main thread's
+    // DrainNetworkInbox, which appends to renderList as chunks stream in —
+    // see the mutex's comment in GlobalState.hpp. Frustum culling runs
+    // inside the lock (cheap: a handful of dot products per chunk) so the
+    // filtered list doesn't outlive renderList's own Mesh storage.
+    glm::mat4 viewProj = ubo.proj * ubo.view;
     {
-        VkDeviceSize offsets[] = {mesh.vertexOffset};
-        vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer, offsets);
-
-        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mesh.modelMatrix);
-
-        if (mesh.indexCount > 0)
+        std::lock_guard<std::mutex> lock(state->renderListMutex);
+        for (const Mesh* meshPtr : VisibleChunkController::GetVisibleMeshes(state->renderList, viewProj))
         {
-            vkCmdBindIndexBuffer(cmd, mesh.indexBuffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-        } else
+            const Mesh& mesh = *meshPtr;
+            VkDeviceSize offsets[] = {mesh.vertexOffset};
+            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer, offsets);
+
+            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mesh.modelMatrix);
+
+            if (mesh.indexCount > 0)
+            {
+                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+            } else
+            {
+                vkCmdDraw(cmd, mesh.vertexCount, 1, 0, 0);
+            }
+        }
+    }
+
+    // Entities are a separate batched pass sharing this same subpass/depth
+    // attachment — see EntityRenderer's header for why draw order relative
+    // to the chunk pass above doesn't affect depth-test correctness.
+    glm::vec3 cameraWorldPosition = state->player->camera.GetEyePosition(state->tickLoop->GetRenderPosition());
+    EntityRenderer::RecordDraw(cmd, currentFrame, state, ubo.view, ubo.proj, cameraWorldPosition);
+
+    // Non-cubic pass: transparent full cubes (glass, slime, ice, ...),
+    // partial-volume shapes (slabs, carpets, ...), and cross-shaped plants
+    // (grass, flowers, ...) — see NonCubicMesher/VulkanInit's
+    // nonCubicPipeline. Drawn last (after opaque terrain and entities) with
+    // alpha blending and no depth write, so it composites over what's
+    // already in the color buffer without needing draw-order sorting within
+    // itself. Same frustum-culling/locking pattern as the chunk pass above.
+    {
+        std::lock_guard<std::mutex> lock(state->nonCubicRenderListMutex);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, nonCubicPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
+
+        for (const Mesh* meshPtr : VisibleChunkController::GetVisibleMeshes(state->nonCubicRenderList, viewProj))
         {
-            vkCmdDraw(cmd, mesh.vertexCount, 1, 0, 0);
+            const Mesh& mesh = *meshPtr;
+            if (mesh.vertexCount == 0) continue;
+
+            VkDeviceSize offsets[] = {mesh.vertexOffset};
+            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer, offsets);
+            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mesh.modelMatrix);
+
+            if (mesh.indexCount > 0)
+            {
+                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+            } else
+            {
+                vkCmdDraw(cmd, mesh.vertexCount, 1, 0, 0);
+            }
         }
     }
 

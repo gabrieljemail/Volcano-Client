@@ -1,7 +1,7 @@
 #include "ImGuiVulkan.hpp"
+#include "Logger.hpp"
 #include <imgui.h>
 #include <imgui_impl_vulkan.h>
-#include <iostream>
 
 namespace Volcano {
 
@@ -31,15 +31,15 @@ void ImGuiVulkan::Init(ImGuiVulkanContext& context, VkRenderPass renderPass, uin
     init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     
     if (!ImGui_ImplVulkan_Init(&init_info)) {
-        std::cerr << "[ERROR] Failed to initialize ImGui Vulkan backend" << std::endl;
+        Log::Error("[ERROR] Failed to initialize ImGui Vulkan backend");
         return;
     }
-    
+
     // The new ImGui backend handles font loading automatically during Init
     // No need to manually upload fonts anymore
-    
+
     context.initialized = true;
-    std::cout << "[INFO] ImGui Vulkan backend initialized" << std::endl;
+    Log::Info("[INFO] ImGui Vulkan backend initialized");
 }
 
 void ImGuiVulkan::Shutdown(ImGuiVulkanContext& context) {
@@ -53,7 +53,7 @@ void ImGuiVulkan::Shutdown(ImGuiVulkanContext& context) {
     }
     
     context.initialized = false;
-    std::cout << "[INFO] ImGui Vulkan backend shutdown" << std::endl;
+    Log::Info("[INFO] ImGui Vulkan backend shutdown");
 }
 
 void ImGuiVulkan::NewFrame(ImGuiVulkanContext& context) {
@@ -93,7 +93,7 @@ void ImGuiVulkan::CreateDescriptorPool(ImGuiVulkanContext& context) {
     pool_info.pPoolSizes = pool_sizes;
     
     if (vkCreateDescriptorPool(device, &pool_info, nullptr, &context.descriptorPool) != VK_SUCCESS) {
-        std::cerr << "[ERROR] Failed to create ImGui descriptor pool" << std::endl;
+        Log::Error("[ERROR] Failed to create ImGui descriptor pool");
         return;
     }
 }

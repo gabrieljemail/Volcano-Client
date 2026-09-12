@@ -4,6 +4,7 @@
 
 #include <asio.hpp>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,14 @@ public:
     // Sends [VarInt totalLength][VarInt packetId][payload bytes], or the
     // compressed framing below once EnableCompression() has been called
     // (triggered by the server's Set Compression packet).
+    //
+    // Thread-safe with itself (guarded by writeMutex below) since chat
+    // sending (GUIController, via NetworkClient::SendChatMessage) calls
+    // this directly from the render thread, concurrently with the network
+    // thread's own SendPacket calls (Keep Alive replies, etc.) — NOT
+    // thread-safe with ReadPacket, but that's fine: a blocking socket's
+    // send() and recv() are independent directions at the OS level, and
+    // only the network thread ever reads.
     void SendPacket(int32_t packetId, const std::vector<uint8_t>& payload);
 
     // Blocks for one full packet. Returns its packet ID; `outPayload` is set
@@ -56,6 +65,7 @@ public:
 private:
     asio::ip::tcp::socket socket;
     int32_t threshold = -1; // -1 == compression not yet enabled
+    std::mutex writeMutex; // Guards SendPacket against concurrent callers — see its own comment.
 
     uint8_t ReadByteBlocking();
     void SendUncompressed(int32_t packetId, const std::vector<uint8_t>& payload);
