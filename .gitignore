@@ -2,3 +2,4 @@ lib/
 resources/minecraft/
 build/
 CMakeFiles/
+settings.json
