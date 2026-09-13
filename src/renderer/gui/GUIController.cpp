@@ -17,6 +17,15 @@ namespace Volcano {
 void SendChatMessage(GlobalState* state, const std::string& message);
 }
 
+namespace {
+// Window.Width/Height, read through GUIController::state->config rather
+// than the old WINDOW_WIDTH/HEIGHT compile-time constants. Called every
+// frame from several places below, so kept as a couple of tiny helpers
+// instead of repeating the config lookup inline.
+uint16_t ConfigWindowWidth() { return Volcano::GUIController::state->config->Get<uint32_t>("Window.Width", 854); }
+uint16_t ConfigWindowHeight() { return Volcano::GUIController::state->config->Get<uint32_t>("Window.Height", 480); }
+}
+
 namespace Volcano {
 
 GlobalState* GUIController::state = nullptr;
@@ -252,7 +261,7 @@ void GUIController::RenderComponent(GUI::GUIComponent* component)
 void GUIController::RenderScreen(GUI::Screen& screen)
 {
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(static_cast<float>(WINDOW_WIDTH), static_cast<float>(WINDOW_HEIGHT)), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(static_cast<float>(ConfigWindowWidth()), static_cast<float>(ConfigWindowHeight())), ImGuiCond_Always);
     // No window background — RecordAndSubmitFrame draws the Vulkan 3D scene
     // into this same render pass before GUIController::Render runs, so the
     // world shows through behind the screen's own components.
@@ -298,7 +307,7 @@ void GUIController::RenderChatWindow()
     std::vector<GUI::ChatLine> lines = GUI::Chat::GetLines();
 
     constexpr float height = 220.0f, margin = 8.0f;
-    float bottom = static_cast<float>(WINDOW_HEIGHT) - margin
+    float bottom = static_cast<float>(ConfigWindowHeight()) - margin
         - (chatInputOpen ? CHAT_INPUT_HEIGHT + margin : 0.0f);
     ImGui::SetNextWindowPos(ImVec2(margin, bottom - height), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(CHAT_WIDTH, height), ImGuiCond_Always);
@@ -344,7 +353,7 @@ void GUIController::RenderChatInputBox()
 {
     constexpr float margin = 8.0f;
     ImGui::SetNextWindowPos(
-        ImVec2(margin, static_cast<float>(WINDOW_HEIGHT) - CHAT_INPUT_HEIGHT - margin), ImGuiCond_Always);
+        ImVec2(margin, static_cast<float>(ConfigWindowHeight()) - CHAT_INPUT_HEIGHT - margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(CHAT_WIDTH, CHAT_INPUT_HEIGHT), ImGuiCond_Always);
     ImGui::Begin("##chatinput", nullptr,
         ImGuiWindowFlags_NoTitleBar |
@@ -476,8 +485,11 @@ GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, WindowAlign
     uint16_t size[2] = {width, height};
     uint16_t position[2] = {0, 0};
 
-    // WINDOW_WIDTH/HEIGHT reflect the actual (currently fixed, non-resizable)
+    // Window.Width/Height reflect the actual (currently fixed, non-resizable)
     // window size, so edges/corners can be computed against it directly.
+    uint16_t windowWidth = ConfigWindowWidth();
+    uint16_t windowHeight = ConfigWindowHeight();
+
     switch (alignment)
     {
         default:
@@ -486,31 +498,31 @@ GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, WindowAlign
             break;
         }
         case WindowAlignment::TOP_RIGHT: {
-            position[0] = WINDOW_WIDTH - width - margin; position[1] = margin;
+            position[0] = windowWidth - width - margin; position[1] = margin;
             break;
         }
         case WindowAlignment::BOTTOM_RIGHT: {
-            position[0] = WINDOW_WIDTH - width - margin; position[1] = WINDOW_HEIGHT - height - margin;
+            position[0] = windowWidth - width - margin; position[1] = windowHeight - height - margin;
             break;
         }
         case WindowAlignment::BOTTOM_LEFT: {
-            position[0] = margin; position[1] = WINDOW_HEIGHT - height - margin;
+            position[0] = margin; position[1] = windowHeight - height - margin;
             break;
         }
         case WindowAlignment::TOP: {
-            position[0] = (WINDOW_WIDTH - width) / 2; position[1] = margin;
+            position[0] = (windowWidth - width) / 2; position[1] = margin;
             break;
         }
         case WindowAlignment::RIGHT: {
-            position[0] = WINDOW_WIDTH - width - margin; position[1] = (WINDOW_HEIGHT - height) / 2;
+            position[0] = windowWidth - width - margin; position[1] = (windowHeight - height) / 2;
             break;
         }
         case WindowAlignment::BOTTOM: {
-            position[0] = (WINDOW_WIDTH - width) / 2; position[1] = WINDOW_HEIGHT - height - margin;
+            position[0] = (windowWidth - width) / 2; position[1] = windowHeight - height - margin;
             break;
         }
         case WindowAlignment::LEFT: {
-            position[0] = margin; position[1] = (WINDOW_HEIGHT - height) / 2;
+            position[0] = margin; position[1] = (windowHeight - height) / 2;
             break;
         }
     }

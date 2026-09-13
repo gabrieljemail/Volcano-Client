@@ -4,14 +4,12 @@
 #define GLOBAL_STATE_H
 
 #include <cstdint>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <queue>
 #include <string>
 #include <unordered_map>
-#include <variant>
 #include <atomic>
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -23,6 +21,7 @@
 #include "InputHandler.hpp"
 #include "Player.hpp"
 #include "PlayerAttributes.hpp"
+#include "Config.hpp"
 
 namespace Volcano {
 
@@ -66,7 +65,13 @@ struct NetworkInbox {
 };
 
 struct GlobalState {
-    std::map<std::string, std::variant<uint8_t, uint16_t, uint32_t, const char*>*> settings;
+    // Owns the client's settings — loaded from settings.json (next to the
+    // executable) by LoadSettings() below. config points at configStorage
+    // once that's done; every other piece of client code reads settings
+    // through this pointer rather than hardcoded constants.
+    Config configStorage;
+    Config* config{nullptr};
+
     InputHandler* input;
     Player* player;
     GLFWwindow* window;
@@ -142,9 +147,19 @@ struct GlobalState {
     std::atomic<int> pendingFramebufferWidth{0};
     std::atomic<int> pendingFramebufferHeight{0};
 
-    // Load settings.
+    // Loads settings.json (next to the executable), creating it with
+    // defaults on first run, and wires config up to point at it. Must run
+    // before anything below reads a setting through state->config — in
+    // particular before VulkanInit's Init(), which needs Window.Width/Height.
     void LoadSettings()
-    {}
+    {
+        configStorage.Load();
+        config = &configStorage;
+
+        resolution.x = config->Get<uint16_t>("Window.Width", 854);
+        resolution.y = config->Get<uint16_t>("Window.Height", 480);
+        targetFPS = config->Get<uint16_t>("Graphics.TargetFPS", 60);
+    }
 };
 
 }

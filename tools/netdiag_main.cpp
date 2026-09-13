@@ -14,6 +14,7 @@ int main(int argc, char** argv)
     std::string username = argc > 3 ? argv[3] : "NetDiag";
 
     Volcano::GlobalState state{};
+    state.LoadSettings(); // RunConfiguration() below reads Graphics.RenderDistance from state.config.
 
     asio::io_context ioContext;
     Volcano::NetworkClient client(ioContext);

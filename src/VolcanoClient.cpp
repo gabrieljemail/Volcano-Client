@@ -27,11 +27,10 @@
 #include <vector>
 using namespace std;
 
-// Defaults for the connect screen's fields — this is the developer's own
-// test server, prefilled purely for convenience; both fields are editable.
-constexpr const char* DEV_SERVER_HOST = "108.197.182.119";
-constexpr uint16_t DEV_SERVER_PORT = 25565;
-constexpr const char* DEV_USERNAME = "VoidDev";
+// Defaults for the connect screen's fields are read from Network.DevServerHost/
+// Network.DevServerPort/Network.DevUsername (settings.json) — this is the
+// developer's own test server, prefilled purely for convenience; both
+// fields stay editable in the UI.
 
 // Splits "host:port" into its parts, falling back to defaultPort if no
 // ':' is present (so plain hostnames/IPs still work).
@@ -239,15 +238,18 @@ int main()
     // sees a hardcoded server.
     Volcano::GUI::Screen* connectScreen = Volcano::GUIController::CreateScreen("Connect to Server", /* closable */ false);
 
+    uint16_t devServerPort = state.config->Get<uint16_t>("Network.DevServerPort", 25565);
     auto* addressInput = new Volcano::GUI::TextInput(
-        "Server Address", std::string(DEV_SERVER_HOST) + ":" + std::to_string(DEV_SERVER_PORT));
-    auto* usernameInput = new Volcano::GUI::TextInput("Username", DEV_USERNAME);
+        "Server Address",
+        state.config->Get<std::string>("Network.DevServerHost", "108.197.182.119") + ":" + std::to_string(devServerPort));
+    auto* usernameInput = new Volcano::GUI::TextInput(
+        "Username", state.config->Get<std::string>("Network.DevUsername", "VoidDev"));
     auto* connectButton = new Volcano::GUI::Button("Connect");
 
-    connectButton->AddClickHandler(new std::function<void()>([&state, &network, addressInput, usernameInput, connectScreen] {
+    connectButton->AddClickHandler(new std::function<void()>([&state, &network, addressInput, usernameInput, connectScreen, devServerPort] {
         std::string host;
         uint16_t port;
-        ParseServerAddress(addressInput->GetValue(), host, port, DEV_SERVER_PORT);
+        ParseServerAddress(addressInput->GetValue(), host, port, devServerPort);
         std::string username = usernameInput->GetValue();
         if (host.empty() || username.empty()) return;
 

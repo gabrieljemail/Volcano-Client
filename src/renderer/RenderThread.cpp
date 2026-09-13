@@ -17,8 +17,6 @@ using namespace std;
 
 namespace Volcano {
 
-constexpr float CAMERA_FOV = 100.0f;
-
 RenderThread::RenderThread(Volcano::GlobalState* globalState) : state(globalState)
 {
     if (state && state->targetFPS > 0)
@@ -299,7 +297,8 @@ void RenderThread::RecordAndSubmitFrame()
         state->player->camera.GetViewMatrix(state->tickLoop->GetRenderPosition()),
         [&] {
             float aspect = static_cast<float>(swapchainExtent.width) / swapchainExtent.height;
-            glm::mat4 p = glm::perspective(glm::radians(CAMERA_FOV), aspect, 0.05f, 1000.0f);
+            float fov = state->config->Get<float>("Graphics.FOV", 100.0f);
+            glm::mat4 p = glm::perspective(glm::radians(fov), aspect, 0.05f, 1000.0f);
             p[1][1] *= -1.0f;
             return p;
         }()
