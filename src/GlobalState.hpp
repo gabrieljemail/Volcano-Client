@@ -113,6 +113,14 @@ struct GlobalState {
     std::unordered_map<uint32_t, Entity> entities = {};
     std::mutex entitiesMutex;
 
+    // Tab-list names, keyed by hex-formatted UUID (see NetworkClient's
+    // FormatUuid) rather than the raw 16-byte array — same
+    // write-from-network/read-from-render split and map+mutex convention as
+    // entities/entitiesMutex above. Populated by the Player Info Update/
+    // Remove packets in NetworkClient::RunPlayLoop.
+    std::unordered_map<std::string, std::string> playerList = {};
+    std::mutex playerListMutex;
+
     NetworkInbox networkInbox;
 
     // The live Play-session connection, published by NetworkThread right

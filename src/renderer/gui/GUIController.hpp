@@ -88,6 +88,7 @@ private:
     static void RenderScreen(GUI::Screen& screen);
     static void RenderChatWindow();
     static void RenderChatInputBox();
+    static void RenderPlayerListWindow();
     static void ApplyVolcanoTheme();
 
     // Resolves an anchor + inward pixel offset into an absolute top-left

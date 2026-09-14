@@ -1,5 +1,6 @@
 #include "GUIController.hpp"
 #include "Logger.hpp"
+#include <algorithm>
 #include <chrono>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -232,6 +233,7 @@ void GUIController::Render(VkCommandBuffer commandBuffer)
 
         RenderChatWindow();
         if (chatInputOpen) RenderChatInputBox();
+        if (state->input->IsKeyDown(GLFW_KEY_TAB)) RenderPlayerListWindow();
     }
 
     ImGui::Render();
@@ -401,6 +403,40 @@ void GUIController::RenderChatInputBox()
         if (chatInputBuffer[0] != '\0') SendChatMessage(state, chatInputBuffer);
         CloseChatInput();
     }
+
+    ImGui::End();
+}
+
+// Vanilla-style Tab-list overlay — just names, no ping/gamemode columns (see
+// GlobalState::playerList's own comment for where the data comes from).
+// Only called while Tab is held (see Render()); NoInputs so it never steals
+// mouse focus from whatever's under it.
+void GUIController::RenderPlayerListWindow()
+{
+    std::vector<std::string> names;
+    {
+        std::lock_guard<std::mutex> lock(state->playerListMutex);
+        names.reserve(state->playerList.size());
+        for (auto& [uuid, name] : state->playerList) names.push_back(name);
+    }
+    std::sort(names.begin(), names.end());
+
+    constexpr float width = 220.0f, lineHeight = 20.0f, padding = 16.0f;
+    float height = padding + static_cast<float>(names.size()) * lineHeight;
+    ImVec2 pos = ResolveAnchor(GUI::ScreenAnchor::TOP, ImVec2(width, height), ImVec2(0.0f, 40.0f));
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    ImGui::Begin("##playerlist", nullptr,
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoInputs);
+
+    for (const std::string& name : names) ImGui::Text("%s", name.c_str());
 
     ImGui::End();
 }
