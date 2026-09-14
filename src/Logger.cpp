@@ -21,7 +21,7 @@ void Debug(const std::string& message)
     // Config isn't loaded yet for any Debug() call made before
     // GlobalState::LoadSettings runs — default to on, same as before Config
     // existed, rather than silently dropping those early messages.
-    bool logMessages = Config::Active() == nullptr || Config::Active()->Get<bool>("Debug.LogMessages", true);
+    bool logMessages = Config::Active() == nullptr || std::get<bool>(Config::Active()->Get("Debug.LogMessages", true));
     if (logMessages)
     {
         GUI::Chat::AddLine(message, 0xAAAAAAu); // dim gray, distinct from normal chat/system white

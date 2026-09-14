@@ -22,8 +22,8 @@ namespace {
 // than the old WINDOW_WIDTH/HEIGHT compile-time constants. Called every
 // frame from several places below, so kept as a couple of tiny helpers
 // instead of repeating the config lookup inline.
-uint16_t ConfigWindowWidth() { return Volcano::GUIController::state->config->Get<uint32_t>("Window.Width", 854); }
-uint16_t ConfigWindowHeight() { return Volcano::GUIController::state->config->Get<uint32_t>("Window.Height", 480); }
+uint16_t ConfigWindowWidth() { return static_cast<uint16_t>(std::get<uint32_t>(Volcano::GUIController::state->config->Get("Window.Width", uint32_t{854}))); }
+uint16_t ConfigWindowHeight() { return static_cast<uint16_t>(std::get<uint32_t>(Volcano::GUIController::state->config->Get("Window.Height", uint32_t{480}))); }
 }
 
 namespace Volcano {

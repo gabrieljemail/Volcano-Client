@@ -170,8 +170,8 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
     // (along with the player's position, sent once Play starts) to decide
     // what to stream. See PacketIds.hpp for why some field additions in
     // newer protocol versions may not be represented here yet.
-    int32_t renderDistance = state->config->Get<int32_t>("Graphics.RenderDistance", 8);
-    uint8_t renderDistanceByte = static_cast<uint8_t>(std::clamp(renderDistance, 2, 32));
+    uint32_t renderDistance = std::get<uint32_t>(state->config->Get("Graphics.RenderDistance", uint32_t{8}));
+    uint8_t renderDistanceByte = static_cast<uint8_t>(std::clamp<uint32_t>(renderDistance, 2, 32));
 
     PacketWriter clientInfo;
     clientInfo.WriteString("en_us");

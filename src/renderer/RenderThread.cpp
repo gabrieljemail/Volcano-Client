@@ -297,7 +297,7 @@ void RenderThread::RecordAndSubmitFrame()
         state->player->camera.GetViewMatrix(state->tickLoop->GetRenderPosition()),
         [&] {
             float aspect = static_cast<float>(swapchainExtent.width) / swapchainExtent.height;
-            float fov = state->config->Get<float>("Graphics.FOV", 100.0f);
+            float fov = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOV", uint32_t{100})));
             glm::mat4 p = glm::perspective(glm::radians(fov), aspect, 0.05f, 1000.0f);
             p[1][1] *= -1.0f;
             return p;

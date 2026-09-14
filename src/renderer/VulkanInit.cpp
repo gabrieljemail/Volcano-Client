@@ -36,13 +36,13 @@ static int g_windowedWidth = 0, g_windowedHeight = 0;
 // which Init() sets before either of these can be called.
 static VkPresentModeKHR DesiredPresentMode()
 {
-    bool vsync = g_globalState->config->Get<bool>("Graphics.VSync", true);
+    bool vsync = std::get<bool>(g_globalState->config->Get("Graphics.VSync", true));
     return vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
 }
 
 static uint32_t DesiredBufferCount()
 {
-    return g_globalState->config->Get<uint32_t>("Graphics.BufferCount", 2);
+    return std::get<uint32_t>(g_globalState->config->Get("Graphics.BufferCount", uint32_t{2}));
 }
 
 static void FramebufferSizeCallback(GLFWwindow* /*win*/, int width, int height)
@@ -594,8 +594,8 @@ void Init(GlobalState* state)
     // line reads Window.Width/Height from it.
     g_globalState = state;
 
-    uint32_t windowWidth = state->config->Get<uint32_t>("Window.Width", 854);
-    uint32_t windowHeight = state->config->Get<uint32_t>("Window.Height", 480);
+    uint32_t windowWidth = std::get<uint32_t>(state->config->Get("Window.Width", uint32_t{854}));
+    uint32_t windowHeight = std::get<uint32_t>(state->config->Get("Window.Height", uint32_t{480}));
 
     // Create the window.
     window = glfwCreateWindow(static_cast<int>(windowWidth), static_cast<int>(windowHeight), APP_NAME, nullptr, nullptr);
