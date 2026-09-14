@@ -93,6 +93,21 @@ private:
     static void RenderPlayerListWindow();
     static void ApplyVolcanoTheme();
 
+    // HUD elements drawn only while no Screen is open (see Render()) — the
+    // hotbar/armor/status-bar/movement-state group all key off the same
+    // hotbar geometry (HotbarOrigin), which is why they're separate methods
+    // but share file-scope layout constants in the .cpp rather than each
+    // reinventing "where's the hotbar" independently.
+    static void RenderPlayerStatusBars();
+    static void RenderHotbarAndArmor();
+    static void RenderMovementStatePanel();
+    // Top-left corner of the (still-placeholder) hotbar, resolved fresh
+    // every frame the same way every other HUD element is — see
+    // ResolveAnchor. The other three HUD methods above all derive their own
+    // position from this one point so they stay lined up with each other
+    // even if the hotbar's own anchor/margin ever changes.
+    static ImVec2 HotbarOrigin();
+
     // Resolves an anchor + inward pixel offset into an absolute top-left
     // window position, against the *current* ImGui display size (which
     // ImGui_ImplGlfw keeps in sync with the real framebuffer every frame —
