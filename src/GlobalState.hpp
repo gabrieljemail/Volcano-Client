@@ -113,6 +113,18 @@ struct GlobalState {
     std::unordered_map<uint32_t, Entity> entities = {};
     std::mutex entitiesMutex;
 
+    // Last values reported by the server's Set Health packet (see
+    // NetworkClient's PlayS2C::SetHealth handler) — read every frame by
+    // GUIController::RenderPlayerStatusBars on the render thread, written
+    // by the network thread the same way entities/entitiesMutex above is.
+    // Vanilla's own ranges (health 0-20, food 0-20, saturation 0-5, though
+    // saturation can technically exceed 5) aren't enforced here; this just
+    // stores whatever the server actually sends.
+    float health{20.0f};
+    int32_t food{20};
+    float saturation{5.0f};
+    std::mutex healthMutex;
+
     NetworkInbox networkInbox;
 
     // The live Play-session connection, published by NetworkThread right

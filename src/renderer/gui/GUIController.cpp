@@ -1,5 +1,8 @@
 #include "GUIController.hpp"
 #include "Logger.hpp"
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <chrono>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -232,6 +235,12 @@ void GUIController::Render(VkCommandBuffer commandBuffer)
 
         RenderChatWindow();
         if (chatInputOpen) RenderChatInputBox();
+
+        // Hotbar/armor first — they define HotbarOrigin(), which the status
+        // bars and movement-state panel both position themselves off of.
+        RenderHotbarAndArmor();
+        RenderPlayerStatusBars();
+        RenderMovementStatePanel();
     }
 
     ImGui::Render();
@@ -291,6 +300,15 @@ void GUIController::RenderScreen(GUI::Screen& screen)
         ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoBringToFrontOnFocus |
         ImGuiWindowFlags_NoBackground);
+
+    // Vanilla-style menu darkening. The world keeps rendering behind every
+    // Screen (that's the whole point of NoBackground above), so without
+    // this a pause/connect screen reads as translucent UI floating over a
+    // fully lit 3D view rather than Minecraft's dimmed-backdrop menus. Drawn
+    // as the very first thing on this window's own draw list (before the
+    // title/components below) so everything else layers on top of it.
+    ImGui::GetWindowDrawList()->AddRectFilled(
+        ImVec2(0.0f, 0.0f), ImGui::GetIO().DisplaySize, IM_COL32(0, 0, 0, 140));
 
     ImVec2 titleSize = ImGui::CalcTextSize(screen.title.c_str());
     ImGui::SetCursorPos(ImVec2((ImGui::GetWindowWidth() - titleSize.x) * 0.5f, 24.0f));
@@ -401,6 +419,221 @@ void GUIController::RenderChatInputBox()
         if (chatInputBuffer[0] != '\0') SendChatMessage(state, chatInputBuffer);
         CloseChatInput();
     }
+
+    ImGui::End();
+}
+
+// Hotbar/armor/status-bar/movement-state geometry — kept together so the
+// four HUD pieces that key off "where's the hotbar" (RenderHotbarAndArmor,
+// RenderPlayerStatusBars, RenderMovementStatePanel, via HotbarOrigin below)
+// can't drift out of sync with each other the way four independently
+// hand-tuned pixel offsets eventually would.
+namespace {
+    constexpr float SLOT_SIZE = 40.0f;
+    constexpr float SLOT_GAP = 4.0f;
+    constexpr int HOTBAR_SLOTS = 9;
+    constexpr int ARMOR_SLOTS = 4;
+    constexpr float HOTBAR_WIDTH = HOTBAR_SLOTS * SLOT_SIZE + (HOTBAR_SLOTS - 1) * SLOT_GAP;
+    constexpr float ARMOR_HEIGHT = ARMOR_SLOTS * SLOT_SIZE + (ARMOR_SLOTS - 1) * SLOT_GAP;
+    constexpr float HUD_BOTTOM_MARGIN = 10.0f; // hotbar's own inset from the bottom edge
+    constexpr float PANEL_GAP = 10.0f;         // hotbar <-> armor / hotbar <-> state-panel spacing
+
+    constexpr float BAR_HEIGHT = 18.0f;
+    constexpr float BAR_GAP = 4.0f;
+    constexpr float BAR_PADDING = 8.0f;
+    constexpr float STATUS_PANEL_WIDTH = HOTBAR_WIDTH + BAR_PADDING * 2.0f;
+    constexpr float STATUS_PANEL_HEIGHT = BAR_HEIGHT * 3.0f + BAR_GAP * 2.0f + BAR_PADDING * 2.0f;
+    constexpr float STATUS_PANEL_GAP = 6.0f;   // status panel <-> hotbar spacing
+
+    // Empty slot rect in the Volcano theme's flat-glow language (same fill/
+    // border colors DrawStyledButton uses) — hotbar and armor both need
+    // this and nothing else, so it's a free function rather than a member.
+    void DrawSlot(ImDrawList* drawList, ImVec2 pos, float size)
+    {
+        constexpr float rounding = 4.0f;
+        ImVec2 rectMax(pos.x + size, pos.y + size);
+        drawList->AddRectFilled(pos, rectMax, IM_COL32(12, 32, 40, 235), rounding);
+        drawList->AddRect(pos, rectMax, IM_COL32(60, 170, 190, 160), rounding, 0, 1.5f);
+    }
+
+    // One labeled, proportionally-filled bar — health/hunger/saturation all
+    // share this, only the fill color and current/max differ. Values are
+    // drawn (not just the bar) since without an icon font there's otherwise
+    // no way to tell "half a heart" from "half a shield" apart at a glance.
+    void DrawStatBar(ImDrawList* drawList, ImVec2 pos, float width, float height,
+                      const char* label, float current, float max, ImU32 fillColor)
+    {
+        ImVec2 rectMax(pos.x + width, pos.y + height);
+        drawList->AddRectFilled(pos, rectMax, IM_COL32(12, 32, 40, 235), 4.0f);
+
+        float frac = max > 0.0f ? std::clamp(current / max, 0.0f, 1.0f) : 0.0f;
+        if (frac > 0.0f)
+        {
+            drawList->AddRectFilled(pos, ImVec2(pos.x + width * frac, rectMax.y), fillColor, 4.0f);
+        }
+
+        drawList->AddRect(pos, rectMax, IM_COL32(60, 170, 190, 160), 4.0f, 0, 1.5f);
+
+        char text[64];
+        std::snprintf(text, sizeof(text), "%s  %.1f / %.0f", label, current, max);
+        ImVec2 textSize = ImGui::CalcTextSize(text);
+        ImVec2 textPos(pos.x + (width - textSize.x) * 0.5f, pos.y + (height - textSize.y) * 0.5f);
+        drawList->AddText(textPos, IM_COL32(235, 248, 255, 255), text);
+    }
+}
+
+// Top-left of the hotbar — see the header comment on why every other HUD
+// piece in this group derives its position from this single call rather
+// than each re-deriving "bottom center" independently.
+ImVec2 GUIController::HotbarOrigin()
+{
+    return ResolveAnchor(GUI::ScreenAnchor::BOTTOM, ImVec2(HOTBAR_WIDTH, SLOT_SIZE), ImVec2(0.0f, HUD_BOTTOM_MARGIN));
+}
+
+// Hotbar (9 slots) + armor column (4 slots), immediately left of it,
+// vertically centered on it. Both are pure visual placeholders — there's no
+// inventory data model on the client yet (a separate task is adding that
+// concurrently this session), so these are just empty slot rects, no item
+// icons. Drawn with raw ImDrawList calls in one NoBackground window rather
+// than through GUIWindow/GUIComponent, which has no notion of an icon-slot
+// grid, and rather than two separate windows, since a shared draw list
+// means there's no z-order question between the two groups of rects.
+void GUIController::RenderHotbarAndArmor()
+{
+    ImVec2 hotbarPos = HotbarOrigin();
+
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
+    ImGui::Begin("##hotbar_armor", nullptr,
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    for (int i = 0; i < HOTBAR_SLOTS; i++)
+    {
+        DrawSlot(drawList, ImVec2(hotbarPos.x + i * (SLOT_SIZE + SLOT_GAP), hotbarPos.y), SLOT_SIZE);
+    }
+
+    ImVec2 armorPos(hotbarPos.x - PANEL_GAP - SLOT_SIZE, hotbarPos.y - (ARMOR_HEIGHT - SLOT_SIZE) * 0.5f);
+    for (int i = 0; i < ARMOR_SLOTS; i++)
+    {
+        DrawSlot(drawList, ImVec2(armorPos.x, armorPos.y + i * (SLOT_SIZE + SLOT_GAP)), SLOT_SIZE);
+    }
+
+    ImGui::End();
+}
+
+// Health/hunger/saturation, directly above the hotbar's horizontal span.
+// Vanilla draws two rows of small heart/hunger icons here; there's no icon
+// font/texture yet (see Init()'s TODO on merging one into the atlas later),
+// so this draws labeled proportional bars instead — same dark-panel/cyan-
+// border language as everything else, with a distinct fill color per stat
+// (reddish health, brownish-orange hunger, amber saturation) so the three
+// rows are tellable apart without icons.
+void GUIController::RenderPlayerStatusBars()
+{
+    float health, saturation;
+    int32_t food;
+    {
+        std::lock_guard<std::mutex> lock(state->healthMutex);
+        health = state->health;
+        food = state->food;
+        saturation = state->saturation;
+    }
+
+    ImVec2 hotbarPos = HotbarOrigin();
+    ImVec2 panelPos(
+        hotbarPos.x - BAR_PADDING,
+        hotbarPos.y - STATUS_PANEL_GAP - STATUS_PANEL_HEIGHT);
+
+    ImGui::SetNextWindowPos(panelPos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(STATUS_PANEL_WIDTH, STATUS_PANEL_HEIGHT), ImGuiCond_Always);
+    // No NoBackground — inherits the panelDark/cyan-border window chrome
+    // from ApplyVolcanoTheme, same as the debug window/chat scrollback, so
+    // the three bars read as one "vitals" panel rather than three floating
+    // rects.
+    ImGui::Begin("##status_bars", nullptr,
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoInputs);
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    float barX = panelPos.x + BAR_PADDING;
+    float barY = panelPos.y + BAR_PADDING;
+
+    DrawStatBar(drawList, ImVec2(barX, barY), HOTBAR_WIDTH, BAR_HEIGHT,
+                "Health", health, 20.0f, IM_COL32(210, 70, 70, 255));
+    barY += BAR_HEIGHT + BAR_GAP;
+    DrawStatBar(drawList, ImVec2(barX, barY), HOTBAR_WIDTH, BAR_HEIGHT,
+                "Hunger", static_cast<float>(food), 20.0f, IM_COL32(200, 140, 70, 255));
+    barY += BAR_HEIGHT + BAR_GAP;
+    DrawStatBar(drawList, ImVec2(barX, barY), HOTBAR_WIDTH, BAR_HEIGHT,
+                "Saturation", saturation, 5.0f, IM_COL32(210, 190, 90, 255));
+
+    ImGui::End();
+}
+
+// Current movement state, immediately right of the hotbar and vertically
+// centered on it — priority order Flying > Swimming > Sneaking > Sprinting
+// > Walking, showing only the highest-priority one that applies (falls
+// back to "Idle" when grounded and stationary).
+void GUIController::RenderMovementStatePanel()
+{
+    ImVec2 hotbarPos = HotbarOrigin();
+    constexpr float panelWidth = 140.0f;
+    ImVec2 panelPos(hotbarPos.x + HOTBAR_WIDTH + PANEL_GAP, hotbarPos.y);
+
+    ImGui::SetNextWindowPos(panelPos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(panelWidth, SLOT_SIZE), ImGuiCond_Always);
+    ImGui::Begin("##movement_state", nullptr,
+        ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoNav |
+        ImGuiWindowFlags_NoInputs);
+
+    // Flying/Swimming are hardcoded false rather than guessed at: this
+    // client has no fly toggle (no ability to leave the ground under its
+    // own control yet) and no fluid collision (BlockRegistry explicitly
+    // excludes fluid blockstates from collision, so there's no "in water"
+    // signal to read) — whoever implements either feature flips the
+    // matching bool here without touching the priority logic below.
+    constexpr bool isFlying = false;
+    constexpr bool isSwimming = false;
+    bool sneaking = state->input->IsActive("Sneak");
+    bool sprinting = state->input->IsActive("Sprint");
+    bool hasMoveInput =
+        std::fabs(state->input->GetAxis("Move.Forward")) > 0.01f ||
+        std::fabs(state->input->GetAxis("Move.Right")) > 0.01f;
+
+    const char* label = "Idle";
+    if (isFlying) label = "Flying";
+    else if (isSwimming) label = "Swimming";
+    else if (sneaking) label = "Sneaking";
+    else if (sprinting) label = "Sprinting";
+    else if (hasMoveInput) label = "Walking";
+
+    ImVec2 textSize = ImGui::CalcTextSize(label);
+    ImGui::SetCursorPos(ImVec2((panelWidth - textSize.x) * 0.5f, (SLOT_SIZE - textSize.y) * 0.5f));
+    ImGui::TextColored(ImVec4(0.35f, 0.92f, 1.00f, 1.00f), "%s", label);
 
     ImGui::End();
 }
