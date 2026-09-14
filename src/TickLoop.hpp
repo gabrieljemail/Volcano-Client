@@ -12,6 +12,9 @@ namespace Volcano {
 // Fixed-timestep client-side simulation: gravity, jump, and friction-based
 // walk-speed movement (vanilla's real per-tick constants — see Tick()),
 // resolved via axis-separated AABB collision against the placeholder World.
+// Horizontal collision also auto-steps onto sub-0.6-block obstructions
+// (slabs, snow layers, a staircase's first step) instead of just blocking —
+// see MoveAxis/TryStepUp.
 // Runs on the render thread (see the tick-loop plan for why) via Advance(),
 // which is called once per render frame but may run zero or more fixed
 // 1/20s Tick()s internally depending on how much time has accumulated —
@@ -58,6 +61,11 @@ public:
 private:
     GlobalState* state;
     float accumulator = 0.0f;
+
+    // Latches a jump request across the gap between input frames (render
+    // rate) and simulation frames (fixed 20Hz ticks) — see Advance()'s
+    // comment for how it's set (both the one-shot PRESS edge and the HOLD
+    // repeat) and Tick() for how it's consumed.
     bool jumpQueued = false;
 
     std::mutex teleportMutex;
@@ -72,6 +80,7 @@ private:
     bool IsSolid(int x, int y, int z) const;
     bool AabbOverlapsSolid(glm::vec3 center) const;
     void MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float delta);
+    std::optional<float> TryStepUp(glm::vec3 position, glm::vec3 tentative) const;
 };
 
 } // namespace Volcano
