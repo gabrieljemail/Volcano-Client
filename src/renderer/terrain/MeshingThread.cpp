@@ -100,7 +100,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             // World, but that's fine — ChunkMesher only needs World for
             // this chunk's neighbors (see its own comment), not itself.
             Mesh mesh = ChunkMesher::MeshChunk(*chunk, *state->world, *textureManager);
-            Mesh nonCubicMesh = NonCubicMesher::MeshChunk(*chunk, *textureManager);
+            Mesh nonCubicMesh = NonCubicMesher::MeshChunk(*chunk, *state->world, *textureManager);
             state->world->InsertChunk(chunkX, chunkZ, std::move(*chunk));
 
             {
