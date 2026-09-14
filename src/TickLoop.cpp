@@ -16,6 +16,15 @@ constexpr float MAX_ACCUMULATED_TIME = 0.25f;
 // snow layers/carpets, a staircase's first step) are auto-climbed on a
 // horizontal move instead of blocking it — see MoveAxis/TryStepUp.
 constexpr float STEP_HEIGHT = 0.6f;
+
+// Sneak eye-height dip — half of vanilla's real drop (1.62 standing to 1.27
+// sneaking, a 0.35 dip) per request, since a more subtle dip reads better
+// once eased in over time instead of snapped.
+constexpr float STANDING_EYE_HEIGHT = 1.62f;
+constexpr float SNEAK_EYE_HEIGHT = STANDING_EYE_HEIGHT - (1.62f - 1.27f) * 0.5f;
+// Exponential ease rate applied per-tick below — higher = snappier. Framerate
+// (tick-rate) independent the same way RenderThread's FOV easing is.
+constexpr float EYE_HEIGHT_EASE_RATE = 10.0f;
 } // namespace
 
 TickLoop::TickLoop(GlobalState* stateIn) : state(stateIn)
@@ -170,8 +179,13 @@ void TickLoop::Tick(bool inputAllowed)
     currentPosition = pos;
     state->player->SetPosition(currentPosition);
 
-    // Scope-limited sneak: just lower the camera, don't touch the collision AABB.
-    state->player->camera.eyeOffset.y = sneaking ? 1.27f : 1.62f;
+    // Scope-limited sneak: just lower the camera, don't touch the collision
+    // AABB. Eased toward the target height each tick (see SNEAK_EYE_HEIGHT's
+    // own comment) rather than snapped, so the dip reads as a smooth crouch
+    // instead of a jump cut.
+    float targetEyeHeight = sneaking ? SNEAK_EYE_HEIGHT : STANDING_EYE_HEIGHT;
+    float& eyeHeight = state->player->camera.eyeOffset.y;
+    eyeHeight += (targetEyeHeight - eyeHeight) * (1.0f - std::exp(-EYE_HEIGHT_EASE_RATE * FIXED_DT));
 
     // Gravity + drag apply every tick regardless of grounded state, but only
     // AFTER this tick's move — resting on the ground works because the

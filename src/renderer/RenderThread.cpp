@@ -362,8 +362,29 @@ void RenderThread::RecordAndSubmitFrame()
         state->player->camera.GetViewMatrix(state->tickLoop->GetRenderPosition()),
         [&] {
             float aspect = static_cast<float>(swapchainExtent.width) / swapchainExtent.height;
-            float fov = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOV", uint32_t{100})));
-            glm::mat4 p = glm::perspective(glm::radians(fov), aspect, 0.05f, 1000.0f);
+            float baseFov = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOV", uint32_t{100})));
+
+            // Flying doesn't exist yet (no fly toggle — same placeholder
+            // GUIController's movement-state panel uses) so only sprinting
+            // drives this for now; whoever adds flight just needs to flip
+            // isFlying here, the easing below already handles either.
+            constexpr bool isFlying = false;
+            bool boosted = isFlying || state->input->IsActive("Sprint");
+            float targetFovOffset = boosted
+                ? static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOVEffects", uint32_t{5})))
+                : 0.0f;
+
+            // Framerate-independent exponential ease toward the target
+            // offset every frame instead of snapping the instant a sprint
+            // starts/stops — see currentFovOffset's own comment. Also where
+            // a future FOV *decrease* (aiming down sights, etc. — see the
+            // task's own "and later also decreases by" note) would plug in:
+            // just another signed target fed into the same easing.
+            constexpr float FOV_EASE_RATE = 8.0f; // higher = snappier
+            currentFovOffset = glm::mix(currentFovOffset, targetFovOffset,
+                1.0f - std::exp(-FOV_EASE_RATE * frameDeltaTime));
+
+            glm::mat4 p = glm::perspective(glm::radians(baseFov + currentFovOffset), aspect, 0.05f, 1000.0f);
             p[1][1] *= -1.0f;
             return p;
         }(),
