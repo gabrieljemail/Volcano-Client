@@ -124,12 +124,15 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     // (the death message, e.g. "VoidDev was slain by Zombie").
     constexpr int32_t PlayerCombatKill = 0x44;
 
-    // f32 health; varint food; f32 saturation. Sent whenever health changes,
-    // including right after login if the player was already dead before
-    // this session connected (PlayerCombatKill above only fires at the
-    // moment of death, not on a later rejoin) — health <= 0 here is what
-    // actually needs to trigger the death screen in that case.
-    constexpr int32_t SetHealth = 0x68;
+    // f32 health; varint food; f32 saturation (9 bytes matches this file's
+    // own header note: "0x68 SET_HEALTH = 9"). Sent whenever any of the
+    // three changes, including right after login if the player was already
+    // dead before this session connected (PlayerCombatKill above only fires
+    // at the moment of death, not on a later rejoin) — health <= 0 here is
+    // what actually needs to trigger the death screen in that case. All
+    // three values are also stored on GlobalState (health/food/saturation)
+    // for GUIController::RenderPlayerStatusBars' HUD display.
+    constexpr int32_t SetHealth = 0x68;                // SET_HEALTH
 
     // Not handled yet, listed so the "unhandled packet" log is readable.
     // Ping arrives constantly and is purely a latency probe (Keep Alive is

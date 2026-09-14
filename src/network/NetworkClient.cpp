@@ -292,8 +292,19 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
         if (packetId == PlayS2C::SetHealth) {
             float health = reader.ReadFloat();
-            reader.ReadVarInt(); // food, unused
-            reader.ReadFloat();  // saturation, unused
+            int32_t food = reader.ReadVarInt();
+            float saturation = reader.ReadFloat();
+
+            // Stored for GUIController::RenderPlayerStatusBars' HUD display
+            // — same manual-mutex-next-to-data convention as entities/
+            // entitiesMutex (see GlobalState's own comment on health/food/
+            // saturation/healthMutex).
+            {
+                std::lock_guard<std::mutex> lock(state->healthMutex);
+                state->health = health;
+                state->food = food;
+                state->saturation = saturation;
+            }
 
             // Catches joining a server while already dead from a previous
             // session — PlayerCombatKill above only fires at the actual
