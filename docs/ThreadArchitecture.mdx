@@ -1,0 +1,251 @@
+# Thread Architecture: Merging Render into Main, Tick into Network
+
+Status: proposed, not started. No code has changed yet — this is the plan to
+implement and check off.
+
+## Why
+
+`InputHandler` currently exists in a more complicated shape than the input
+itself needs, purely because of thread placement:
+
+- GLFW requires `glfwPollEvents()` (and the key/cursor callbacks it fires)
+  to run on the thread that created the window — i.e. `main()`.
+- The actual render loop (`RenderThread`) runs on its own `jthread`, because
+  historically it also owned game logic that shouldn't stall behind network
+  I/O.
+- Since input has to be *captured* on the main thread but is *consumed* on
+  the render thread, `InputHandler` carries a full pending/live double
+  buffer plus a mutex (`inputMutex`, `liveKeysDown`, `pendingPressed`,
+  `pendingReleased`, `pendingMouseDeltaX/Y`) just to hand key/mouse events
+  across that gap once a frame (`ProcessFrame()`).
+
+That machinery is the direct cost of the render loop not being on the main
+thread. A true "Reflex-style" input snapshot — poll input as late as
+possible, immediately before the frame that uses it, with nothing in
+between — isn't possible with a cross-thread hop in the middle no matter how
+tight the mutex is.
+
+Separately, `TickLoop::Advance()` currently runs on `RenderThread` once per
+rendered frame (decoupled internally into fixed `1/20s` steps via its own
+accumulator — see `TickLoop.hpp`). It doesn't actually need render framing
+at all; it needs a steady clock and the world/input state.
+
+## The proposal
+
+Reduce from 4 OS threads to 3 by merging the two threads whose split was
+never about parallelism in the first place:
+
+| Today | Proposed |
+|---|---|
+| Main thread: `glfwPollEvents()` + 1ms sleep loop, nothing else | Main/Render thread: `glfwPollEvents()`, input snapshot, `TickLoop::GetRenderPosition()` read, Vulkan frame (this *is* today's `RenderThread` loop, just no longer on its own thread) |
+| RenderThread: Reflex frame pacing, input drain, `TickLoop::Advance()`, Vulkan frame | *(absorbed into Main, above)* |
+| NetworkThread: blocking packet loop | Network/Tick thread: same packet loop, **plus** drives `TickLoop::Tick()` at a steady 20 Hz |
+| MeshingThread: chunk meshing | MeshingThread: unchanged |
+
+Net effect: one fewer thread, input polling and consumption on the same
+thread (so `InputHandler`'s cross-thread buffering can be deleted outright),
+and `TickLoop` moves to the thread that's semantically closest to "the
+authoritative simulation clock" — the one already receiving the server's
+position corrections and chunk data it collides against.
+
+This mirrors the actual v2.0 spec's "Overseer" thread topology
+(`docs/` — the uploaded architecture PDF), which also puts the network loop
+and simulation state on one thread and the Reflex render/input loop on the
+other. The only deliberate difference: we keep `MeshingThread` as a third
+thread rather than folding meshing into the render thread, since chunk
+meshing is real, bursty CPU work that *would* reintroduce the stalls the
+current 4-thread split was built to avoid (see `MeshingThread.hpp`'s own
+comment). This isn't a step backward toward Minecraft's single-threaded
+model — it's cutting exactly the one thread boundary that wasn't earning
+its keep.
+
+## The blocker this plan has to solve first
+
+`NetworkThread::ThreadEntry` → `NetworkClient::RunPlayLoop` is fully
+synchronous: `Connection::ReadPacket()` calls plain blocking `asio::read()`,
+and `Connection.hpp` says so outright:
+
+> Synchronous for now [...] A continuous async receive loop [...] is a
+> separate, later step.
+
+`asio::io_context& ioContext` is constructed on this thread but nothing
+ever calls `ioContext.run()` — there is no event loop, just a blocking
+`while` loop that spends most of its time inside one `read()` call. That
+thread cannot also drive a steady 20 Hz tick as-is: it will be blocked
+inside `ReadPacket()` for however long the server takes between packets
+(idle time between Keep Alives can be many seconds), so `TickLoop::Tick()`
+would fire in bursts whenever a packet happens to arrive, not on a steady
+clock. Physics/collision depend on a steady timestep — this would silently
+break movement.
+
+Two ways to unblock it, in order of how much this migration should take on:
+
+**A. Read timeout (minimal, do this now).** Give the socket a receive
+timeout (e.g. `SO_RCVTIMEO`, or wrap `ReadPacket()`'s blocking reads with
+`asio::steady_timer` + `async_read` + `io_context.run_one()` — either
+works) of something like 10–20ms. `RunPlayLoop`'s loop becomes: attempt a
+read; on timeout, fall through, let the thread's own tick scheduler fire
+`TickLoop::Tick()` if a `1/20s` has elapsed, then retry the read; on actual
+data, handle the packet as today. This is a small, local change to
+`Connection::ReadPacket`/`RunPlayLoop` and is enough to unblock this
+migration without a full rewrite.
+
+**B. Real async event loop (correct long-term shape, not required here).**
+Convert `Connection` to `async_read`/`async_write` and actually run
+`ioContext.run()`, with the 20 Hz tick posted as a repeating
+`asio::steady_timer`. This is what the v2.0 spec's "Zero-Stall Pipeline"
+actually describes, and is the more natural home for a tick timer (cooperatively
+scheduled alongside packet handling instead of polled), but it's a
+larger, separate refactor — track it as a follow-up, not a prerequisite.
+
+This plan assumes **A**.
+
+## What has to change, by file
+
+### `src/InputHandler.hpp` — delete the cross-thread buffering
+Once `KeyCallback`/`CursorPosCallback` (fired by `glfwPollEvents()`) and
+`ProcessFrame()`'s reader run on the same thread, the pending/live split has
+no job left to do:
+- Remove `inputMutex`, `liveKeysDown`, `pendingPressed`, `pendingReleased`,
+  `pendingMouseDeltaX/Y`.
+- `KeyCallback` writes `state.keysDown` / `state.keysPressedThisFrame` /
+  `state.keysReleasedThisFrame` directly.
+- `CursorPosCallback` writes `mouseDeltaX/Y` directly.
+- `ProcessFrame()` becomes just `UpdateAxes()` (or gets folded away
+  entirely — see below).
+- `EndFrame()`'s edge-clearing stays; it's not a threading concern, it's
+  what makes `WasActivated()` mean "this frame" instead of "ever."
+
+### `src/renderer/RenderThread.{hpp,cpp}` — stop owning a thread
+- Remove `jthread worker`, `Start()`, `RequestStop()`, `HasStopped()`,
+  `Stop()`, and `finished`. The whole "keep pumping messages while the
+  render thread winds down" dance in `VolcanoClient.cpp` existed only
+  because shutdown had to hand off between two threads that both touched
+  GLFW/Vulkan — once there's one thread, shutdown is just "stop looping,
+  then clean up," no coordination needed.
+- `ThreadEntry`/`RenderLoop` collapse into a single `RunFrame()` (or keep
+  the existing `WaitForTargetFrame → UpdateDeltaTime → PollInputs →
+  DrawFrame → EndFrame` sequence, just called directly from `main()`'s loop
+  instead of from a thread body).
+- `PollInputs()` gains the actual `glfwPollEvents()` call at its top (today
+  that call lives in `main()`'s separate loop). Order stays
+  wait-for-target → poll → read snapshot → render, which is already the
+  latency-minimizing order — polling happens as close to "use the input" as
+  possible.
+- `TickLoop::Advance()` is deleted from `PollInputs()` — the tick loop no
+  longer runs here at all (see below). `PollInputs()` keeps applying mouse
+  look to the camera (that's presentation, not simulation, and has no
+  reason to move).
+
+### `src/VolcanoClient.cpp` — the new main loop
+Replace:
+```cpp
+while (!state.shouldClose) {
+    glfwPollEvents();
+    this_thread::sleep_for(chrono::milliseconds(1));
+}
+```
+with a direct call into what `RenderThread::RenderLoop` used to do, and
+delete the post-loop `RequestStop()`/`HasStopped()` pump-and-wait entirely
+— just call `Cleanup()` once the loop exits.
+
+### `src/TickLoop.{hpp,cpp}` — new driver, new synchronization
+- **Driver**: `NetworkThread` calls `Tick()` (not `Advance(dt)`) on its own
+  schedule once the read-timeout loop above exists — measure real elapsed
+  wall time between fires and feed the existing accumulator so a late timer
+  fire still catches up correctly, same self-correcting behavior
+  `Advance()` already has today, just fed from `NetworkThread`'s clock
+  instead of `RenderThread`'s frame time.
+- **Synchronization (new requirement)**: today, `Advance()` (writer) and
+  `GetRenderPosition()` (reader) run on the same thread, so
+  `previousPosition`/`currentPosition`/`velocity`/`grounded` need no lock —
+  only `pendingTeleport` does (`teleportMutex`). Once `Tick()` runs on
+  NetworkThread and `GetRenderPosition()` is read every frame from
+  Main/Render, that stops being true. Add a small mutex-guarded snapshot,
+  the same shape as the existing teleport handoff:
+  ```cpp
+  std::mutex renderPositionMutex;
+  glm::vec3 renderPositionSnapshot; // written at the end of every Tick()
+  ```
+  `GetRenderPosition()` locks, reads, unlocks — cheap, since it's a
+  ~16-byte copy at up to a few hundred Hz against a writer at 20 Hz, not a
+  contended lock.
+- **Jump input (new requirement)**: `Advance()` currently reads the "Jump"
+  action straight from `InputHandler` because it ran on the same thread as
+  `PollInputs()`. That's no longer true once `Tick()` is on NetworkThread.
+  Add `std::atomic<bool> jumpRequested` to `TickLoop`; `PollInputs()` (on
+  Main/Render) calls `tickLoop->RequestJump()` when `WasActivated("Jump")`
+  is true; `Tick()` does a test-and-clear (`exchange(false)`) at the top.
+  An atomic bool can't drop a press between polls at these rates (20 Hz
+  tick vs. render-rate polling), and coalescing multiple presses inside one
+  tick window matches real Minecraft's own per-tick jump handling anyway.
+- Update the class comment (currently says "Runs on the render thread") and
+  `GlobalState::worldReady`'s comment (currently describes ordering in
+  terms of "RenderThread") to name NetworkThread instead.
+
+### `src/renderer/terrain/models/World.hpp` — comment only
+No code changes — `GetBlock`'s `shared_mutex` already supports any reader
+thread. Update the class comment, which currently says reads come "every
+tick from RenderThread's thread"; they'll come from NetworkThread instead.
+
+### `src/network/NetworkThread.{hpp,cpp}` / `NetworkClient.cpp`
+- Implement the read-timeout loop (see "The blocker," option A).
+- `RunPlayLoop`'s loop gains the tick-scheduling check on each timeout/lull.
+- No change to `activeConnection` publishing, chunk/spawn handoff via
+  `networkInbox`, or `SendChatMessage` — those are unaffected by where
+  `TickLoop` lives.
+
+### Things that do *not* change
+- `MeshingThread` — untouched, stays a separate thread.
+- `VulkanInit.cpp`'s window/device/instance creation — already runs on the
+  main thread today (`Init(&state)` is called directly from `main()`,
+  before `RenderThread` even starts); this migration doesn't move it, it
+  just means the thread that created the window is now also the thread
+  that presents to it every frame, which is the more conventional split
+  anyway.
+- `Camera`/mouse-look application — stays in `PollInputs()`, i.e. stays on
+  Main/Render. It's presentation state, not simulation state, and was never
+  part of the cross-thread problem.
+- The Reflex frame-pacing code in `WaitForTargetFrame()` — unchanged
+  algorithm, just called from `main()`'s loop instead of a thread body.
+
+## Migration order (each step leaves the build working)
+
+1. Add the read-timeout to `Connection`/`RunPlayLoop` (option A above), with
+   `TickLoop::Tick()` still not wired to anything yet — verify the game
+   still plays identically with NetworkThread now waking up periodically.
+2. Add `renderPositionMutex`/snapshot and `jumpRequested` to `TickLoop`,
+   splitting `Advance()` into the timing/scheduling part and a `Tick()` that
+   can be called from either thread — but don't move the call site yet.
+3. Move the `TickLoop` call site from `RenderThread::PollInputs()` to
+   `NetworkThread`'s loop. This is the first behavior-changing step; test
+   movement/collision/jump feel identical.
+4. Collapse `InputHandler`'s pending/live buffering (safe now only once
+   step 5 also lands — until `RenderThread` and `main()` are the same
+   thread, callbacks and `ProcessFrame()` are still cross-thread).
+5. Merge `RenderThread`'s loop into `main()`, delete
+   `Start/RequestStop/HasStopped/Stop`, simplify shutdown.
+6. Delete the now-dead pending/live fields from `InputHandler` (do this
+   after step 5, not before, or there's a window where callbacks and
+   `ProcessFrame()` are on different threads with no buffer between them).
+
+## Risks / test checklist
+
+- **Movement feel**: confirm walking/jumping/collision still feels
+  identical once `Tick()` moves off the render thread — the fixed-timestep
+  math doesn't change, but its scheduling source does.
+- **Input latency**: this migration should make input *lower* latency
+  (same-thread poll-then-render), but verify no regression from
+  `glfwPollEvents()` now running inline with frame pacing rather than on an
+  independently-scheduled thread — if `glfwPollEvents()` ever blocks
+  noticeably (OS event delivery hiccups), it now eats into frame time
+  directly. Worth a debug counter on `glfwPollEvents()` duration during
+  testing.
+- **Shutdown ordering**: re-verify the Windows Intel-driver freeze
+  (`ISSUES.mdx`) stays fixed — that bug was specifically about a
+  message-pump/present ordering race between two threads, which this
+  migration removes by construction, but it's worth explicitly re-testing
+  on the same hardware that originally hit it.
+- **NetworkThread responsiveness**: with a 10–20ms read timeout, confirm
+  Keep Alive replies and chat sends still go out promptly and the timeout
+  polling doesn't measurably increase CPU usage on that thread.
