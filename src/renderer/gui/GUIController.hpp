@@ -65,6 +65,15 @@ public:
     // auto-sizes that axis to fit the label.
     static bool DrawStyledButton(const std::string& label, ImVec2 size = ImVec2(0.0f, 0.0f));
 
+    // Which hotbar slot (0-8) RenderHotbarAndArmor highlights. A standalone
+    // placeholder here rather than reading GlobalState::inventory's own
+    // selectedHotbarSlot — the GUI and the inventory data model are
+    // deliberately kept decoupled until real inventory packet handling
+    // exists to connect them; whoever adds that later just calls this from
+    // wherever the Set Held Item packet lands, instead of GUIController
+    // needing to know anything about InventoryManager. Clamped to 0-8.
+    static void SetSelectedHotbarSlot(uint8_t slot);
+
 private:
     static GlobalState* state;
     static GLFWwindow* windowHandle;
@@ -85,6 +94,8 @@ private:
     static bool chatInputOpen;
     static bool chatInputJustOpened; // Consumed once by RenderChatInputBox to grab keyboard focus the frame it opens.
     static char chatInputBuffer[256];
+
+    static uint8_t selectedHotbarSlot;
 
     static void RenderComponent(GUI::GUIComponent* component);
     static void RenderScreen(GUI::Screen& screen);
