@@ -111,6 +111,14 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     // what actually holds the connection open), so ignoring it is safe.
     constexpr int32_t Ping = 0x3D;                     // PING
     constexpr int32_t Commands = 0x10;                 // COMMANDS
+
+    // Tab-list (Player Info) packets — IDs read the same way as the entity
+    // IDs above, from this client's own bundled protocol.json's
+    // play.toClient.types.packet mapper: 0x45 player_remove, 0x46
+    // player_info (the "update" packet; protocol.json doesn't split it into
+    // a separately-named add/update packet the way some doc sites do).
+    constexpr int32_t PlayerInfoRemove = 0x45;         // PLAYER_INFO_REMOVE
+    constexpr int32_t PlayerInfoUpdate = 0x46;         // PLAYER_INFO_UPDATE
 }
 
 } // namespace Volcano
