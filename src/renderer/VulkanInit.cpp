@@ -28,7 +28,22 @@ static GlobalState* g_globalState = nullptr;
 // fullscreen (captured right before switching away from Windowed).
 static WindowMode g_windowMode = WindowMode::Windowed;
 static int g_windowedX = 0, g_windowedY = 0;
-static int g_windowedWidth = WINDOW_WIDTH, g_windowedHeight = WINDOW_HEIGHT;
+// Actual values are read from config and set once the window is created, in
+// Init() — see the glfwGetWindowSize() call there.
+static int g_windowedWidth = 0, g_windowedHeight = 0;
+
+// Graphics.VSync/BufferCount from settings.json — read via g_globalState,
+// which Init() sets before either of these can be called.
+static VkPresentModeKHR DesiredPresentMode()
+{
+    bool vsync = std::get<bool>(g_globalState->config->Get("Graphics.VSync", true));
+    return vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
+}
+
+static uint32_t DesiredBufferCount()
+{
+    return std::get<uint32_t>(g_globalState->config->Get("Graphics.BufferCount", uint32_t{2}));
+}
 
 static void FramebufferSizeCallback(GLFWwindow* /*win*/, int width, int height)
 {
@@ -575,8 +590,15 @@ void Init(GlobalState* state)
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE); // Show system window decorations.
 
+    // config must be ready before the window is created — the very next
+    // line reads Window.Width/Height from it.
+    g_globalState = state;
+
+    uint32_t windowWidth = std::get<uint32_t>(state->config->Get("Window.Width", uint32_t{854}));
+    uint32_t windowHeight = std::get<uint32_t>(state->config->Get("Window.Height", uint32_t{480}));
+
     // Create the window.
-    window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, APP_NAME, nullptr, nullptr);
+    window = glfwCreateWindow(static_cast<int>(windowWidth), static_cast<int>(windowHeight), APP_NAME, nullptr, nullptr);
 
     if (!window)
     {
@@ -587,7 +609,6 @@ void Init(GlobalState* state)
         return;
     }
     state->window = window;
-    g_globalState = state;
     glfwGetWindowPos(window, &g_windowedX, &g_windowedY);
     glfwGetWindowSize(window, &g_windowedWidth, &g_windowedHeight);
 
@@ -689,9 +710,9 @@ void Init(GlobalState* state)
 
     // Create the swapchain.
     vkb::SwapchainBuilder swapchainBuilder{device, surface};
-    swapchainBuilder.set_desired_extent(WINDOW_WIDTH, WINDOW_HEIGHT);
-    swapchainBuilder.set_desired_present_mode(PRESENT_MODE);
-    swapchainBuilder.set_desired_min_image_count(BUFFER_SIZE);
+    swapchainBuilder.set_desired_extent(windowWidth, windowHeight);
+    swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
+    swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
     auto swapchainBuilderReturn = swapchainBuilder.build();
 
     if (!swapchainBuilderReturn)
@@ -951,8 +972,8 @@ void RecreateSwapchain(int width, int height)
 
     vkb::SwapchainBuilder swapchainBuilder{device, surface};
     swapchainBuilder.set_desired_extent(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
-    swapchainBuilder.set_desired_present_mode(PRESENT_MODE);
-    swapchainBuilder.set_desired_min_image_count(BUFFER_SIZE);
+    swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
+    swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
     swapchainBuilder.set_old_swapchain(oldSwapchain);
     auto swapchainBuilderReturn = swapchainBuilder.build();
 

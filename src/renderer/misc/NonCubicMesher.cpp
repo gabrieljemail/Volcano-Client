@@ -48,6 +48,24 @@ static constexpr int FACE_DX[6] = { 0, 0, 0, 0, 1, -1 };
 static constexpr int FACE_DY[6] = { 1, -1, 0, 0, 0, 0 };
 static constexpr int FACE_DZ[6] = { 0, 0, -1, 1, 0, 0 };
 
+// Reads a block that may be outside this chunk's own 0..CHUNK_SIZE_X-1 /
+// 0..CHUNK_SIZE_Z-1 horizontal range by falling back to World for anything
+// that crosses into a neighboring chunk — same reasoning and shape as
+// ChunkMesher's own GetBlockAcrossChunks. Without this, a transparent block
+// sitting against the same visual across a chunk seam (e.g. a glass wall
+// spanning two chunks) had its shared face drawn from both sides instead of
+// culled, since Chunk::getBlock alone has no way to see past its own
+// bounds and just reports Air there.
+static Block GetBlockAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
+    if (lx >= 0 && lx < CHUNK_SIZE_X && lz >= 0 && lz < CHUNK_SIZE_Z) {
+        return chunk.getBlock(lx, ly, lz);
+    }
+
+    int worldX = chunk.getX() * CHUNK_SIZE_X + lx;
+    int worldZ = chunk.getZ() * CHUNK_SIZE_Z + lz;
+    return world.GetBlock(worldX, ly + WORLD_MIN_Y, worldZ);
+}
+
 // Four corners of one face of an axis-aligned box, in some consistent
 // (not necessarily outward-CCW) winding — the non-cubic pipeline disables
 // backface culling entirely (see VulkanInit's nonCubicPipeline), so unlike
@@ -110,7 +128,7 @@ static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const
 // correct, same trade-off ChunkMesher's own opaque/opaque cull doesn't need
 // to make here since this pass never culls against opaque neighbors.
 static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, uint16_t visualId,
-        const Chunk& chunk, int bx, int by, int bz, const glm::vec3& blockOrigin,
+        const Chunk& chunk, const World& world, int bx, int by, int bz, const glm::vec3& blockOrigin,
         const TextureManager& textureManager, std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
     glm::vec3 boxMin = blockOrigin + element.from / 16.0f;
     glm::vec3 boxMax = blockOrigin + element.to / 16.0f;
@@ -119,7 +137,7 @@ static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, ui
         const std::string& textureName = element.faceTextures[static_cast<size_t>(f)];
         if (textureName.empty()) continue;
 
-        Block neighbor = chunk.getBlock(bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
+        Block neighbor = GetBlockAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
         if (neighbor.nonCubeVisualId == visualId) continue;
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
@@ -159,7 +177,7 @@ static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const glm::vec
     }
 }
 
-Mesh NonCubicMesher::MeshChunk(const Chunk& chunk, const TextureManager& textureManager) {
+Mesh NonCubicMesher::MeshChunk(const Chunk& chunk, const World& world, const TextureManager& textureManager) {
     std::vector<MiscVertex> vertices;
     std::vector<uint32_t> indices;
 
@@ -179,7 +197,7 @@ Mesh NonCubicMesher::MeshChunk(const Chunk& chunk, const TextureManager& texture
 
                 for (const BlockRegistry::NonCubeElement& element : visual.elements) {
                     if (visual.shape == BlockRegistry::NonCubeShape::TransparentCube) {
-                        MeshTransparentCube(element, block.nonCubeVisualId, chunk, x, y, z, blockOrigin,
+                        MeshTransparentCube(element, block.nonCubeVisualId, chunk, world, x, y, z, blockOrigin,
                             textureManager, vertices, indices);
                     } else {
                         MeshElementFaces(element, blockOrigin, textureManager, vertices, indices);

@@ -15,17 +15,6 @@
 
 namespace Volcano {
 
-enum class WindowAlignment : uint8_t {
-    TOP_LEFT = 0,
-    TOP_RIGHT = 1,
-    BOTTOM_RIGHT = 2,
-    BOTTOM_LEFT = 3,
-    TOP = 4,
-    RIGHT = 5,
-    BOTTOM = 6,
-    LEFT = 7
-};
-
 class GUIController {
 public:
     static void Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState);
@@ -38,8 +27,11 @@ public:
     static float GetFrameTime() { return frameTime; }
 
     // API:
-    // Render a window.
-    static GUI::GUIWindow* CreateWindow(const std::string& name, WindowAlignment alignment);
+    // Render a window, pinned to a screen anchor plus a pixel offset from it
+    // (see GUI::ScreenAnchor) rather than an absolute position — so it stays
+    // correctly placed across resizes and window-mode changes.
+    static GUI::GUIWindow* CreateWindow(const std::string& name, GUI::ScreenAnchor anchor,
+                                         float offsetX = 8.0f, float offsetY = 8.0f);
 
     // Screen API:
     // Create a fullscreen, Minecraft-like menu screen. It isn't shown until
@@ -96,6 +88,13 @@ private:
     static void RenderChatWindow();
     static void RenderChatInputBox();
     static void ApplyVolcanoTheme();
+
+    // Resolves an anchor + inward pixel offset into an absolute top-left
+    // window position, against the *current* ImGui display size (which
+    // ImGui_ImplGlfw keeps in sync with the real framebuffer every frame —
+    // unlike the launch-time Window.Width/Height config values, this is
+    // correct immediately after a resize or an F11 window-mode change).
+    static ImVec2 ResolveAnchor(GUI::ScreenAnchor anchor, ImVec2 size, ImVec2 offset);
 };
 
 } // namespace Volcano
