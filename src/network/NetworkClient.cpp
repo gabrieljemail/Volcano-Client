@@ -188,6 +188,22 @@ bool NetworkClient::RunConfiguration()
     if (!std::getenv("NETDIAG_SKIP_SEND")) {
         connection.SendPacket(ConfigC2S::ClientInformation, clientInfo.Data());
         Log::Debug("[DIAG] Client Information sent.");
+
+        // Every real client sends this right after Client Information —
+        // some servers' anti-bot plugins use its absence as a bot signal
+        // and silently hide the connection from the tab list/`/list` (still
+        // fully joined and receiving world state) rather than kicking it,
+        // which looks exactly like a server-side mystery until you notice
+        // the missing brand. Identifies honestly as "volcano-client" rather
+        // than spoofing "vanilla" — a server admin who sees "vanilla" will
+        // reasonably expect actually-vanilla client behavior (signed chat,
+        // full inventory/interaction support, ...), which this client
+        // doesn't provide yet.
+        PacketWriter brand;
+        brand.WriteString("minecraft:brand");
+        brand.WriteString("volcano-client");
+        connection.SendPacket(ConfigC2S::PluginMessage, brand.Data());
+        Log::Debug("[DIAG] Brand plugin message sent.");
     } else {
         Log::Debug("[DIAG] Skipping Client Information send (NETDIAG_SKIP_SEND set).");
     }
@@ -229,7 +245,11 @@ bool NetworkClient::RunConfiguration()
         }
 
         if (packetId == ConfigS2C::Disconnect) {
-            std::string reason = reader.ReadString();
+            // reason is `anonymousNbt` per this client's own bundled
+            // protocol.json, not a plain string — ReadString() here used to
+            // misparse the NBT tag bytes as a length-prefixed string,
+            // producing garbage (or throwing) instead of the real reason.
+            std::string reason = PlainText(ReadTextComponent(reader));
             Log::Error("[NET] Server disconnected during configuration: " + reason);
             return false;
         }
@@ -492,7 +512,10 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         }
 
         if (packetId == PlayS2C::Disconnect) {
-            std::string reason = reader.ReadString();
+            // Same anonymousNbt reason field as the Configuration-state
+            // Disconnect above — see that handler's comment. ReadString()
+            // here meant a kick's real reason was never actually visible.
+            std::string reason = PlainText(ReadTextComponent(reader));
             Log::Error("[NET] Server disconnected: " + reason);
             return;
         }

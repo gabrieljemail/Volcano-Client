@@ -26,8 +26,9 @@ class NonCubicMesher {
 public:
     // Backing slab size for this mesher's own vertex/index buffers (separate
     // from ChunkMesher's — see MeshChunk). Far less non-cube geometry exists
-    // per world than opaque terrain, so a smaller slab is enough.
-    static constexpr uint64_t DEFAULT_SLAB_SIZE = 64ull * 1024 * 1024; // 64 MB
+    // per world than opaque terrain, so a smaller slab is enough. Raised
+    // from 64 MB after it ran out mid-session.
+    static constexpr uint64_t DEFAULT_SLAB_SIZE = 128ull * 1024 * 1024; // 128 MB
 
     static Mesh MeshChunk(const Chunk& chunk, const TextureManager& textureManager);
 

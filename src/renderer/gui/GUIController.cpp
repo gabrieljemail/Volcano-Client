@@ -31,6 +31,7 @@ int GUIController::frameCount = 0;
 float GUIController::fpsTimer = 0.0f;
 GUI::GUIWindow* GUIController::debugWindow = nullptr;
 GUI::GUIComponent* GUIController::debugText = nullptr;
+GUI::Screen* GUIController::pauseScreen = nullptr;
 bool GUIController::chatInputOpen = false;
 bool GUIController::chatInputJustOpened = false;
 char GUIController::chatInputBuffer[256] = {};
@@ -77,6 +78,20 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     debugText = new GUI::GUIComponent(GUI::GUIComponentType::TEXT, "");
     debugWindow->components.push_back(debugText);
 
+    // Pause screen — Esc opens it whenever no other screen/chat box already
+    // owns input (see Update()), Esc closes it again like any other
+    // closable screen. This is also the only reliable way to quit on some
+    // Windows versions where a stuck cursor-lock/focus fight (see
+    // VulkanInit's WindowFocusCallback) can prevent Alt+F4 from ever
+    // reaching the OS's own close handling.
+    pauseScreen = CreateScreen("Paused", /* closable */ true);
+    auto* resumeButton = new GUI::Button("Resume");
+    resumeButton->AddClickHandler(new std::function<void()>([] { CloseScreen(); }));
+    auto* quitButton = new GUI::Button("Quit Game");
+    quitButton->AddClickHandler(new std::function<void()>([] { state->shouldClose = true; }));
+    pauseScreen->components.push_back(resumeButton);
+    pauseScreen->components.push_back(quitButton);
+
     Log::Info("[INFO] GUI Controller initialized with ImGui");
     initialized = true;
 }
@@ -110,6 +125,14 @@ void GUIController::Update(float deltaTime)
     if (activeScreen != nullptr && activeScreen->closable && state->input->IsKeyPressed(GLFW_KEY_ESCAPE))
     {
         CloseScreen();
+    }
+    // Esc with nothing else open pauses the game instead, same key Minecraft
+    // uses for both. Doesn't fire on top of a non-closable screen (e.g. the
+    // connect screen) since that leaves activeScreen non-null and the first
+    // branch above already owns Esc in that case.
+    else if (activeScreen == nullptr && !chatInputOpen && state->input->IsKeyPressed(GLFW_KEY_ESCAPE))
+    {
+        OpenScreen(pauseScreen);
     }
 
     // "T" opens the chat input box, same key Minecraft uses — but not while

@@ -86,6 +86,7 @@ private:
     static float fpsTimer;
     static GUI::GUIWindow* debugWindow;
     static GUI::GUIComponent* debugText;
+    static GUI::Screen* pauseScreen;
 
     static bool chatInputOpen;
     static bool chatInputJustOpened; // Consumed once by RenderChatInputBox to grab keyboard focus the frame it opens.

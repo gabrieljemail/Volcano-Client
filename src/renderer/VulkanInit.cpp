@@ -608,8 +608,16 @@ void Init(GlobalState* state)
         glfwSetWindowFocusCallback(window, WindowFocusCallback);
     #endif
 
-    // Make an instance.
-    vkb::InstanceBuilder instanceBuilder;
+    // Make an instance. Passing our own vkGetInstanceProcAddr (statically
+    // imported through Vulkan::Vulkan/vulkan-1.lib, an ordinary PE import
+    // table entry) makes vk-bootstrap skip its own internal
+    // LoadLibrary("vulkan-1.dll") + a cascade of GetProcAddress-by-name
+    // calls to bootstrap itself — harmless and universal for any Vulkan
+    // app, but that exact runtime "load a system DLL, then walk its
+    // exports by string name" pattern is also what a reflective DLL
+    // loader/injector does, and it's what got this unsigned, no-reputation
+    // binary flagged as Trojan.Injector/Rootkit by Malwarebytes and Avast.
+    vkb::InstanceBuilder instanceBuilder(vkGetInstanceProcAddr);
     auto instanceReturn = instanceBuilder
         .set_app_name(APP_NAME)
         .set_app_version(APP_VERSION)

@@ -152,6 +152,25 @@ void RenderThread::PollInputs()
     // Process inputs.
     state->input->ProcessFrame();
 
+    // Alt+F4 (Windows/Linux), Ctrl+Q (Linux), Cmd+Q (macOS) close the game
+    // directly, checked before the Screen-open early return below so it
+    // still works while stuck in a menu. Added because relying solely on
+    // the OS's own WM_CLOSE handling for Alt+F4 (glfwWindowShouldClose,
+    // checked just above) wasn't reliable on every Windows version — see
+    // the Pause screen's own comment for the underlying cursor/focus fight.
+#if defined(_WIN32) || defined(__linux__)
+    bool altDown = state->input->IsKeyDown(GLFW_KEY_LEFT_ALT) || state->input->IsKeyDown(GLFW_KEY_RIGHT_ALT);
+    if (altDown && state->input->IsKeyPressed(GLFW_KEY_F4)) state->shouldClose = true;
+#endif
+#if defined(__linux__)
+    bool ctrlDown = state->input->IsKeyDown(GLFW_KEY_LEFT_CONTROL) || state->input->IsKeyDown(GLFW_KEY_RIGHT_CONTROL);
+    if (ctrlDown && state->input->IsKeyPressed(GLFW_KEY_Q)) state->shouldClose = true;
+#endif
+#if defined(__APPLE__)
+    bool superDown = state->input->IsKeyDown(GLFW_KEY_LEFT_SUPER) || state->input->IsKeyDown(GLFW_KEY_RIGHT_SUPER);
+    if (superDown && state->input->IsKeyPressed(GLFW_KEY_Q)) state->shouldClose = true;
+#endif
+
     // F11 cycles window modes regardless of whether a Screen is open, same
     // as it would in most games.
     if (state->input->IsKeyPressed(GLFW_KEY_F11))

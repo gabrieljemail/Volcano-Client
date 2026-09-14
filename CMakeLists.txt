@@ -17,6 +17,13 @@ project(VolcanoClient LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Ninja is single-config, so this is what distinguishes the normal in-source
+# dev build (Debug, the default) from an out-of-source `build-release/`
+# configured with -DCMAKE_BUILD_TYPE=Release — see release.ps1.
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+endif()
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fuse-ld=lld")
 endif()
@@ -104,12 +111,19 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
 if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # -fms-compatibility forces Clang to emulate the MSVC compiler bugs/features needed for MSVC STL
     target_compile_options(${PROJECT_NAME} PRIVATE
-        -Wall -Wextra -g -gcodeview -O0 -ffast-math
-        -fms-compatibility
-        -fms-extensions
+        -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions
+        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-gcodeview> $<$<NOT:$<CONFIG:Release>>:-O0>
     )
 else()
-    target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -pthread -g -Og -march=native -ffast-math)
+    # -march=native only makes sense for a Debug build run on the same
+    # machine that built it — a Release build is meant to run on other
+    # devices, so it stays portable instead.
+    target_compile_options(${PROJECT_NAME} PRIVATE
+        -Wall -Wextra -pthread -ffast-math
+        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-Og> $<$<NOT:$<CONFIG:Release>>:-march=native>
+    )
 endif()
 
 # Only meaningful for an out-of-source build. The root tree configures
@@ -179,9 +193,17 @@ target_link_libraries(NetDiag PRIVATE
 )
 
 if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_compile_options(NetDiag PRIVATE -g -gcodeview -O0 -fms-compatibility -fms-extensions)
+    target_compile_options(NetDiag PRIVATE
+        -fms-compatibility -fms-extensions
+        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-gcodeview> $<$<NOT:$<CONFIG:Release>>:-O0>
+    )
 else()
-    target_compile_options(NetDiag PRIVATE -pthread -g -Og)
+    target_compile_options(NetDiag PRIVATE
+        -pthread
+        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-Og>
+    )
 endif()
 
 add_custom_command(TARGET NetDiag POST_BUILD
