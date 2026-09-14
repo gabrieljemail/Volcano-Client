@@ -1,4 +1,14 @@
 lib/
-resources/minecraft/
 build/
 CMakeFiles/
+node_modules/
+
+# Copyrighted Mojang material — decompiled source (resources/minecraft-code),
+# extracted assets/resource pack (resources/minecraft), and anything else
+# under this prefix. Not ours to redistribute.
+resources/minecraft*
+
+# Linux build output at repo root (the in-source build produces an
+# extensionless binary here) — VolcanoClient.exe (Windows) is tracked
+# deliberately, this isn't.
+/VolcanoClient
