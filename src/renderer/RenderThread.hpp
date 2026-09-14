@@ -72,6 +72,14 @@ private:
     // fields.
     bool wireframeMode = false;
 
+    // Current FOV boost in degrees, eased toward its target (Graphics.
+    // FOVEffects while sprinting/flying, 0 otherwise — see
+    // RecordAndSubmitFrame) every frame rather than snapping, so the zoom-out
+    // on starting/stopping a sprint is a smooth widen/narrow instead of a
+    // jump cut. RenderThread-owned for the same reason wireframeMode is:
+    // only this thread's own frame loop ever touches it.
+    float currentFovOffset = 0.0f;
+
     void ThreadEntry(stop_token stopToken);
     void RenderLoop(stop_token stopToken);
     void WaitForTargetFrame();
