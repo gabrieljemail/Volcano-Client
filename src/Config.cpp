@@ -2,6 +2,7 @@
 #include "Logger.hpp"
 #include <fstream>
 #include <sstream>
+#include <type_traits>
 #include <vector>
 
 #ifdef _WIN32
@@ -45,32 +46,26 @@ std::vector<std::string> SplitKey(const std::string& key)
     return segments;
 }
 
-struct DefaultSetting {
-    const char* key;
-    nlohmann::json value;
-};
-
-// Every setting the client reads through Config, with the value it had as a
-// hardcoded constant before this existed. Load() fills in whichever of
-// these are missing from settings.json (a fresh install, or a setting added
-// since the player's file was last written) without touching ones they've
-// already customized.
-const std::vector<DefaultSetting>& Defaults()
+nlohmann::json ToJson(const ConfigValue& value)
 {
-    static const std::vector<DefaultSetting> defaults = {
-        {"Window.Width", 854},
-        {"Window.Height", 480},
-        {"Graphics.TargetFPS", 60},
-        {"Graphics.VSync", true},
-        {"Graphics.BufferCount", 2},
-        {"Graphics.FOV", 100.0},
-        {"Graphics.RenderDistance", 8},
-        {"Debug.LogMessages", true},
-        {"Network.DevServerHost", "108.197.182.119"},
-        {"Network.DevServerPort", 25565},
-        {"Network.DevUsername", "VoidDev"},
-    };
-    return defaults;
+    return std::visit([](const auto& v) { return nlohmann::json(v); }, value);
+}
+
+// Tries to read node as whichever ConfigValue alternative fallback holds,
+// writing the result into out. Returns false if node holds some other JSON
+// type (or a value that doesn't fit, e.g. a negative number into uint32_t)
+// — the key is then treated as unset.
+bool ExtractMatching(const nlohmann::json& node, const ConfigValue& fallback, ConfigValue& out)
+{
+    return std::visit([&](const auto& fallbackValue) {
+        using T = std::decay_t<decltype(fallbackValue)>;
+        try {
+            out = node.get<T>();
+            return true;
+        } catch (const nlohmann::json::exception&) {
+            return false;
+        }
+    }, fallback);
 }
 
 } // namespace
@@ -98,17 +93,6 @@ void Config::Assign(nlohmann::json& root, const std::string& key, nlohmann::json
     (*node)[segments.back()] = std::move(value);
 }
 
-void Config::ApplyDefaults()
-{
-    for (const DefaultSetting& setting : Defaults())
-    {
-        if (Find(data, setting.key) == nullptr)
-        {
-            Assign(data, setting.key, setting.value);
-        }
-    }
-}
-
 void Config::Load()
 {
     path = ExecutableDirectory() + "/settings.json";
@@ -125,9 +109,6 @@ void Config::Load()
     }
     if (!data.is_object()) data = nlohmann::json::object();
 
-    ApplyDefaults();
-    Save();
-
     activeInstance = this;
 }
 
@@ -140,6 +121,25 @@ void Config::Save() const
         return;
     }
     file << data.dump(4);
+}
+
+ConfigValue Config::Get(const std::string& key, const ConfigValue& fallback)
+{
+    const nlohmann::json* node = Find(data, key);
+    ConfigValue value;
+    if (node != nullptr && ExtractMatching(*node, fallback, value)) return value;
+
+    // Unset or invalid — fall back to the caller's default, and persist it
+    // so settings.json (and every later Get() for this key) reflects it.
+    Assign(data, key, ToJson(fallback));
+    Save();
+    return fallback;
+}
+
+void Config::Set(const std::string& key, const ConfigValue& value)
+{
+    Assign(data, key, ToJson(value));
+    Save();
 }
 
 } // namespace Volcano

@@ -238,12 +238,12 @@ int main()
     // sees a hardcoded server.
     Volcano::GUI::Screen* connectScreen = Volcano::GUIController::CreateScreen("Connect to Server", /* closable */ false);
 
-    uint16_t devServerPort = state.config->Get<uint16_t>("Network.DevServerPort", 25565);
+    uint16_t devServerPort = static_cast<uint16_t>(std::get<uint32_t>(state.config->Get("Network.DevServerPort", uint32_t{25565})));
     auto* addressInput = new Volcano::GUI::TextInput(
         "Server Address",
-        state.config->Get<std::string>("Network.DevServerHost", "108.197.182.119") + ":" + std::to_string(devServerPort));
+        std::get<std::string>(state.config->Get("Network.DevServerHost", std::string("108.197.182.119"))) + ":" + std::to_string(devServerPort));
     auto* usernameInput = new Volcano::GUI::TextInput(
-        "Username", state.config->Get<std::string>("Network.DevUsername", "VoidDev"));
+        "Username", std::get<std::string>(state.config->Get("Network.DevUsername", std::string("VoidDev"))));
     auto* connectButton = new Volcano::GUI::Button("Connect");
 
     connectButton->AddClickHandler(new std::function<void()>([&state, &network, addressInput, usernameInput, connectScreen, devServerPort] {

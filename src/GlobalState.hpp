@@ -147,18 +147,18 @@ struct GlobalState {
     std::atomic<int> pendingFramebufferWidth{0};
     std::atomic<int> pendingFramebufferHeight{0};
 
-    // Loads settings.json (next to the executable), creating it with
-    // defaults on first run, and wires config up to point at it. Must run
-    // before anything below reads a setting through state->config — in
-    // particular before VulkanInit's Init(), which needs Window.Width/Height.
+    // Loads settings.json (next to the executable) and wires config up to
+    // point at it. Must run before anything below reads a setting through
+    // state->config — in particular before VulkanInit's Init(), which needs
+    // Window.Width/Height.
     void LoadSettings()
     {
         configStorage.Load();
         config = &configStorage;
 
-        resolution.x = config->Get<uint16_t>("Window.Width", 854);
-        resolution.y = config->Get<uint16_t>("Window.Height", 480);
-        targetFPS = config->Get<uint16_t>("Graphics.TargetFPS", 60);
+        resolution.x = static_cast<uint16_t>(std::get<uint32_t>(config->Get("Window.Width", uint32_t{854})));
+        resolution.y = static_cast<uint16_t>(std::get<uint32_t>(config->Get("Window.Height", uint32_t{480})));
+        targetFPS = static_cast<uint16_t>(std::get<uint32_t>(config->Get("Graphics.TargetFPS", uint32_t{60})));
     }
 };
 
