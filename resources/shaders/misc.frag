@@ -1,5 +1,11 @@
 #version 450
 
+layout(set = 0, binding = 0) uniform CameraUBO {
+    mat4 view;
+    mat4 proj;
+    float lightingEnabled;
+} camera;
+
 layout(set = 1, binding = 0) uniform sampler2DArray textureArray;
 
 layout(location = 0) in vec2 fragUV;
@@ -23,5 +29,6 @@ void main() {
     if (texColor.a < 0.01) discard;
 
     vec3 tint = (fragBiomeTinted != 0u) ? BIOME_COLOR_PLAINS : vec3(1.0);
-    outColor = vec4(texColor.rgb * tint * fragLight, texColor.a);
+    float light = camera.lightingEnabled > 0.5 ? fragLight : 1.0;
+    outColor = vec4(texColor.rgb * tint * light, texColor.a);
 }

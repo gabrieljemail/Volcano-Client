@@ -144,6 +144,16 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     // a separately-named add/update packet the way some doc sites do).
     constexpr int32_t PlayerInfoRemove = 0x45;         // PLAYER_INFO_REMOVE
     constexpr int32_t PlayerInfoUpdate = 0x46;         // PLAYER_INFO_UPDATE
+
+    // UPDATE_TIME — ID read the same way as the entity/tab-list IDs above,
+    // from this client's own bundled protocol.json's play.toClient.types.
+    // packet mapper: 0x71 update_time. Body layout (packet_update_time) is
+    // NOT the classic flat (worldAge:i64, timeOfDay:i64) pair — 26.1
+    // refactored this into i64 age + a VarInt-prefixed array of "clock"
+    // updates (id, totalTicks, partialTick, rate), only sending entries for
+    // clocks that actually changed. See NetworkClient::RunPlayLoop for how
+    // this client picks a clock out of that array.
+    constexpr int32_t UpdateTime = 0x71;
 }
 
 } // namespace Volcano

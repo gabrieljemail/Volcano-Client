@@ -1,4 +1,5 @@
 #include "TickLoop.hpp"
+#include "renderer/terrain/models/BlockRegistry.hpp"
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -184,29 +185,44 @@ void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float del
     if (axis == 1 && delta < 0.0f) grounded = false; // still falling
 }
 
-bool TickLoop::IsSolid(int x, int y, int z) const
-{
-    // hasCollision() also covers transparent-cube/partial non-cube shapes
-    // (glass, slabs, ...) — only cross-shaped plants (grass, flowers, ...)
-    // are non-solid despite having a non-cube visual. See Block::hasCollision.
-    return state->world->GetBlock(x, y, z).hasCollision();
-}
-
 bool TickLoop::AabbOverlapsSolid(glm::vec3 center) const
 {
     constexpr float epsilon = 1e-4f;
 
-    int minX = static_cast<int>(std::floor(center.x - PLAYER_HALF_WIDTH + epsilon));
-    int maxX = static_cast<int>(std::floor(center.x + PLAYER_HALF_WIDTH - epsilon));
-    int minY = static_cast<int>(std::floor(center.y + epsilon));
-    int maxY = static_cast<int>(std::floor(center.y + PLAYER_HEIGHT - epsilon));
-    int minZ = static_cast<int>(std::floor(center.z - PLAYER_HALF_WIDTH + epsilon));
-    int maxZ = static_cast<int>(std::floor(center.z + PLAYER_HALF_WIDTH - epsilon));
+    glm::vec3 playerMin(center.x - PLAYER_HALF_WIDTH, center.y, center.z - PLAYER_HALF_WIDTH);
+    glm::vec3 playerMax(center.x + PLAYER_HALF_WIDTH, center.y + PLAYER_HEIGHT, center.z + PLAYER_HALF_WIDTH);
 
-    for (int by = minY; by <= maxY; by++)
-        for (int bz = minZ; bz <= maxZ; bz++)
-            for (int bx = minX; bx <= maxX; bx++)
-                if (IsSolid(bx, by, bz)) return true;
+    int minX = static_cast<int>(std::floor(playerMin.x + epsilon));
+    int maxX = static_cast<int>(std::floor(playerMax.x - epsilon));
+    int minY = static_cast<int>(std::floor(playerMin.y + epsilon));
+    int maxY = static_cast<int>(std::floor(playerMax.y - epsilon));
+    int minZ = static_cast<int>(std::floor(playerMin.z + epsilon));
+    int maxZ = static_cast<int>(std::floor(playerMax.z - epsilon));
+
+    // Real per-shape collision (BlockRegistry::GetCollisionBoxes) instead of
+    // treating every touched voxel as fully solid — a block cell can hold
+    // several small boxes (a stair) or one smaller than the full voxel (a
+    // slab, an end rod's post), and the player's AABB must actually overlap
+    // one of them, not just share the cell.
+    for (int by = minY; by <= maxY; by++) {
+        for (int bz = minZ; bz <= maxZ; bz++) {
+            for (int bx = minX; bx <= maxX; bx++) {
+                Block block = state->world->GetBlock(bx, by, bz);
+                BlockRegistry::CollisionBoxes shape = BlockRegistry::GetCollisionBoxes(block);
+
+                glm::vec3 origin(static_cast<float>(bx), static_cast<float>(by), static_cast<float>(bz));
+                for (int i = 0; i < shape.count; i++) {
+                    glm::vec3 boxMin = origin + shape.boxes[static_cast<size_t>(i)].min;
+                    glm::vec3 boxMax = origin + shape.boxes[static_cast<size_t>(i)].max;
+
+                    bool overlaps = playerMin.x < boxMax.x - epsilon && playerMax.x > boxMin.x + epsilon
+                        && playerMin.y < boxMax.y - epsilon && playerMax.y > boxMin.y + epsilon
+                        && playerMin.z < boxMax.z - epsilon && playerMax.z > boxMin.z + epsilon;
+                    if (overlaps) return true;
+                }
+            }
+        }
+    }
 
     return false;
 }

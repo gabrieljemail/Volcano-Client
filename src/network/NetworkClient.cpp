@@ -314,6 +314,30 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
+        if (packetId == PlayS2C::UpdateTime) {
+            reader.ReadLong(); // age (world age, ticks since creation) — not needed for the sky-color gradient.
+            int32_t clockCount = reader.ReadVarInt();
+            for (int32_t i = 0; i < clockCount; i++) {
+                int32_t clockId = reader.ReadVarInt();
+                int64_t totalTicks = reader.ReadVarLong();
+                reader.ReadFloat(); // partialTick, unused — this client re-samples dayTimeTicks fresh every frame rather than locally extrapolating between updates.
+                reader.ReadFloat(); // rate, unused for the same reason.
+
+                // Clock id 0 is assumed to be the day/night cycle clock —
+                // undocumented in protocol.json beyond the field names, so
+                // this is a best-effort guess like several other packets in
+                // this file (see e.g. PlayerChatMessage's own comment). If a
+                // server's clock 0 means something else, the sky gradient
+                // will just track the wrong value rather than break anything.
+                if (clockId == 0) {
+                    int64_t dayTime = totalTicks % 24000;
+                    if (dayTime < 0) dayTime += 24000;
+                    state->dayTimeTicks.store(dayTime);
+                }
+            }
+            continue;
+        }
+
         if (packetId == PlayS2C::KeepAlive) {
             int64_t id = reader.ReadLong();
             PacketWriter response;
