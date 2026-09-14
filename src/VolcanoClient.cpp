@@ -164,6 +164,8 @@ int main()
     // Space is now a real jump (TickLoop applies gravity/collision) instead
     // of the old fly-cam's continuous vertical axis.
     input.RegisterAction("Jump", InputActionTriggerType::PRESS, {GLFW_KEY_SPACE});
+    input.RegisterAction("Sprint", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_CONTROL});
+    input.RegisterAction("Sneak", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_SHIFT});
     input.RegisterAction("OpenChat", InputActionTriggerType::PRESS, {GLFW_KEY_T});
     input.RegisterAction("ToggleWireframe", InputActionTriggerType::PRESS, {GLFW_KEY_F3});
 

@@ -19,10 +19,11 @@ namespace Volcano {
 // matching a real Minecraft tick exactly (FIXED_DT == 1/20s), so velocity
 // is tracked in vanilla's own blocks/tick units rather than blocks/sec.
 //
-// Not vanilla-exact in every respect: no sprint/sneak multipliers, or
-// non-solid block special-casing (water, ladders, etc.), and ground
-// friction/acceleration use default block slipperiness rather than reading
-// it per-block — see the plan's scope note.
+// Not vanilla-exact in every respect: sprint/sneak are client-side speed
+// multipliers only (no sneak edge-detection, no server-side attribute
+// modifiers), no non-solid block special-casing (water, ladders, etc.), and
+// ground friction/acceleration use default block slipperiness rather than
+// reading it per-block — see the plan's scope note.
 class TickLoop {
 public:
     static constexpr float FIXED_DT = 1.0f / 20.0f;
