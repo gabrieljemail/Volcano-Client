@@ -10,6 +10,7 @@
 #include "../renderer/entity/models/EntityRegistry.hpp"
 #include <glm/gtc/constants.hpp>
 #include <openssl/evp.h>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -156,22 +157,25 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
 void NetworkClient::RunSession(GlobalState* state, std::stop_token stopToken)
 {
     try {
-        if (!RunConfiguration()) return;
+        if (!RunConfiguration(state)) return;
         RunPlayLoop(state, stopToken);
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Session error: ") + e.what());
     }
 }
 
-bool NetworkClient::RunConfiguration()
+bool NetworkClient::RunConfiguration(GlobalState* state)
 {
     // Client Information — locale/view-distance/etc, the server uses this
     // (along with the player's position, sent once Play starts) to decide
     // what to stream. See PacketIds.hpp for why some field additions in
     // newer protocol versions may not be represented here yet.
+    uint32_t renderDistance = std::get<uint32_t>(state->config->Get("Graphics.RenderDistance", uint32_t{8}));
+    uint8_t renderDistanceByte = static_cast<uint8_t>(std::clamp<uint32_t>(renderDistance, 2, 32));
+
     PacketWriter clientInfo;
     clientInfo.WriteString("en_us");
-    clientInfo.WriteBytes(reinterpret_cast<const uint8_t*>("\x08"), 1); // view distance, signed byte
+    clientInfo.WriteBytes(&renderDistanceByte, 1); // view distance, signed byte
     clientInfo.WriteVarInt(0);   // chat mode: enabled
     clientInfo.WriteBool(true);  // chat colors
     clientInfo.WriteBytes(reinterpret_cast<const uint8_t*>("\x7F"), 1); // displayed skin parts: all

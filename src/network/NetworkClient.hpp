@@ -15,11 +15,6 @@ namespace Volcano {
 // which is the extracted client/server data for the dev server we target).
 constexpr int32_t PROTOCOL_VERSION = 776;
 
-// Declared to the server via Client Information during Configuration state.
-// Not yet backed by any dynamic load/unload behavior (no
-// VisibleChunkController) — just what we ask the server to stream.
-constexpr int32_t VIEW_DISTANCE = 8;
-
 class NetworkClient {
 public:
     explicit NetworkClient(asio::io_context& ioContext) : connection(ioContext) {}
@@ -45,7 +40,10 @@ public:
 private:
     Connection connection;
 
-    bool RunConfiguration();
+    // Reads Graphics.RenderDistance from state->config for the Client
+    // Information packet — see the definition for why it's declared to the
+    // server here (along with the rest of Client Information).
+    bool RunConfiguration(GlobalState* state);
     void RunPlayLoop(GlobalState* state, std::stop_token stopToken);
 };
 
