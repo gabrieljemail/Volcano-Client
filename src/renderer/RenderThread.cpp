@@ -346,9 +346,17 @@ void RenderThread::RecordAndSubmitFrame()
     // partial-volume shapes (slabs, carpets, ...), and cross-shaped plants
     // (grass, flowers, ...) — see NonCubicMesher/VulkanInit's
     // nonCubicPipeline. Drawn last (after opaque terrain and entities) with
-    // alpha blending and no depth write, so it composites over what's
-    // already in the color buffer without needing draw-order sorting within
-    // itself. Same frustum-culling/locking pattern as the chunk pass above.
+    // alpha blending and no depth write, so a translucent quad always
+    // composites correctly over the already-opaque color buffer behind it.
+    // That does NOT extend to translucent-over-translucent (e.g. looking
+    // through two overlapping panes of colored glass, or a cross-plant
+    // behind glass): GetVisibleMeshes only frustum-culls, it doesn't sort by
+    // depth, so which of two overlapping translucent quads blends "on top"
+    // is whatever order they happened to be emitted in — not always
+    // back-to-front, so colors there can come out visibly wrong. Fixing
+    // that needs actual back-to-front sorting (per-mesh at least, ideally
+    // per-triangle within a mesh) and hasn't been done yet — this pass has
+    // no draw-order sorting, not "doesn't need any."
     {
         std::lock_guard<std::mutex> lock(state->nonCubicRenderListMutex);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, nonCubicPipeline);
