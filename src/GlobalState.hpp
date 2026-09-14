@@ -22,6 +22,7 @@
 #include "Player.hpp"
 #include "PlayerAttributes.hpp"
 #include "Config.hpp"
+#include "inventory/InventoryManager.hpp"
 
 namespace Volcano {
 
@@ -78,6 +79,17 @@ struct GlobalState {
     World* world;
     PlayerAttributes* attributes;
     TickLoop* tickLoop;
+
+    // Player inventory (hotbar/main inventory/armor/offhand slot groups) —
+    // held directly rather than behind a pointer, same as networkInbox below,
+    // since there's exactly one per session. Not yet populated by anything:
+    // no packet handling for Window Items/Set Container Slot exists yet, so
+    // this is currently just the storage those will write into and the
+    // future inventory/hotbar/armor GUI will read from — see its own header
+    // for the concurrency convention (a mutex member right alongside the
+    // data, matching entities/entitiesMutex and playerList/playerListMutex
+    // below).
+    InventoryManager inventory;
 
     // Current state:
     bool shouldClose{false};
