@@ -12,3 +12,5 @@ resources/minecraft*
 # extensionless binary here) — VolcanoClient.exe (Windows) is tracked
 # deliberately, this isn't.
 /VolcanoClient
+
+settings.json

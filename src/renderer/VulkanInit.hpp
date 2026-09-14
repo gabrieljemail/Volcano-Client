@@ -12,16 +12,17 @@
 
 using namespace Volcano;
 
-// Setting placeholders:
+// Engine/app identity — not a user setting, so still a plain constant.
 constexpr const char* APP_NAME          = "Volcano Client";
 constexpr const uint32_t APP_VERSION    = VK_MAKE_API_VERSION(1,0,1,1);
 constexpr const char* ENGINE_NAME       = "Volcano Game Engine";
 constexpr const uint32_t ENGINE_VERSION = VK_MAKE_API_VERSION(1,0,1,1);
-constexpr const uint32_t WINDOW_WIDTH   = 854;
-constexpr const uint32_t WINDOW_HEIGHT  = 480;
-constexpr const auto PRESENT_MODE       = VK_PRESENT_MODE_FIFO_KHR; // VSync.
-constexpr const uint8_t BUFFER_SIZE     = 2;
-constexpr const uint16_t TARGET_FPS     = 60;
+
+// Window.Width/Window.Height, Graphics.VSync and Graphics.BufferCount now
+// live in GlobalState::config (see settings.json) — read via
+// DesiredWindowSize()/DesiredPresentMode()/DesiredBufferCount() in
+// VulkanInit.cpp rather than as compile-time constants.
+
 // Number of perpendicular billboard planes NonCubicMesher generates for
 // cross-shaped blocks (grass, flowers, saplings, ...) — 2 matches vanilla
 // Minecraft's default X-shape.

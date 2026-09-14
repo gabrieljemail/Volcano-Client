@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "../models/Mesh.hpp"
 #include "../terrain/models/Chunk.hpp"
+#include "../terrain/models/World.hpp"
 #include "../TextureManager.hpp"
 
 namespace Volcano {
@@ -30,7 +31,10 @@ public:
     // from 64 MB after it ran out mid-session.
     static constexpr uint64_t DEFAULT_SLAB_SIZE = 128ull * 1024 * 1024; // 128 MB
 
-    static Mesh MeshChunk(const Chunk& chunk, const TextureManager& textureManager);
+    // world is needed for MeshTransparentCube's same-visual neighbor culling
+    // to see across chunk boundaries — see GetBlockAcrossChunks in the .cpp
+    // (mirrors ChunkMesher's own World-backed neighbor lookup).
+    static Mesh MeshChunk(const Chunk& chunk, const World& world, const TextureManager& textureManager);
 
     // Releases the slab buffers. Must be called before the VMA allocator is
     // destroyed (e.g. from VulkanInit::Cleanup()), same requirement as
