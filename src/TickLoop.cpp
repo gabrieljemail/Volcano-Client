@@ -12,6 +12,10 @@ constexpr float PLAYER_HEIGHT = 1.8f;
 // breakpoint, alt-tab, a slow load) — clamp how much time can accumulate so
 // a stall causes a pause, not a burst of catch-up ticks.
 constexpr float MAX_ACCUMULATED_TIME = 0.25f;
+// Vanilla's own step height: obstructions this tall or shorter (slabs,
+// snow layers/carpets, a staircase's first step) are auto-climbed on a
+// horizontal move instead of blocking it — see MoveAxis/TryStepUp.
+constexpr float STEP_HEIGHT = 0.6f;
 } // namespace
 
 TickLoop::TickLoop(GlobalState* stateIn) : state(stateIn)
@@ -45,7 +49,21 @@ void TickLoop::Advance(float frameDeltaTime, bool inputAllowed)
         }
     }
 
-    if (inputAllowed) jumpQueued = jumpQueued || state->input->WasActivated("Jump");
+    // WasActivated("Jump") is the edge case: a tap that lands in a frame
+    // which runs zero Tick()s must not be lost, so it latches here and stays
+    // true until a Tick() actually consumes it (see jumpQueued's comment).
+    // IsActive("JumpHold") adds vanilla's repeat-jump-on-landing on top of
+    // that: as long as Space is physically down, this re-latches every
+    // single frame regardless of whether the previous latch was already
+    // consumed — so even though Tick() unconditionally clears jumpQueued
+    // after checking it (discarding a jump attempt made while airborne),
+    // holding the key means the very next frame queues another attempt, and
+    // the first Tick() where the player is grounded again actually jumps.
+    // Both stay gated behind inputAllowed — a screen/chat box being open
+    // must not also make the player jump underneath it.
+    if (inputAllowed) {
+        jumpQueued = jumpQueued || state->input->WasActivated("Jump") || state->input->IsActive("JumpHold");
+    }
 
     accumulator += frameDeltaTime;
     if (accumulator > MAX_ACCUMULATED_TIME) accumulator = MAX_ACCUMULATED_TIME;
@@ -176,13 +194,70 @@ void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float del
 
     if (AabbOverlapsSolid(tentative))
     {
-        if (axis == 1 && delta < 0.0f) grounded = true;
+        if (axis == 1)
+        {
+            if (delta < 0.0f) grounded = true;
+            vel[axis] = 0.0f;
+            return;
+        }
+
+        // Horizontal move blocked — before giving up, try vanilla's auto
+        // step-up: if the same move clears at up to STEP_HEIGHT higher, snap
+        // onto whatever's in the way and let the move through instead of
+        // stopping dead against a slab/stair/snow layer. Never attempted for
+        // axis 1 above — this is purely a horizontal-collision affordance
+        // and must never touch vertical velocity/gravity resolution.
+        std::optional<float> stepUpY = TryStepUp(position, tentative);
+        if (stepUpY.has_value())
+        {
+            tentative.y = *stepUpY;
+            position = tentative;
+            return; // vel[axis] stays as-is — the move succeeded.
+        }
+
         vel[axis] = 0.0f;
         return;
     }
 
     position = tentative;
     if (axis == 1 && delta < 0.0f) grounded = false; // still falling
+}
+
+std::optional<float> TickLoop::TryStepUp(glm::vec3 position, glm::vec3 tentative) const
+{
+    // No headroom to rise from where the player is currently standing —
+    // stepping up would just trade a horizontal collision for a vertical
+    // one, so don't bother probing the destination at all.
+    if (AabbOverlapsSolid(glm::vec3(position.x, position.y + STEP_HEIGHT, position.z)))
+        return std::nullopt;
+
+    // If the destination is still blocked even fully raised by STEP_HEIGHT,
+    // whatever's in the way is taller than a step (a real wall) — refuse it
+    // rather than let the player climb it a tick at a time.
+    glm::vec3 raised = tentative;
+    raised.y = position.y + STEP_HEIGHT;
+    if (AabbOverlapsSolid(raised))
+        return std::nullopt;
+
+    // Both ends of the range are confirmed clear, so there's a genuine
+    // sub-step obstruction somewhere in between (that's the only reason the
+    // un-raised move at position.y failed in the first place). Walk down
+    // from the raised height in small increments to find the lowest clear
+    // height — i.e. the top of whatever's being stepped onto — so the
+    // player's feet land flush on it instead of resting at an arbitrary
+    // fixed +STEP_HEIGHT offset (which would float above a shorter
+    // obstruction like a single snow layer).
+    constexpr float SEARCH_STEP = 1.0f / 64.0f;
+    float snappedY = raised.y;
+    for (float y = raised.y - SEARCH_STEP; y > position.y; y -= SEARCH_STEP)
+    {
+        glm::vec3 probe = tentative;
+        probe.y = y;
+        if (AabbOverlapsSolid(probe)) break; // still inside the obstruction; keep the last clear height.
+        snappedY = y;
+    }
+
+    return snappedY;
 }
 
 bool TickLoop::AabbOverlapsSolid(glm::vec3 center) const
