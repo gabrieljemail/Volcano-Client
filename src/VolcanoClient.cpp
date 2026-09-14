@@ -162,8 +162,13 @@ int main()
     input.RegisterAxis("Move.Forward", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, GLFW_KEY_W, GLFW_KEY_S, AxisSourceType::KeyPair, false });
     input.RegisterAxis("Move.Right", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, GLFW_KEY_D, GLFW_KEY_A, AxisSourceType::KeyPair, false });
     // Space is now a real jump (TickLoop applies gravity/collision) instead
-    // of the old fly-cam's continuous vertical axis.
+    // of the old fly-cam's continuous vertical axis. Two actions on the same
+    // key: "Jump" (PRESS) drives TickLoop's edge-latch so a tap landing
+    // between fixed ticks is never lost, and "JumpHold" (HOLD) lets it also
+    // re-queue a jump on every frame the key is still down, which is what
+    // gives holding Space vanilla's repeat-jump-on-landing behavior.
     input.RegisterAction("Jump", InputActionTriggerType::PRESS, {GLFW_KEY_SPACE});
+    input.RegisterAction("JumpHold", InputActionTriggerType::HOLD, {GLFW_KEY_SPACE});
     input.RegisterAction("Sprint", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_CONTROL});
     input.RegisterAction("Sneak", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_SHIFT});
     input.RegisterAction("OpenChat", InputActionTriggerType::PRESS, {GLFW_KEY_T});
