@@ -17,15 +17,6 @@ namespace Volcano {
 void SendChatMessage(GlobalState* state, const std::string& message);
 }
 
-namespace {
-// Window.Width/Height, read through GUIController::state->config rather
-// than the old WINDOW_WIDTH/HEIGHT compile-time constants. Called every
-// frame from several places below, so kept as a couple of tiny helpers
-// instead of repeating the config lookup inline.
-uint16_t ConfigWindowWidth() { return static_cast<uint16_t>(std::get<uint32_t>(Volcano::GUIController::state->config->Get("Window.Width", uint32_t{854}))); }
-uint16_t ConfigWindowHeight() { return static_cast<uint16_t>(std::get<uint32_t>(Volcano::GUIController::state->config->Get("Window.Height", uint32_t{480}))); }
-}
-
 namespace Volcano {
 
 GlobalState* GUIController::state = nullptr;
@@ -82,7 +73,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
 
     // Create debug window.
     std::string debugWindowName = "Debug";
-    debugWindow = CreateWindow(debugWindowName, WindowAlignment::TOP_LEFT);
+    debugWindow = CreateWindow(debugWindowName, GUI::ScreenAnchor::TOP_LEFT);
     debugText = new GUI::GUIComponent(GUI::GUIComponentType::TEXT, "");
     debugWindow->components.push_back(debugText);
 
@@ -198,8 +189,9 @@ void GUIController::Render(VkCommandBuffer commandBuffer)
             if (window == nullptr) continue;
             if (window->name.empty()) continue;
 
-            ImGui::SetNextWindowPos(ImVec2(window->positionX, window->positionY), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(window->sizeX, window->sizeY), ImGuiCond_Always);
+            ImVec2 size(window->sizeX, window->sizeY);
+            ImGui::SetNextWindowPos(ResolveAnchor(window->anchor, size, ImVec2(window->offsetX, window->offsetY)), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(size, ImGuiCond_Always);
             ImGui::Begin(window->name.c_str(), nullptr,
                 ImGuiWindowFlags_AlwaysAutoResize |
                 ImGuiWindowFlags_NoMove |
@@ -261,7 +253,10 @@ void GUIController::RenderComponent(GUI::GUIComponent* component)
 void GUIController::RenderScreen(GUI::Screen& screen)
 {
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(static_cast<float>(ConfigWindowWidth()), static_cast<float>(ConfigWindowHeight())), ImGuiCond_Always);
+    // The live display size (kept in sync with the real framebuffer every
+    // frame), not the launch-time Window.Width/Height config — otherwise a
+    // resize or F11 fullscreen leaves this covering only the old size.
+    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
     // No window background — RecordAndSubmitFrame draws the Vulkan 3D scene
     // into this same render pass before GUIController::Render runs, so the
     // world shows through behind the screen's own components.
@@ -307,9 +302,14 @@ void GUIController::RenderChatWindow()
     std::vector<GUI::ChatLine> lines = GUI::Chat::GetLines();
 
     constexpr float height = 220.0f, margin = 8.0f;
-    float bottom = static_cast<float>(ConfigWindowHeight()) - margin
-        - (chatInputOpen ? CHAT_INPUT_HEIGHT + margin : 0.0f);
-    ImGui::SetNextWindowPos(ImVec2(margin, bottom - height), ImGuiCond_Always);
+    // Anchored to the bottom-left of the *current* display, not a stale
+    // Window.Height config value — previously this used the configured
+    // launch resolution regardless of the actual window size, so toggling
+    // F11 into fullscreen (a much taller real display) left the chat
+    // window positioned partway up the screen instead of at the bottom.
+    float bottomOffset = margin + (chatInputOpen ? CHAT_INPUT_HEIGHT + margin : 0.0f);
+    ImVec2 pos = ResolveAnchor(GUI::ScreenAnchor::BOTTOM_LEFT, ImVec2(CHAT_WIDTH, height), ImVec2(margin, bottomOffset));
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(CHAT_WIDTH, height), ImGuiCond_Always);
     // No SetNextWindowBgAlpha override — inherits ImGuiCol_WindowBg from
     // ApplyVolcanoTheme (panelDark, alpha 0.96), same as the debug window.
@@ -352,8 +352,8 @@ void GUIController::RenderChatWindow()
 void GUIController::RenderChatInputBox()
 {
     constexpr float margin = 8.0f;
-    ImGui::SetNextWindowPos(
-        ImVec2(margin, static_cast<float>(ConfigWindowHeight()) - CHAT_INPUT_HEIGHT - margin), ImGuiCond_Always);
+    ImVec2 pos = ResolveAnchor(GUI::ScreenAnchor::BOTTOM_LEFT, ImVec2(CHAT_WIDTH, CHAT_INPUT_HEIGHT), ImVec2(margin, margin));
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(CHAT_WIDTH, CHAT_INPUT_HEIGHT), ImGuiCond_Always);
     ImGui::Begin("##chatinput", nullptr,
         ImGuiWindowFlags_NoTitleBar |
@@ -477,65 +477,73 @@ bool GUIController::DrawStyledButton(const std::string& label, ImVec2 size)
     return clicked;
 }
 
-// Create a new GUI window.
-GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, WindowAlignment alignment)
+// Create a new GUI window, pinned to a screen anchor + offset rather than
+// an absolute position — see GUI::ScreenAnchor and ResolveAnchor().
+GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, GUI::ScreenAnchor anchor,
+                                             float offsetX, float offsetY)
 {
     constexpr uint16_t width = 180, height = 80;
-    constexpr uint16_t margin = 8;
-    uint16_t size[2] = {width, height};
-    uint16_t position[2] = {0, 0};
-
-    // Window.Width/Height reflect the actual (currently fixed, non-resizable)
-    // window size, so edges/corners can be computed against it directly.
-    uint16_t windowWidth = ConfigWindowWidth();
-    uint16_t windowHeight = ConfigWindowHeight();
-
-    switch (alignment)
-    {
-        default:
-        case WindowAlignment::TOP_LEFT: {
-            position[0] = margin; position[1] = margin;
-            break;
-        }
-        case WindowAlignment::TOP_RIGHT: {
-            position[0] = windowWidth - width - margin; position[1] = margin;
-            break;
-        }
-        case WindowAlignment::BOTTOM_RIGHT: {
-            position[0] = windowWidth - width - margin; position[1] = windowHeight - height - margin;
-            break;
-        }
-        case WindowAlignment::BOTTOM_LEFT: {
-            position[0] = margin; position[1] = windowHeight - height - margin;
-            break;
-        }
-        case WindowAlignment::TOP: {
-            position[0] = (windowWidth - width) / 2; position[1] = margin;
-            break;
-        }
-        case WindowAlignment::RIGHT: {
-            position[0] = windowWidth - width - margin; position[1] = (windowHeight - height) / 2;
-            break;
-        }
-        case WindowAlignment::BOTTOM: {
-            position[0] = (windowWidth - width) / 2; position[1] = windowHeight - height - margin;
-            break;
-        }
-        case WindowAlignment::LEFT: {
-            position[0] = margin; position[1] = (windowHeight - height) / 2;
-            break;
-        }
-    }
 
     GUI::GUIWindow* window = new GUI::GUIWindow{name};
     window->components = {};
-    window->positionX = position[0];
-    window->positionY = position[1];
-    window->sizeX = size[0];
-    window->sizeY = size[1];
+    window->anchor = anchor;
+    window->offsetX = offsetX;
+    window->offsetY = offsetY;
+    window->sizeX = width;
+    window->sizeY = height;
 
     windows.push_back(window);
     return window;
+}
+
+// Resolves anchor + inward pixel offset into an absolute top-left position
+// against the current ImGui display size — see the header comment.
+ImVec2 GUIController::ResolveAnchor(GUI::ScreenAnchor anchor, ImVec2 size, ImVec2 offset)
+{
+    ImVec2 display = ImGui::GetIO().DisplaySize;
+    float x = 0.0f, y = 0.0f;
+
+    switch (anchor)
+    {
+        default:
+        case GUI::ScreenAnchor::TOP_LEFT:
+        case GUI::ScreenAnchor::LEFT:
+        case GUI::ScreenAnchor::BOTTOM_LEFT:
+            x = offset.x;
+            break;
+        case GUI::ScreenAnchor::TOP_RIGHT:
+        case GUI::ScreenAnchor::RIGHT:
+        case GUI::ScreenAnchor::BOTTOM_RIGHT:
+            x = display.x - size.x - offset.x;
+            break;
+        case GUI::ScreenAnchor::TOP:
+        case GUI::ScreenAnchor::BOTTOM:
+        case GUI::ScreenAnchor::CENTER:
+            x = (display.x - size.x) * 0.5f + offset.x;
+            break;
+    }
+
+    switch (anchor)
+    {
+        default:
+        case GUI::ScreenAnchor::TOP_LEFT:
+        case GUI::ScreenAnchor::TOP:
+        case GUI::ScreenAnchor::TOP_RIGHT:
+            y = offset.y;
+            break;
+        case GUI::ScreenAnchor::BOTTOM_LEFT:
+        case GUI::ScreenAnchor::BOTTOM:
+        case GUI::ScreenAnchor::BOTTOM_RIGHT:
+            y = display.y - size.y - offset.y;
+            break;
+        case GUI::ScreenAnchor::LEFT:
+        case GUI::ScreenAnchor::RIGHT:
+        case GUI::ScreenAnchor::CENTER:
+            y = (display.y - size.y) * 0.5f + offset.y;
+            break;
+    }
+
+    return ImVec2(x, y);
 }
 
 // Create a fullscreen menu screen. Not shown until passed to OpenScreen.
