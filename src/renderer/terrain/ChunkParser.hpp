@@ -9,12 +9,12 @@
 namespace Volcano::ChunkParser {
 
 // Parses the payload of a "Chunk Data and Update Light" packet (protocol
-// 775) into a Chunk. Only the block-state paletted containers are decoded;
-// heightmaps are skipped (self-delimiting, not NBT in this protocol
-// version), and everything after the section data (block entities, light
-// arrays) is left unread — safe, since Connection::ReadPacket already framed
-// the whole payload and nothing follows in the same packet that this client
-// currently uses. Assumes a standard overworld dimension (24 sections,
+// 775) into a Chunk: the block-state paletted containers, and the per-section
+// sky/block light arrays that follow the block entities. Heightmaps and
+// biomes are skipped/discarded (heightmaps are self-delimiting, not NBT, in
+// this protocol version), and block entities are read only far enough to
+// stay aligned with the light data after them — this client doesn't model
+// block entities yet. Assumes a standard overworld dimension (24 sections,
 // world Y -64..319); other dimension heights aren't handled yet.
 std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader);
 
