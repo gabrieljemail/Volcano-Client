@@ -42,6 +42,7 @@ GUI::GUIComponent* GUIController::deathMessageText = nullptr;
 bool GUIController::chatInputOpen = false;
 bool GUIController::chatInputJustOpened = false;
 char GUIController::chatInputBuffer[256] = {};
+uint8_t GUIController::selectedHotbarSlot = 0;
 
 void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState)
 {
@@ -385,6 +386,11 @@ void GUIController::RenderChatWindow()
     ImGui::SetNextWindowSize(ImVec2(CHAT_WIDTH, height), ImGuiCond_Always);
     // No SetNextWindowBgAlpha override — inherits ImGuiCol_WindowBg from
     // ApplyVolcanoTheme (panelDark, alpha 0.96), same as the debug window.
+    // NoBringToFrontOnFocus pins this to draw-call order (called first in
+    // Render(), before the hotbar/status/movement-state HUD) rather than
+    // letting ImGui's own window stack reorder it to the top — without this
+    // the scrollback could end up drawn OVER the center HUD instead of
+    // staying behind it.
     ImGui::Begin("##chat", nullptr,
         ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoMove |
@@ -393,7 +399,8 @@ void GUIController::RenderChatWindow()
         ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoFocusOnAppearing |
         ImGuiWindowFlags_NoNav |
-        ImGuiWindowFlags_NoInputs);
+        ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoBringToFrontOnFocus);
 
     for (const GUI::ChatLine& line : lines)
     {
@@ -500,34 +507,62 @@ namespace {
     constexpr int HOTBAR_SLOTS = 9;
     constexpr int ARMOR_SLOTS = 4;
     constexpr float HOTBAR_WIDTH = HOTBAR_SLOTS * SLOT_SIZE + (HOTBAR_SLOTS - 1) * SLOT_GAP;
-    constexpr float ARMOR_HEIGHT = ARMOR_SLOTS * SLOT_SIZE + (ARMOR_SLOTS - 1) * SLOT_GAP;
+    // Armor is a horizontal row (see RenderHotbarAndArmor) — the "sideways"
+    // layout uku's Armor HUD mod uses instead of vanilla's vertical
+    // inventory-screen stack — so it shares the hotbar row's own height
+    // (SLOT_SIZE) and needs no separate vertical-centering math.
+    constexpr float ARMOR_WIDTH = ARMOR_SLOTS * SLOT_SIZE + (ARMOR_SLOTS - 1) * SLOT_GAP;
     constexpr float HUD_BOTTOM_MARGIN = 10.0f; // hotbar's own inset from the bottom edge
     constexpr float PANEL_GAP = 10.0f;         // hotbar <-> armor / hotbar <-> state-panel spacing
 
-    constexpr float BAR_HEIGHT = 18.0f;
+    // Health and hunger side by side (not stacked) spanning the hotbar's own
+    // width; saturation isn't a third row — vanilla treats it as a "buffer"
+    // layered on top of the hunger value rather than its own stat, so it's
+    // drawn as a semi-transparent overlay on the hunger bar instead (see
+    // DrawStatBar's overlayFrac).
+    constexpr float BAR_HEIGHT = 22.0f;
     constexpr float BAR_GAP = 4.0f;
+    constexpr float BAR_WIDTH = (HOTBAR_WIDTH - BAR_GAP) * 0.5f;
     constexpr float BAR_PADDING = 8.0f;
     constexpr float STATUS_PANEL_WIDTH = HOTBAR_WIDTH + BAR_PADDING * 2.0f;
-    constexpr float STATUS_PANEL_HEIGHT = BAR_HEIGHT * 3.0f + BAR_GAP * 2.0f + BAR_PADDING * 2.0f;
+    constexpr float STATUS_PANEL_HEIGHT = BAR_HEIGHT + BAR_PADDING * 2.0f;
     constexpr float STATUS_PANEL_GAP = 6.0f;   // status panel <-> hotbar spacing
 
     // Empty slot rect in the Volcano theme's flat-glow language (same fill/
     // border colors DrawStyledButton uses) — hotbar and armor both need
     // this and nothing else, so it's a free function rather than a member.
-    void DrawSlot(ImDrawList* drawList, ImVec2 pos, float size)
+    // `selected` swaps the dim border for a bright one plus a soft outer
+    // glow (matching DrawStyledButton's own hover glow) — the hotbar's
+    // held-slot indicator; nothing else ever passes true for it.
+    void DrawSlot(ImDrawList* drawList, ImVec2 pos, float size, bool selected = false)
     {
         constexpr float rounding = 4.0f;
         ImVec2 rectMax(pos.x + size, pos.y + size);
+
+        if (selected)
+        {
+            drawList->AddRectFilled(
+                ImVec2(pos.x - 3.0f, pos.y - 3.0f), ImVec2(rectMax.x + 3.0f, rectMax.y + 3.0f),
+                IM_COL32(60, 220, 255, 55), rounding + 3.0f);
+        }
+
         drawList->AddRectFilled(pos, rectMax, IM_COL32(12, 32, 40, 235), rounding);
-        drawList->AddRect(pos, rectMax, IM_COL32(60, 170, 190, 160), rounding, 0, 1.5f);
+        drawList->AddRect(pos, rectMax, selected ? IM_COL32(120, 235, 255, 255) : IM_COL32(60, 170, 190, 160),
+                           rounding, 0, selected ? 2.5f : 1.5f);
     }
 
-    // One labeled, proportionally-filled bar — health/hunger/saturation all
-    // share this, only the fill color and current/max differ. Values are
-    // drawn (not just the bar) since without an icon font there's otherwise
-    // no way to tell "half a heart" from "half a shield" apart at a glance.
+    // One labeled, proportionally-filled bar — health and hunger both share
+    // this, only the fill color and current/max differ. `overlayFrac` (0
+    // when unused) draws a second, low-alpha fill on top spanning that
+    // fraction of the bar's width — hunger's saturation "buffer" uses this;
+    // health doesn't pass one. Values are drawn (not just the bar) since
+    // without an icon font there's otherwise no way to read the exact
+    // number at a glance. Fill colors are deliberately muted/dark rather
+    // than vivid — a first pass used bright red/orange, which made the
+    // centered white label text hard to read against them.
     void DrawStatBar(ImDrawList* drawList, ImVec2 pos, float width, float height,
-                      const char* label, float current, float max, ImU32 fillColor)
+                      const char* label, float current, float max, ImU32 fillColor,
+                      float overlayFrac = 0.0f)
     {
         ImVec2 rectMax(pos.x + width, pos.y + height);
         drawList->AddRectFilled(pos, rectMax, IM_COL32(12, 32, 40, 235), 4.0f);
@@ -536,6 +571,13 @@ namespace {
         if (frac > 0.0f)
         {
             drawList->AddRectFilled(pos, ImVec2(pos.x + width * frac, rectMax.y), fillColor, 4.0f);
+        }
+
+        if (overlayFrac > 0.0f)
+        {
+            float clamped = std::clamp(overlayFrac, 0.0f, 1.0f);
+            drawList->AddRectFilled(pos, ImVec2(pos.x + width * clamped, rectMax.y),
+                                     IM_COL32(255, 250, 210, 60), 4.0f);
         }
 
         drawList->AddRect(pos, rectMax, IM_COL32(60, 170, 190, 160), 4.0f, 0, 1.5f);
@@ -556,16 +598,17 @@ ImVec2 GUIController::HotbarOrigin()
     return ResolveAnchor(GUI::ScreenAnchor::BOTTOM, ImVec2(HOTBAR_WIDTH, SLOT_SIZE), ImVec2(0.0f, HUD_BOTTOM_MARGIN));
 }
 
-// Hotbar (9 slots) + armor column (4 slots), immediately left of it,
-// vertically centered on it. Both are pure visual placeholders — there's no
-// inventory data model wired to a live inventory yet (models exist —
-// src/inventory/ — but nothing populates them until Window Items/Set
-// Container Slot packet handling is added), so these are just empty slot
-// rects, no item icons. Drawn with raw ImDrawList calls in one NoBackground
-// window rather than through GUIWindow/GUIComponent, which has no notion of
-// an icon-slot grid, and rather than two separate windows, since a shared
-// draw list means there's no z-order question between the two groups of
-// rects.
+// Hotbar (9 slots, held slot highlighted via selectedHotbarSlot) + armor row
+// (4 slots, sideways like uku's Armor HUD — see ARMOR_WIDTH's comment),
+// immediately left of it and sharing its row height. Both are pure visual
+// placeholders — there's no inventory data model wired to a live inventory
+// yet (models exist — src/inventory/ — but nothing populates them until
+// Window Items/Set Container Slot packet handling is added), so these are
+// just empty slot rects, no item icons. Drawn with raw ImDrawList calls in
+// one NoBackground window rather than through GUIWindow/GUIComponent, which
+// has no notion of an icon-slot grid, and rather than two separate windows,
+// since a shared draw list means there's no z-order question between the
+// two groups of rects.
 void GUIController::RenderHotbarAndArmor()
 {
     ImVec2 hotbarPos = HotbarOrigin();
@@ -589,25 +632,38 @@ void GUIController::RenderHotbarAndArmor()
 
     for (int i = 0; i < HOTBAR_SLOTS; i++)
     {
-        DrawSlot(drawList, ImVec2(hotbarPos.x + i * (SLOT_SIZE + SLOT_GAP), hotbarPos.y), SLOT_SIZE);
+        DrawSlot(drawList, ImVec2(hotbarPos.x + i * (SLOT_SIZE + SLOT_GAP), hotbarPos.y), SLOT_SIZE,
+                 i == selectedHotbarSlot);
     }
 
-    ImVec2 armorPos(hotbarPos.x - PANEL_GAP - SLOT_SIZE, hotbarPos.y - (ARMOR_HEIGHT - SLOT_SIZE) * 0.5f);
+    ImVec2 armorPos(hotbarPos.x - PANEL_GAP - ARMOR_WIDTH, hotbarPos.y);
     for (int i = 0; i < ARMOR_SLOTS; i++)
     {
-        DrawSlot(drawList, ImVec2(armorPos.x, armorPos.y + i * (SLOT_SIZE + SLOT_GAP)), SLOT_SIZE);
+        DrawSlot(drawList, ImVec2(armorPos.x + i * (SLOT_SIZE + SLOT_GAP), armorPos.y), SLOT_SIZE);
     }
 
     ImGui::End();
 }
 
-// Health/hunger/saturation, directly above the hotbar's horizontal span.
-// Vanilla draws two rows of small heart/hunger icons here; there's no icon
-// font/texture yet (see Init()'s TODO on merging one into the atlas later),
-// so this draws labeled proportional bars instead — same dark-panel/cyan-
-// border language as everything else, with a distinct fill color per stat
-// (reddish health, brownish-orange hunger, amber saturation) so the three
-// rows are tellable apart without icons.
+// See the header's own comment — the inventory system will call this once
+// it can tell what's actually selected (Set Held Item packet handling
+// doesn't exist yet). Clamped rather than asserted since a future caller
+// handing this a raw protocol value shouldn't be able to crash the HUD over
+// a malformed packet.
+void GUIController::SetSelectedHotbarSlot(uint8_t slot)
+{
+    selectedHotbarSlot = slot < HOTBAR_SLOTS ? slot : 0;
+}
+
+// Health and hunger, side by side, directly above the hotbar's horizontal
+// span. Vanilla draws two rows of small heart/hunger icons here; there's no
+// icon font/texture yet (see Init()'s TODO on merging one into the atlas
+// later), so this draws labeled proportional bars instead. Saturation isn't
+// a third bar — it's a semi-transparent overlay on top of the hunger bar
+// (see DrawStatBar's overlayFrac), matching vanilla's own treatment of it as
+// a buffer on the hunger value rather than an independently displayed stat.
+// Saturation's real range is 0-20 (it can't exceed the current food level,
+// which itself caps at 20) — not the 0-5 a first pass assumed.
 void GUIController::RenderPlayerStatusBars()
 {
     float health, saturation;
@@ -626,10 +682,11 @@ void GUIController::RenderPlayerStatusBars()
 
     ImGui::SetNextWindowPos(panelPos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(STATUS_PANEL_WIDTH, STATUS_PANEL_HEIGHT), ImGuiCond_Always);
-    // No NoBackground — inherits the panelDark/cyan-border window chrome
-    // from ApplyVolcanoTheme, same as the debug window/chat scrollback, so
-    // the three bars read as one "vitals" panel rather than three floating
-    // rects.
+    // NoBackground — each bar already draws its own dark backing rect (see
+    // DrawStatBar), so the panel's own window chrome was a second,
+    // redundant dark rounded box sitting behind that; removing it lets
+    // whatever's behind (world, chat) show through the gap between the two
+    // bars instead of a solid panel.
     ImGui::Begin("##status_bars", nullptr,
         ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoMove |
@@ -638,20 +695,21 @@ void GUIController::RenderPlayerStatusBars()
         ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoFocusOnAppearing |
         ImGuiWindowFlags_NoNav |
-        ImGuiWindowFlags_NoInputs);
+        ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoBringToFrontOnFocus);
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    float barX = panelPos.x + BAR_PADDING;
     float barY = panelPos.y + BAR_PADDING;
+    float healthX = panelPos.x + BAR_PADDING;
+    float hungerX = healthX + BAR_WIDTH + BAR_GAP;
 
-    DrawStatBar(drawList, ImVec2(barX, barY), HOTBAR_WIDTH, BAR_HEIGHT,
-                "Health", health, 20.0f, IM_COL32(210, 70, 70, 255));
-    barY += BAR_HEIGHT + BAR_GAP;
-    DrawStatBar(drawList, ImVec2(barX, barY), HOTBAR_WIDTH, BAR_HEIGHT,
-                "Hunger", static_cast<float>(food), 20.0f, IM_COL32(200, 140, 70, 255));
-    barY += BAR_HEIGHT + BAR_GAP;
-    DrawStatBar(drawList, ImVec2(barX, barY), HOTBAR_WIDTH, BAR_HEIGHT,
-                "Saturation", saturation, 5.0f, IM_COL32(210, 190, 90, 255));
+    DrawStatBar(drawList, ImVec2(healthX, barY), BAR_WIDTH, BAR_HEIGHT,
+                "Health", health, 20.0f, IM_COL32(140, 45, 45, 255));
+    DrawStatBar(drawList, ImVec2(hungerX, barY), BAR_WIDTH, BAR_HEIGHT,
+                "Hunger", static_cast<float>(food), 20.0f, IM_COL32(140, 95, 45, 255),
+                saturation / 20.0f);
 
     ImGui::End();
 }
