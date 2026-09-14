@@ -74,7 +74,6 @@ private:
     bool grounded = false;
 
     void Tick(bool inputAllowed);
-    bool IsSolid(int x, int y, int z) const;
     bool AabbOverlapsSolid(glm::vec3 center) const;
     void MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float delta);
 };

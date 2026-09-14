@@ -168,6 +168,7 @@ int main()
     input.RegisterAction("Sneak", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_SHIFT});
     input.RegisterAction("OpenChat", InputActionTriggerType::PRESS, {GLFW_KEY_T});
     input.RegisterAction("ToggleWireframe", InputActionTriggerType::PRESS, {GLFW_KEY_F3});
+    input.RegisterAction("ToggleLighting", InputActionTriggerType::PRESS, {GLFW_KEY_G});
 
     // Builds the protocol block-state-id -> texture mapping from
     // minecraft-data + the vanilla blockstate/model JSON. Must happen before

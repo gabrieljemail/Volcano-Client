@@ -197,6 +197,15 @@ struct GlobalState {
         playerDied.store(true);
     }
 
+    // World day-time, 0..23999 ticks (0/24000 = dawn, 6000 = noon, 12000 =
+    // dusk, 18000 = midnight — vanilla's own convention). Set by NetworkClient
+    // on PlayS2C::UpdateTime, read every frame by RenderThread to pick the
+    // sky clear color between its night/day extremes. Defaults to 6000
+    // (noon) so a server/dimension that never sends a clock update (this
+    // client's own dev server never has so far) still renders full-bright
+    // like before this existed, rather than snapping to some arbitrary time.
+    std::atomic<int64_t> dayTimeTicks{6000};
+
     glm::vec3 cameraPosition{0.0f, 0.0f, 5.0f};
 
     // Set by VulkanInit's GLFW framebuffer-size callback (main thread) and

@@ -121,10 +121,37 @@ static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& i
     indices.insert(indices.end(), { base, base + 1, base + 2, base + 2, base + 3, base });
 }
 
+// True when element's face f lies exactly on the block's 0..16 boundary
+// along the axis its normal points — meaning an opaque neighbor there would
+// fully occlude it, since the neighbor's own face spans the full 16x16 area
+// on that plane regardless of how much of it this element's own face
+// actually covers. Same condition ChunkMesher's greedy sweep uses to cull
+// between two opaque blocks, just checked per-element instead of per-voxel.
+// A face that ISN'T flush (a torch's stick, the inner corner of a stair's
+// raised step) never gets culled — nothing on the other side of it is ever
+// a full, coplanar occluder.
+static bool IsFaceFlush(const BlockRegistry::NonCubeElement& element, int face) {
+    constexpr float EPS = 0.01f;
+    switch (face) {
+        case 0: return element.to.y > 16.0f - EPS;   // Up
+        case 1: return element.from.y < EPS;         // Down
+        case 2: return element.from.z < EPS;         // North
+        case 3: return element.to.z > 16.0f - EPS;   // South
+        case 4: return element.to.x > 16.0f - EPS;   // East
+        default: return element.from.x < EPS;        // West
+    }
+}
+
 // Emits every present face of one model element (a box in 0..16 model-space
-// units) unconditionally — partial shapes (slabs, carpets, ...) are rare
-// enough, and varied enough in footprint, that neighbor-based face culling
-// isn't worth the complexity ChunkMesher's greedy sweep uses for full cubes.
+// units), skipping any face IsFaceFlush() above says is fully hidden behind
+// a solid neighbor — without this, a stair's base slab flickered against the
+// solid block it sits on (both drew a face on the exact same plane, and with
+// this pass's depth WRITE off — see VulkanInit's nonCubicPipeline — neither
+// consistently "won," so which one showed varied frame to frame), and same
+// for a slab's top face against whatever's placed directly above it. A face
+// that isn't flush (a torch's thin stick, a stair step's inner corner) is
+// never culled, matching vanilla's own per-face "cullface" hint in the model
+// JSON (not read directly here, but this reproduces the same cases).
 static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const Chunk& chunk, const World& world,
         int bx, int by, int bz, const glm::vec3& blockOrigin, const TextureManager& textureManager,
         std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
@@ -135,6 +162,11 @@ static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const
         const std::string& textureName = element.faceTextures[static_cast<size_t>(f)];
         if (textureName.empty()) continue;
 
+        if (IsFaceFlush(element, f)) {
+            Block neighbor = GetBlockAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
+            if (neighbor.isOpaque()) continue;
+        }
+
         uint16_t layer = textureManager.GetLayerIndex(textureName);
         bool tinted = IsBiomeTinted(textureName);
         uint8_t light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
@@ -144,12 +176,13 @@ static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const
 }
 
 // Transparent full cubes (glass, slime, ice, ...) skip a face when the
-// immediate neighbor shares the exact same non-cube visual — same-type
-// glass panes don't show their shared internal face. Any other neighbor
-// (air, a different transparent visual, an opaque block) still draws the
-// face; the opaque case relies on depth testing rather than culling to look
-// correct, same trade-off ChunkMesher's own opaque/opaque cull doesn't need
-// to make here since this pass never culls against opaque neighbors.
+// immediate neighbor shares the exact same non-cube visual (same-type glass
+// panes don't show their shared internal face) OR is a fully opaque block
+// (every face of a full cube is flush by construction, so an opaque neighbor
+// there is the exact same coplanar-face flicker IsFaceFlush/MeshElementFaces
+// above fixes for partial shapes — glass placed directly against stone used
+// to flicker at that boundary the same way). Any other neighbor (air, a
+// different transparent visual) still draws the face.
 static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, uint16_t visualId,
         const Chunk& chunk, const World& world, int bx, int by, int bz, const glm::vec3& blockOrigin,
         const TextureManager& textureManager, std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
@@ -161,7 +194,7 @@ static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, ui
         if (textureName.empty()) continue;
 
         Block neighbor = GetBlockAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
-        if (neighbor.nonCubeVisualId == visualId) continue;
+        if (neighbor.nonCubeVisualId == visualId || neighbor.isOpaque()) continue;
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
         bool tinted = IsBiomeTinted(textureName);

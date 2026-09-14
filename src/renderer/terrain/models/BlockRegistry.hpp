@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
+#include "Block.hpp"
 
 namespace Volcano::BlockRegistry {
 
@@ -85,6 +86,38 @@ uint16_t MapStateIdNonCube(int32_t stateId);
 // default-constructed (Partial, not collidable, no elements) NonCubeVisual
 // for id 0 or any id outside the interned table.
 const NonCubeVisual& GetNonCubeVisual(uint16_t nonCubeVisualId);
+
+// One axis-aligned collision box in LOCAL block-space, 0..1 per axis
+// (already divided by 16, unlike NonCubeElement::from/to which stay in the
+// model JSON's native 0..16 units) — add directly to a block's integer
+// world origin to place it.
+struct AABB {
+    glm::vec3 min{0.0f};
+    glm::vec3 max{0.0f};
+};
+
+// Small fixed-capacity box list, sized for the shapes this client actually
+// resolves (a full cube or slab is 1 box, a straight stair 2, an inner/outer
+// stair corner 3) — returned by value with no heap allocation, since this
+// runs on TickLoop's physics hot path every tick for every block cell a
+// player's AABB might touch. Any element beyond MAX_BOXES is silently
+// dropped (shouldn't happen for any real vanilla shape).
+struct CollisionBoxes {
+    static constexpr int MAX_BOXES = 4;
+    std::array<AABB, MAX_BOXES> boxes{};
+    int count = 0;
+};
+
+// Real per-shape collision geometry for one block, replacing the old "whole
+// voxel is solid or it isn't" test — an opaque full cube still collides as a
+// single [0,1]^3 box, but a non-cube block (stairs, slabs, end rods, ...)
+// collides only where its actual model elements are, using the exact same
+// boxes NonCubicMesher renders (NonCubeVisual::elements), so e.g. standing
+// on the far corner of an end rod's thin post no longer works. Empty for
+// true air, an unresolved block, and non-collidable shapes (cross-shaped
+// plants). Shared by TickLoop's physics collision and (later) block-
+// selection raycasting so both agree on the exact same shape.
+CollisionBoxes GetCollisionBoxes(const Block& block);
 
 } // namespace Volcano::BlockRegistry
 

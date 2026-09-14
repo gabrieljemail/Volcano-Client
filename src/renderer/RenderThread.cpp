@@ -2,6 +2,7 @@
 #include <chrono>
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
 #include "RenderThread.hpp"
@@ -181,6 +182,19 @@ void RenderThread::PollInputs()
         wireframeMode = !wireframeMode;
     }
 
+    // "G" toggles Graphics.Lighting — see CameraUBO::lightingEnabled, read
+    // fresh from config every frame in RecordAndSubmitFrame, so flipping it
+    // here just needs to persist the new value. Gated on chat/screen being
+    // closed so typing "g" into the chat box or a text field doesn't also
+    // toggle it.
+    if (!GUIController::IsChatInputOpen() && !GUIController::IsScreenOpen()
+        && state->input->WasActivated("ToggleLighting"))
+    {
+        bool lightingEnabled = std::get<bool>(state->config->Get("Graphics.Lighting", true));
+        state->config->Set("Graphics.Lighting", !lightingEnabled);
+        state->config->Save();
+    }
+
     // While a Screen (connect screen, pause menu, death screen, ...) or the
     // chat input box is open, ImGui owns the mouse/keyboard — don't let them
     // also fly the camera or move the player underneath it. TickLoop::Advance
@@ -276,6 +290,29 @@ bool RenderThread::AcquireImage()
     return true;
 }
 
+namespace {
+
+// Vanilla's own day-time convention: 0/24000 = dawn, 6000 = noon (brightest),
+// 12000 = dusk, 18000 = midnight (darkest) — see GlobalState::dayTimeTicks.
+// A single cosine gives a smooth day/night gradient without hardcoding a
+// multi-segment sunrise/sunset table: brightness is 1.0 exactly at noon,
+// 0.0 exactly at midnight, and 0.5 at both twilight points (dawn/dusk),
+// which is a reasonable sky brightness for that time even though it's not
+// vanilla's real (much more elaborate) celestial-angle curve.
+float DayBrightness(int64_t dayTimeTicks)
+{
+    constexpr double TWO_PI = 6.283185307179586;
+    double t = static_cast<double>(dayTimeTicks) / 24000.0;
+    return static_cast<float>((std::cos(TWO_PI * (t - 0.25)) + 1.0) * 0.5);
+}
+
+// Sampled between these two extremes by DayBrightness() above — no weather
+// tinting yet (see ISSUES.mdx; that needs particle rendering first).
+constexpr glm::vec3 SKY_COLOR_NIGHT(0.015f, 0.015f, 0.035f);
+constexpr glm::vec3 SKY_COLOR_DAY(0.52941f, 0.80784f, 0.92157f);
+
+} // namespace
+
 void RenderThread::RecordAndSubmitFrame()
 {
     VkCommandBuffer cmd = commandBuffers[currentFrame];
@@ -292,8 +329,10 @@ void RenderThread::RecordAndSubmitFrame()
     renderPassInfo.framebuffer = framebuffers[imageIndex];
     renderPassInfo.renderArea.extent = swapchainExtent;
 
+    glm::vec3 skyColor = glm::mix(SKY_COLOR_NIGHT, SKY_COLOR_DAY, DayBrightness(state->dayTimeTicks.load()));
+
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.52941f, 0.80784f, 0.92157f, 1.00000f}}; // Sky blue.
+    clearValues[0].color = {{skyColor.r, skyColor.g, skyColor.b, 1.00000f}};
     clearValues[1].depthStencil = {1.0f, 0};
 
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
@@ -327,7 +366,8 @@ void RenderThread::RecordAndSubmitFrame()
             glm::mat4 p = glm::perspective(glm::radians(fov), aspect, 0.05f, 1000.0f);
             p[1][1] *= -1.0f;
             return p;
-        }()
+        }(),
+        std::get<bool>(state->config->Get("Graphics.Lighting", true)) ? 1.0f : 0.0f
     };
     memcpy(cameraUBOsMapped[currentFrame], &ubo, sizeof(ubo));
 
@@ -374,21 +414,33 @@ void RenderThread::RecordAndSubmitFrame()
     // nonCubicPipeline. Drawn last (after opaque terrain and entities) with
     // alpha blending and no depth write, so a translucent quad always
     // composites correctly over the already-opaque color buffer behind it.
-    // That does NOT extend to translucent-over-translucent (e.g. looking
-    // through two overlapping panes of colored glass, or a cross-plant
-    // behind glass): GetVisibleMeshes only frustum-culls, it doesn't sort by
-    // depth, so which of two overlapping translucent quads blends "on top"
-    // is whatever order they happened to be emitted in — not always
-    // back-to-front, so colors there can come out visibly wrong. Fixing
-    // that needs actual back-to-front sorting (per-mesh at least, ideally
-    // per-triangle within a mesh) and hasn't been done yet — this pass has
-    // no draw-order sorting, not "doesn't need any."
+    //
+    // Sorted back-to-front by chunk distance from the camera before
+    // drawing, so two overlapping translucent chunks (e.g. looking through
+    // one pane of glass at another) blend in the right order — without this,
+    // the chunk that happened to be emitted later always "won" regardless of
+    // which was actually nearer, and which chunk that was could silently
+    // change from frame to frame (e.g. crossing a chunk boundary), reading
+    // as random flicker rather than a consistent-but-wrong order. This is
+    // per-CHUNK only, not per-triangle: two overlapping translucent surfaces
+    // WITHIN the same chunk mesh still draw in mesher-emission order, so
+    // that finer-grained case can still look wrong — a real fix needs
+    // per-triangle sorting (or per-element separate draws), not done here.
     {
         std::lock_guard<std::mutex> lock(state->nonCubicRenderListMutex);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, nonCubicPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
 
-        for (const Mesh* meshPtr : VisibleChunkController::GetVisibleMeshes(state->nonCubicRenderList, viewProj))
+        std::vector<const Mesh*> nonCubicMeshes = VisibleChunkController::GetVisibleMeshes(state->nonCubicRenderList, viewProj);
+        std::sort(nonCubicMeshes.begin(), nonCubicMeshes.end(), [&cameraWorldPosition](const Mesh* a, const Mesh* b) {
+            glm::vec3 posA(a->modelMatrix[3]);
+            glm::vec3 posB(b->modelMatrix[3]);
+            float distA = glm::dot(posA - cameraWorldPosition, posA - cameraWorldPosition);
+            float distB = glm::dot(posB - cameraWorldPosition, posB - cameraWorldPosition);
+            return distA > distB; // Farthest first.
+        });
+
+        for (const Mesh* meshPtr : nonCubicMeshes)
         {
             const Mesh& mesh = *meshPtr;
             if (mesh.vertexCount == 0) continue;

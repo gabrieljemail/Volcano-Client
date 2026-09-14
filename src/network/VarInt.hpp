@@ -102,6 +102,20 @@ public:
         return result;
     }
 
+    int64_t ReadVarLong()
+    {
+        int64_t result = 0;
+        int shift = 0;
+        while (true) {
+            uint8_t byte = ReadByte();
+            result |= static_cast<int64_t>(byte & 0x7Fu) << shift;
+            if ((byte & 0x80u) == 0) break;
+            shift += 7;
+            if (shift >= 70) throw std::runtime_error("VarLong is too big");
+        }
+        return result;
+    }
+
     std::string ReadString()
     {
         int32_t length = ReadVarInt();

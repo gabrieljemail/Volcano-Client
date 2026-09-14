@@ -263,24 +263,143 @@ DecodedProps ParseVariantKey(const std::string& key) {
     return result;
 }
 
+// True when every property named in `variantProps` (parsed from one variant
+// key) matches the corresponding value in `props` (the block's full decoded
+// state) — NOT full map equality. Vanilla blockstate JSON only lists the
+// properties that actually change which model is picked: stairs/slabs/
+// fences/... all have a real "waterlogged" state (it's in blocks.json, so
+// DecodeProps always includes it in `props`), but no variant key ever
+// mentions "waterlogged" — water is layered on separately in real Minecraft,
+// not part of the model choice. Requiring exact equality against the FULL
+// prop set meant `ParseVariantKey(key)` (missing "waterlogged") could never
+// equal `props` (which always has it), so every state of every waterlogged-
+// capable block failed to match here and rendered as nothing — the actual
+// cause of stairs/slabs/etc. showing up as holes, not anything specific to
+// their shape.
+bool VariantKeyMatches(const DecodedProps& variantProps, const DecodedProps& props) {
+    for (const auto& [key, value] : variantProps) {
+        auto it = props.find(key);
+        if (it == props.end() || it->second != value) return false;
+    }
+    return true;
+}
+
 // Finds the model id for the variant matching `props` in a "variants"-style
-// blockstate JSON. Ignores "multipart" blockstates entirely (fences, walls,
-// redstone dust, ...) — those are non-cube by construction and excluded
-// this pass. A variant's value may be a single object or an array of
-// (rotation-only) alternatives; element 0 is used either way since which
-// texture is used never depends on the rotation choice.
-bool FindVariantModel(const json& blockstateJson, const DecodedProps& props, std::string& outModelId) {
+// blockstate JSON, plus that variant's model-space rotation (degrees, always
+// a multiple of 90 in vanilla data) — "y" turns a stair/etc.'s baked-in
+// facing into the other three (e.g. polished_deepslate_stairs.json's base
+// model faces east; y=90/180/270 give south/west/north), "x" flips it
+// (half=top uses x=180 to turn a bottom stair upside down). Ignores
+// "multipart" blockstates entirely (fences, walls, redstone dust, ...) —
+// those are non-cube by construction and excluded this pass. A variant's
+// value may be a single object or an array of (rotation-only) alternatives;
+// element 0 is used either way since which texture is used never depends on
+// the rotation choice.
+bool FindVariantModel(const json& blockstateJson, const DecodedProps& props, std::string& outModelId,
+        int& outXDeg, int& outYDeg) {
+    outXDeg = 0;
+    outYDeg = 0;
     if (!blockstateJson.contains("variants") || !blockstateJson["variants"].is_object()) return false;
 
     for (const auto& [key, value] : blockstateJson["variants"].items()) {
-        if (ParseVariantKey(key) != props) continue;
+        if (!VariantKeyMatches(ParseVariantKey(key), props)) continue;
 
         const json& chosen = value.is_array() ? value[0] : value;
         if (!chosen.contains("model") || !chosen["model"].is_string()) return false;
         outModelId = chosen["model"].get<std::string>();
+        if (chosen.contains("x") && chosen["x"].is_number_integer()) outXDeg = chosen["x"].get<int>();
+        if (chosen.contains("y") && chosen["y"].is_number_integer()) outYDeg = chosen["y"].get<int>();
         return true;
     }
     return false;
+}
+
+// cos/sin for a rotation restricted to a multiple of 90 degrees, as exact
+// integers — avoids the float noise plain std::cos/sin(radians(90)) would
+// introduce (cos(90 deg) isn't exactly 0), which would otherwise leave
+// rotated box corners very slightly off their intended 0..16 grid values.
+void SinCos90(int deg, int& outCos, int& outSin) {
+    switch (((deg % 360) + 360) % 360) {
+        case 90:  outCos = 0;  outSin = 1;  break;
+        case 180: outCos = -1; outSin = 0;  break;
+        case 270: outCos = 0;  outSin = -1; break;
+        default:  outCos = 1;  outSin = 0;  break; // 0, or anything non-90-aligned (shouldn't appear in vanilla data)
+    }
+}
+
+// Rotates a direction (no translation) by xDeg around the X axis, then yDeg
+// around the Y axis — the same order (x then y) a blockstate variant's own
+// "x"/"y" fields are applied in. Used for both element corners (as an offset
+// from the block center) and face normals (to figure out which face index a
+// rotated face belongs to).
+glm::vec3 RotateDirection(glm::vec3 v, int xDeg, int yDeg) {
+    if (xDeg != 0) {
+        int cs, sn;
+        SinCos90(xDeg, cs, sn);
+        float y = v.y * static_cast<float>(cs) - v.z * static_cast<float>(sn);
+        float z = v.y * static_cast<float>(sn) + v.z * static_cast<float>(cs);
+        v.y = y;
+        v.z = z;
+    }
+    if (yDeg != 0) {
+        int cs, sn;
+        SinCos90(yDeg, cs, sn);
+        float x = v.x * static_cast<float>(cs) + v.z * static_cast<float>(sn);
+        float z = -v.x * static_cast<float>(sn) + v.z * static_cast<float>(cs);
+        v.x = x;
+        v.z = z;
+    }
+    return v;
+}
+
+// Rotates a model-space point (0..16 units) around the block's center
+// (8,8,8) — used for element box corners.
+glm::vec3 RotatePoint(const glm::vec3& p, int xDeg, int yDeg) {
+    const glm::vec3 center(8.0f, 8.0f, 8.0f);
+    return RotateDirection(p - center, xDeg, yDeg) + center;
+}
+
+// ChunkMesher's face order/normals: 0=Up, 1=Down, 2=North(-Z), 3=South(+Z),
+// 4=East(+X), 5=West(-X).
+constexpr glm::vec3 FACE_NORMALS[6] = {
+    {0.0f, 1.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f, -1.0f},
+    {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f},
+};
+
+int FaceIndexFromNormal(const glm::vec3& n) {
+    for (int i = 0; i < 6; i++) {
+        if (glm::dot(n, FACE_NORMALS[static_cast<size_t>(i)]) > 0.5f) return i;
+    }
+    return -1; // Shouldn't happen for an axis-aligned normal rotated by a multiple of 90 degrees.
+}
+
+// Rotates one already-built element in place by the variant's x/y (see
+// FindVariantModel) — both the box itself and which physical direction each
+// of its faces now points, so e.g. a stair's "north" face (as baked into the
+// unrotated model file) ends up keyed under NonCubeElement::faceTextures[2]
+// (North) only when the rotation actually still leaves it facing north;
+// otherwise the texture moves to whichever face index it's rotated onto.
+// No-op (skipped entirely by the caller) when both are 0, which is by far
+// the common case (most non-cube blocks — slabs, snow layers, ... — don't
+// rotate at all).
+void ApplyElementRotation(NonCubeElement& element, int xDeg, int yDeg) {
+    glm::vec3 c0 = RotatePoint(element.from, xDeg, yDeg);
+    glm::vec3 c1 = RotatePoint(element.to, xDeg, yDeg);
+    element.from = glm::min(c0, c1);
+    element.to = glm::max(c0, c1);
+
+    std::array<std::string, 6> oldTextures = element.faceTextures;
+    std::array<glm::vec4, 6> oldUVs = element.faceUVs;
+    element.faceTextures = {};
+    element.faceUVs = {};
+    for (int f = 0; f < 6; f++) {
+        if (oldTextures[static_cast<size_t>(f)].empty()) continue;
+        glm::vec3 newNormal = RotateDirection(FACE_NORMALS[static_cast<size_t>(f)], xDeg, yDeg);
+        int newFace = FaceIndexFromNormal(newNormal);
+        if (newFace < 0) continue;
+        element.faceTextures[static_cast<size_t>(newFace)] = oldTextures[static_cast<size_t>(f)];
+        element.faceUVs[static_cast<size_t>(newFace)] = oldUVs[static_cast<size_t>(f)];
+    }
 }
 
 uint16_t InternVisual(const FaceNames& faces) {
@@ -325,7 +444,8 @@ uint16_t ResolveStateVisual(const BlockDef& def, const json& blockstateJson, int
         DecodedProps props = DecodeProps(def.states, stateId - def.minStateId);
 
         std::string modelId;
-        if (!FindVariantModel(blockstateJson, props, modelId)) return 0;
+        int xDeg, yDeg; // Unused here — a full opaque cube's face textures don't depend on the variant's rotation (a pre-existing simplification, unrelated to this pass).
+        if (!FindVariantModel(blockstateJson, props, modelId, xDeg, yDeg)) return 0;
 
         const ResolvedModel& model = ResolveModel(modelId);
         if (!model.hasElements) return 0;
@@ -365,7 +485,8 @@ uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJs
         DecodedProps props = DecodeProps(def.states, stateId - def.minStateId);
 
         std::string modelId;
-        if (!FindVariantModel(blockstateJson, props, modelId)) return 0;
+        int xDeg, yDeg;
+        if (!FindVariantModel(blockstateJson, props, modelId, xDeg, yDeg)) return 0;
 
         const ResolvedModel& model = ResolveModel(modelId);
         if (!model.hasElements) return 0;
@@ -438,6 +559,16 @@ uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJs
                     }
                 }
             }
+
+            // Stairs (and anything else a variant rotates — see
+            // FindVariantModel) bake their model file for one fixed
+            // orientation ("facing=east" for vanilla stairs); the variant's
+            // x/y turn that into the other facings/half=top. Skipped
+            // entirely when both are 0 (the common case) rather than
+            // running an identity transform through float math for no
+            // reason.
+            if (xDeg != 0 || yDeg != 0) ApplyElementRotation(element, xDeg, yDeg);
+
             visual.elements.push_back(std::move(element));
         }
 
@@ -654,6 +785,27 @@ const NonCubeVisual& GetNonCubeVisual(uint16_t nonCubeVisualId) {
     static const NonCubeVisual empty{};
     if (nonCubeVisualId == 0 || nonCubeVisualId >= g_nonCubeVisualTable.size()) return empty;
     return g_nonCubeVisualTable[nonCubeVisualId];
+}
+
+CollisionBoxes GetCollisionBoxes(const Block& block) {
+    CollisionBoxes result;
+
+    if (block.visualId != 0) {
+        result.boxes[0] = AABB{ glm::vec3(0.0f), glm::vec3(1.0f) };
+        result.count = 1;
+        return result;
+    }
+
+    if (block.nonCubeVisualId != 0 && block.nonCubeCollidable) {
+        const NonCubeVisual& visual = GetNonCubeVisual(block.nonCubeVisualId);
+        for (const NonCubeElement& elem : visual.elements) {
+            if (result.count >= CollisionBoxes::MAX_BOXES) break;
+            result.boxes[static_cast<size_t>(result.count)] = AABB{ elem.from / 16.0f, elem.to / 16.0f };
+            result.count++;
+        }
+    }
+
+    return result;
 }
 
 } // namespace Volcano::BlockRegistry

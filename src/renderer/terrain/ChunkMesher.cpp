@@ -173,10 +173,15 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, con
                 if (aOpaque == bOpaque) {
                     mask[n] = {};
                 } else if (aOpaque) {
-                    uint8_t light = GetLightAcrossChunks(chunk, world, x[0], x[1], x[2]);
+                    // a is the solid block emitting this face; b (air) is the
+                    // side it's actually exposed to, so light must be sampled
+                    // there — a solid block's own stored light is always 0
+                    // (light doesn't propagate into solid blocks), which is
+                    // what made every face render pitch black.
+                    uint8_t light = GetLightAcrossChunks(chunk, world, x[0] + q[0], x[1] + q[1], x[2] + q[2]);
                     mask[n] = { a.visualId, 1, light };
                 } else {
-                    uint8_t light = GetLightAcrossChunks(chunk, world, x[0] + q[0], x[1] + q[1], x[2] + q[2]);
+                    uint8_t light = GetLightAcrossChunks(chunk, world, x[0], x[1], x[2]);
                     mask[n] = { b.visualId, -1, light };
                 }
             }
