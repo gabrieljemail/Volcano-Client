@@ -106,6 +106,12 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     constexpr int32_t EntityTeleport = 0x7D;           // ENTITY_POSITION_SYNC: absolute position + yaw/pitch.
     constexpr int32_t EntityDestroy = 0x4D;            // REMOVE_ENTITIES.
 
+    // Health/food/saturation — float health, varint food, float saturation
+    // (9 bytes matches this file's own header note: "0x68 SET_HEALTH = 9").
+    // health <= 0 is the server's death signal (no client-side death
+    // detection exists yet, just the HUD display reading these values).
+    constexpr int32_t SetHealth = 0x68;                // SET_HEALTH
+
     // Not handled yet, listed so the "unhandled packet" log is readable.
     // Ping arrives constantly and is purely a latency probe (Keep Alive is
     // what actually holds the connection open), so ignoring it is safe.

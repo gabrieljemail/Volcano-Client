@@ -515,6 +515,22 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
+        if (packetId == PlayS2C::SetHealth) {
+            try {
+                float newHealth = reader.ReadFloat();
+                int32_t newFood = reader.ReadVarInt();
+                float newSaturation = reader.ReadFloat();
+
+                std::lock_guard lock(state->healthMutex);
+                state->health = newHealth;
+                state->food = newFood;
+                state->saturation = newSaturation;
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Set Health: ") + e.what());
+            }
+            continue;
+        }
+
         if (packetId == PlayS2C::Disconnect) {
             // Same anonymousNbt reason field as the Configuration-state
             // Disconnect above — see that handler's comment. ReadString()

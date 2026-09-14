@@ -166,6 +166,11 @@ int main()
     input.RegisterAction("Jump", InputActionTriggerType::PRESS, {GLFW_KEY_SPACE});
     input.RegisterAction("OpenChat", InputActionTriggerType::PRESS, {GLFW_KEY_T});
     input.RegisterAction("ToggleWireframe", InputActionTriggerType::PRESS, {GLFW_KEY_F3});
+    // HOLD, vanilla's own default binds — no sneak/sprint physics reads
+    // these yet (TickLoop is unmodified here), but GUIController's movement-
+    // state HUD panel does, via IsActive("Sneak")/IsActive("Sprint").
+    input.RegisterAction("Sneak", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_SHIFT});
+    input.RegisterAction("Sprint", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_CONTROL});
 
     // Builds the protocol block-state-id -> texture mapping from
     // minecraft-data + the vanilla blockstate/model JSON. Must happen before
