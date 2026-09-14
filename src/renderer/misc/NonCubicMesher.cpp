@@ -87,9 +87,22 @@ static std::array<glm::vec3, 4> FaceCorners(const glm::vec3& min, const glm::vec
     }
 }
 
+// uvRect is (u1,v1,u2,v2) in 0..16 model-space texture units (matching the
+// model JSON's own "uv" — see NonCubeElement::faceUVs), normalized here to
+// 0..1. Corner order matches FaceCorners' — (u1,v1) at corner 0 through
+// (u1,v2) at corner 3 — the same parametrization a full 0,0,16,16 rect
+// degenerates to, so this is a strict generalization of the old hardcoded
+// full-texture UVs, not a behavior change for anything that already used
+// the whole texture (full cubes, cross planes).
 static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices,
-        const std::array<glm::vec3, 4>& corners, uint16_t textureLayer, bool biomeTinted, float light) {
-    static const std::array<glm::vec2, 4> uvs = { glm::vec2(0, 0), glm::vec2(1, 0), glm::vec2(1, 1), glm::vec2(0, 1) };
+        const std::array<glm::vec3, 4>& corners, const glm::vec4& uvRect,
+        uint16_t textureLayer, bool biomeTinted, float light) {
+    glm::vec2 uvMin = glm::vec2(uvRect.x, uvRect.y) / 16.0f;
+    glm::vec2 uvMax = glm::vec2(uvRect.z, uvRect.w) / 16.0f;
+    const std::array<glm::vec2, 4> uvs = {
+        glm::vec2(uvMin.x, uvMin.y), glm::vec2(uvMax.x, uvMin.y),
+        glm::vec2(uvMax.x, uvMax.y), glm::vec2(uvMin.x, uvMax.y)
+    };
 
     uint32_t base = static_cast<uint32_t>(vertices.size());
     uint32_t packed = MiscVertex::Pack(textureLayer, static_cast<uint8_t>(light * 15.0f), biomeTinted);
@@ -116,7 +129,8 @@ static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
         bool tinted = IsBiomeTinted(textureName);
-        EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), layer, tinted, FACE_LIGHT[f]);
+        EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), element.faceUVs[static_cast<size_t>(f)],
+            layer, tinted, FACE_LIGHT[f]);
     }
 }
 
@@ -142,7 +156,8 @@ static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, ui
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
         bool tinted = IsBiomeTinted(textureName);
-        EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), layer, tinted, FACE_LIGHT[f]);
+        EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), element.faceUVs[static_cast<size_t>(f)],
+            layer, tinted, FACE_LIGHT[f]);
     }
 }
 
@@ -173,7 +188,7 @@ static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const glm::vec
             glm::vec3(p1.x, 1.0f, p1.z),
             glm::vec3(p0.x, 1.0f, p0.z),
         };
-        EmitQuad(vertices, indices, corners, layer, tinted, light);
+        EmitQuad(vertices, indices, corners, glm::vec4(0.0f, 0.0f, 16.0f, 16.0f), layer, tinted, light);
     }
 }
 

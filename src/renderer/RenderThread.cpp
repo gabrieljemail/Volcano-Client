@@ -181,21 +181,28 @@ void RenderThread::PollInputs()
         wireframeMode = !wireframeMode;
     }
 
-    // While a Screen (connect screen, future pause menu, etc.) or the chat
-    // input box is open, ImGui owns the mouse/keyboard — don't let them
-    // also fly the camera or move the player underneath it.
-    if (GUIController::IsScreenOpen() || GUIController::IsChatInputOpen()) return;
+    // While a Screen (connect screen, pause menu, death screen, ...) or the
+    // chat input box is open, ImGui owns the mouse/keyboard — don't let them
+    // also fly the camera or move the player underneath it. TickLoop::Advance
+    // still runs every frame regardless (see its own inputAllowed parameter)
+    // — gravity/collision and applying the server's teleports (e.g. a
+    // respawn) must keep going even with a screen up, or the player freezes
+    // mid-air and a pending teleport never lands until the screen closes.
+    bool inputAllowed = !GUIController::IsScreenOpen() && !GUIController::IsChatInputOpen();
 
-    // Mouse sensitivity is applied entirely at the axis level (see the
-    // Camera.X/Y registration in VolcanoClient.cpp) — pass 1.0f here so
-    // there's exactly one sensitivity knob, not two multiplied together.
-    float dx = state->input->GetAxis("Camera.X");
-    float dy = state->input->GetAxis("Camera.Y");
-    state->player->camera.ApplyMouseDelta(dx, dy, 1.0f);
+    if (inputAllowed)
+    {
+        // Mouse sensitivity is applied entirely at the axis level (see the
+        // Camera.X/Y registration in VolcanoClient.cpp) — pass 1.0f here so
+        // there's exactly one sensitivity knob, not two multiplied together.
+        float dx = state->input->GetAxis("Camera.X");
+        float dy = state->input->GetAxis("Camera.Y");
+        state->player->camera.ApplyMouseDelta(dx, dy, 1.0f);
+    }
 
     // Gravity/collision/movement now live in TickLoop, run at a fixed 20Hz
     // regardless of render framerate — see the tick-loop plan.
-    state->tickLoop->Advance(frameDeltaTime);
+    state->tickLoop->Advance(frameDeltaTime, inputAllowed);
 }
 
 void RenderThread::DrawFrame()

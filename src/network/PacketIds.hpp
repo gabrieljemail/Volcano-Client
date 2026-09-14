@@ -6,7 +6,8 @@
 
 namespace Volcano {
 
-// Packet IDs for protocol 776 (Minecraft 26.2).
+// Packet IDs for protocol 775 (Minecraft 26.1) — see PROTOCOL_VERSION in
+// NetworkClient.hpp for why this client declares 26.1, not 26.2.
 //
 // The Play-state clientbound IDs below are now VERIFIED against ViaVersion's
 // ClientboundPackets26_1 enum (an enum constant's ordinal IS its packet ID),
@@ -70,6 +71,18 @@ namespace PlayC2S { // Play state, serverbound (client -> server)
     // reject/kick for this; most offline-mode servers (like this client's
     // own dev target) don't.
     constexpr int32_t ChatMessage = 0x09;
+
+    // Unsigned command execution — 0x07 (play.toServer.types.packet_chat_command),
+    // just a single string field holding the command text WITHOUT a leading
+    // "/". Same "not doing chat signing" reasoning as ChatMessage above
+    // applies to why this client uses the unsigned variant over
+    // packet_chat_command_signed.
+    constexpr int32_t ChatCommand = 0x07;
+
+    // action 0 of play.toServer.types.packet_client_command's varint mapper
+    // ("perform_respawn") — the other two (request_stats/request_gamerule_
+    // values) aren't used by this client.
+    constexpr int32_t ClientCommand = 0x0C;
 }
 
 namespace PlayS2C { // Play state, clientbound (server -> client)
@@ -105,6 +118,18 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     constexpr int32_t EntityLook = 0x38;               // MOVE_ENTITY_ROT: yaw/pitch only, no position change.
     constexpr int32_t EntityTeleport = 0x7D;           // ENTITY_POSITION_SYNC: absolute position + yaw/pitch.
     constexpr int32_t EntityDestroy = 0x4D;            // REMOVE_ENTITIES.
+
+    // DEATH_COMBAT_EVENT — sent to a player when they die: varint playerId
+    // (always the receiving player themselves) + an anonymousNbt "message"
+    // (the death message, e.g. "VoidDev was slain by Zombie").
+    constexpr int32_t PlayerCombatKill = 0x44;
+
+    // f32 health; varint food; f32 saturation. Sent whenever health changes,
+    // including right after login if the player was already dead before
+    // this session connected (PlayerCombatKill above only fires at the
+    // moment of death, not on a later rejoin) — health <= 0 here is what
+    // actually needs to trigger the death screen in that case.
+    constexpr int32_t SetHealth = 0x68;
 
     // Not handled yet, listed so the "unhandled packet" log is readable.
     // Ping arrives constantly and is purely a latency probe (Keep Alive is

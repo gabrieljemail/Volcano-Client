@@ -31,6 +31,16 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
         state->activeConnection.store(nullptr);
     }
 
+    // The session/login attempt is over one way or another — tell the main
+    // thread why, so it can reopen the connect screen, unless this was a
+    // deliberate app-level stop (closing the game), which unblocks
+    // RunSession's read loop the exact same way a kick does and shouldn't
+    // pop the connect screen back up while the app is quitting.
+    if (!stopToken.stop_requested() && !state->shouldClose) {
+        std::string reason = client.GetLastError();
+        state->ReportDisconnect(reason.empty() ? "Disconnected from server" : reason);
+    }
+
     // Stay alive/joinable alongside the render thread even after the
     // session ends (login failure, disconnect, or stop requested).
     while (!stopToken.stop_requested() && !state->shouldClose)

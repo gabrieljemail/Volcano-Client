@@ -9,7 +9,7 @@
 namespace Volcano::ChunkParser {
 
 // Parses the payload of a "Chunk Data and Update Light" packet (protocol
-// 776) into a Chunk. Only the block-state paletted containers are decoded;
+// 775) into a Chunk. Only the block-state paletted containers are decoded;
 // heightmaps are skipped (self-delimiting, not NBT in this protocol
 // version), and everything after the section data (block entities, light
 // arrays) is left unread — safe, since Connection::ReadPacket already framed

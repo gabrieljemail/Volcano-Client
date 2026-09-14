@@ -9,7 +9,7 @@ namespace Volcano::ChunkParser {
 namespace {
 
 // Decodes one Paletted Container (a run of `numEntries` global-registry IDs,
-// bit-packed per protocol 776's format) into the plain global ID for each
+// bit-packed per protocol 775's format) into the plain global ID for each
 // entry. `indirectMaxBits` is the bits-per-entry cutoff above which the
 // container uses the direct format (no palette array, entries ARE global
 // IDs) instead of indirect (entries are local indices into a palette array

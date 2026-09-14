@@ -58,6 +58,13 @@ struct NonCubeElement {
     glm::vec3 from{0.0f};
     glm::vec3 to{0.0f};
     std::array<std::string, 6> faceTextures; // ChunkMesher's face order: 0=Up, 1=Down, 2=North, 3=South, 4=East, 5=West.
+    // Per-face texture-space rectangle (u1,v1,u2,v2), same 0..16 units as
+    // from/to — the model JSON's own "uv", or a full 0,0,16,16 tile when a
+    // face doesn't specify one. Needed because a sub-full-block element
+    // (a torch's 2x10x2 stick, a slab's 16x8x16 half) samples only part of
+    // its texture, not the whole thing stretched across the smaller face —
+    // see NonCubicMesher's EmitQuad.
+    std::array<glm::vec4, 6> faceUVs;
 };
 
 struct NonCubeVisual {

@@ -15,6 +15,8 @@ namespace Volcano {
 // GUIController::CreateWindow below. This one free function is all
 // GUIController actually needs from it.
 void SendChatMessage(GlobalState* state, const std::string& message);
+void SendChatCommand(GlobalState* state, const std::string& command);
+void SendRespawnRequest(GlobalState* state);
 }
 
 namespace Volcano {
@@ -32,6 +34,8 @@ float GUIController::fpsTimer = 0.0f;
 GUI::GUIWindow* GUIController::debugWindow = nullptr;
 GUI::GUIComponent* GUIController::debugText = nullptr;
 GUI::Screen* GUIController::pauseScreen = nullptr;
+GUI::Screen* GUIController::deathScreen = nullptr;
+GUI::GUIComponent* GUIController::deathMessageText = nullptr;
 bool GUIController::chatInputOpen = false;
 bool GUIController::chatInputJustOpened = false;
 char GUIController::chatInputBuffer[256] = {};
@@ -92,6 +96,19 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     pauseScreen->components.push_back(resumeButton);
     pauseScreen->components.push_back(quitButton);
 
+    // Death screen — opened by Update() when GlobalState::playerDied is set
+    // (see NetworkClient's PlayerCombatKill handling). Not closable via Esc;
+    // Respawn is the only way out.
+    deathScreen = CreateScreen("You Died!", /* closable */ false);
+    deathMessageText = new GUI::GUIComponent(GUI::GUIComponentType::TEXT, "");
+    auto* respawnButton = new GUI::Button("Respawn");
+    respawnButton->AddClickHandler(new std::function<void()>([] {
+        SendRespawnRequest(state);
+        CloseScreen();
+    }));
+    deathScreen->components.push_back(deathMessageText);
+    deathScreen->components.push_back(respawnButton);
+
     Log::Info("[INFO] GUI Controller initialized with ImGui");
     initialized = true;
 }
@@ -120,6 +137,19 @@ void GUIController::NewFrame()
 void GUIController::Update(float deltaTime)
 {
     if (!initialized) return;
+
+    // Death takes over whatever's on screen — including the pause menu, if
+    // that happened to be open — same as vanilla's death screen does.
+    if (state->playerDied.exchange(false))
+    {
+        std::string message;
+        {
+            std::lock_guard<std::mutex> lock(state->deathMutex);
+            message = state->deathMessage;
+        }
+        deathMessageText->SetLabel(message);
+        OpenScreen(deathScreen);
+    }
 
     // Esc closes whatever screen is open, same as Minecraft's menus.
     if (activeScreen != nullptr && activeScreen->closable && state->input->IsKeyPressed(GLFW_KEY_ESCAPE))
@@ -398,7 +428,8 @@ void GUIController::RenderChatInputBox()
     ImGui::SetNextItemWidth(CHAT_WIDTH - 16.0f);
     if (ImGui::InputText("##chatinputtext", chatInputBuffer, sizeof(chatInputBuffer), ImGuiInputTextFlags_EnterReturnsTrue))
     {
-        if (chatInputBuffer[0] != '\0') SendChatMessage(state, chatInputBuffer);
+        if (chatInputBuffer[0] == '/') SendChatCommand(state, chatInputBuffer + 1);
+        else if (chatInputBuffer[0] != '\0') SendChatMessage(state, chatInputBuffer);
         CloseChatInput();
     }
 
@@ -579,13 +610,16 @@ GUI::Screen* GUIController::CreateScreen(const std::string& title, bool closable
 }
 
 // Show a screen fullscreen, hiding the HUD and releasing the mouse cursor
-// so ImGui (rather than the fly-cam) drives it.
+// so ImGui (rather than the fly-cam) drives it. GUIController runs on the
+// render thread, but GLFW only guarantees glfwSetInputMode is safe from the
+// main (window-owning) thread — see GlobalState::pendingCursorMode, applied
+// by VolcanoClient.cpp's main loop.
 void GUIController::OpenScreen(GUI::Screen* screen)
 {
     activeScreen = screen;
     if (windowHandle != nullptr)
     {
-        glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        state->pendingCursorMode.store(GLFW_CURSOR_NORMAL);
     }
 }
 
@@ -603,11 +637,9 @@ void GUIController::CloseScreen()
         // which then fought with the OS over focus/mouse ownership. The
         // window's own focus callback (see VulkanInit's WindowFocusCallback)
         // is responsible for locking the cursor once real focus returns.
-#ifdef _WIN32
-        if (glfwGetWindowAttrib(windowHandle, GLFW_FOCUSED))
-#endif
+        if (state->windowFocused.load())
         {
-            glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            state->pendingCursorMode.store(GLFW_CURSOR_DISABLED);
         }
     }
 }
@@ -624,7 +656,7 @@ void GUIController::OpenChatInput()
     chatInputBuffer[0] = '\0';
     if (windowHandle != nullptr)
     {
-        glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        state->pendingCursorMode.store(GLFW_CURSOR_NORMAL);
     }
 }
 
@@ -635,14 +667,9 @@ void GUIController::CloseChatInput()
 {
     chatInputOpen = false;
     chatInputJustOpened = false;
-    if (windowHandle != nullptr)
+    if (windowHandle != nullptr && state->windowFocused.load())
     {
-#ifdef _WIN32
-        if (glfwGetWindowAttrib(windowHandle, GLFW_FOCUSED))
-#endif
-        {
-            glfwSetInputMode(windowHandle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-        }
+        state->pendingCursorMode.store(GLFW_CURSOR_DISABLED);
     }
 }
 

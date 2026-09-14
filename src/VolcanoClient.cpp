@@ -246,6 +246,12 @@ int main()
         "Username", std::get<std::string>(state.config->Get("Network.DevUsername", std::string("VoidDev"))));
     auto* connectButton = new Volcano::GUI::Button("Connect");
 
+    // Shown above the form after a disconnect (see the polling loop below);
+    // empty/invisible on the very first, pre-connection showing of this
+    // screen.
+    auto* disconnectReasonText = new Volcano::GUI::GUIComponent(Volcano::GUI::GUIComponentType::TEXT, "");
+    disconnectReasonText->SetVisibile(false);
+
     connectButton->AddClickHandler(new std::function<void()>([&state, &network, addressInput, usernameInput, connectScreen, devServerPort] {
         std::string host;
         uint16_t port;
@@ -259,6 +265,7 @@ int main()
         Volcano::GUIController::CloseScreen();
     }));
 
+    connectScreen->components.push_back(disconnectReasonText);
     connectScreen->components.push_back(addressInput);
     connectScreen->components.push_back(usernameInput);
     connectScreen->components.push_back(connectButton);
@@ -270,6 +277,57 @@ int main()
     while (!state.shouldClose)
     {
         glfwPollEvents();
+
+        // GUIController and NotifyFramePresented run on the render thread,
+        // but GLFW only guarantees glfwSetInputMode is safe from this (the
+        // main, window-owning) thread — see GlobalState::pendingCursorMode.
+        if (int mode = state.pendingCursorMode.exchange(-1); mode != -1)
+        {
+            glfwSetInputMode(state.window, GLFW_CURSOR, mode);
+        }
+
+        // NetworkThread flags this when a session ends unexpectedly (kicked,
+        // dropped, login failure) — see GlobalState::ReportDisconnect. Reset
+        // world/session state so the next connection starts clean instead of
+        // layering onto the previous one's leftovers, then show the connect
+        // screen again with the reason.
+        if (state.disconnected.exchange(false))
+        {
+            std::string reason;
+            {
+                std::lock_guard<std::mutex> lock(state.disconnectMutex);
+                reason = state.disconnectReason;
+            }
+            Volcano::Log::Info("[INFO] Returned to connect screen: " + reason);
+
+            state.worldReady.store(false);
+            state.world->Clear();
+            {
+                std::lock_guard<std::mutex> lock(state.renderListMutex);
+                state.renderList.clear();
+            }
+            {
+                std::lock_guard<std::mutex> lock(state.nonCubicRenderListMutex);
+                state.nonCubicRenderList.clear();
+            }
+            {
+                std::lock_guard<std::mutex> lock(state.entitiesMutex);
+                state.entities.clear();
+            }
+            {
+                // Drop anything MeshingThread hasn't drained yet — otherwise
+                // a chunk still in flight from the old session could land
+                // after World::Clear() above and bleed into the new one.
+                std::lock_guard<std::mutex> lock(state.networkInbox.mutex);
+                while (!state.networkInbox.chunks.empty()) state.networkInbox.chunks.pop();
+                state.networkInbox.spawnPosition.reset();
+            }
+
+            disconnectReasonText->SetLabel(reason);
+            disconnectReasonText->SetVisibile(!reason.empty());
+            Volcano::GUIController::OpenScreen(connectScreen);
+        }
+
         this_thread::sleep_for(chrono::milliseconds(1));
     }
 

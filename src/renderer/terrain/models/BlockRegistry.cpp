@@ -19,10 +19,9 @@ namespace Volcano::BlockRegistry {
 
 namespace {
 
-// minecraft-data has no data folder for this client's protocol version (776,
-// Minecraft 26.2) yet — 26.1 is the closest available, and block/entity
-// registries don't change between adjacent releases. Bump this (and nothing
-// else) once a matching folder exists.
+// Matches PROTOCOL_VERSION (NetworkClient.hpp) exactly — this client
+// declares 26.1, not 26.2, specifically because 26.1 is the newest version
+// minecraft-data has real block/entity id tables for.
 constexpr const char* MC_DATA_VERSION = "26.1";
 const std::string BLOCKS_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/blocks.json";
 const std::string ASSETS_ROOT = "resources/minecraft/assets/minecraft";
@@ -141,7 +140,17 @@ const ResolvedModel& ResolveModel(const std::string& modelIdRaw, int depth = 0) 
 
                 if (j.contains("textures") && j["textures"].is_object()) {
                     for (const auto& [key, value] : j["textures"].items()) {
-                        if (value.is_string()) result.textures[key] = value.get<std::string>();
+                        if (value.is_string()) {
+                            result.textures[key] = value.get<std::string>();
+                        } else if (value.is_object() && value.contains("sprite") && value["sprite"].is_string()) {
+                            // Newer texture-reference form glass/stained glass use for
+                            // translucency-sort metadata ({"sprite": "...",
+                            // "force_translucent": true}) — the metadata doesn't matter
+                            // here, only the sprite path. Silently dropping this whole
+                            // entry (the previous behavior) broke every #variable chain
+                            // through it, which is why glass rendered/collided as nothing.
+                            result.textures[key] = value["sprite"].get<std::string>();
+                        }
                     }
                 }
 
@@ -159,15 +168,10 @@ const ResolvedModel& ResolveModel(const std::string& modelIdRaw, int depth = 0) 
     return inserted->second;
 }
 
-// A model is renderable by the current (cube-only) greedy mesher exactly
-// when it resolves to a single element spanning the full block (0,0,0) to
-// (16,16,16) with all six faces present. Stairs/slabs/fences/plants/etc.
-// either have multiple elements or a partial extent and fail this — by
-// design, they're excluded this pass (visual id 0) rather than rendered
-// wrong-shaped; see BlockRegistry.hpp.
-bool IsFullCube(const json& elements) {
-    if (!elements.is_array() || elements.size() != 1) return false;
-    const json& elem = elements[0];
+// Whether one element (not the whole model) spans the full block (0,0,0) to
+// (16,16,16) with all six faces present — the shape the cube-only greedy
+// mesher can render.
+bool IsFullCubeElement(const json& elem) {
     if (!elem.contains("from") || !elem.contains("to") || !elem.contains("faces")) return false;
 
     auto isCorner = [](const json& v, double x, double y, double z) {
@@ -184,6 +188,34 @@ bool IsFullCube(const json& elements) {
         if (!faces.contains(dir) || !faces[dir].contains("texture")) return false;
     }
     return true;
+}
+
+// A model is renderable by the current (cube-only) greedy mesher exactly
+// when it resolves to a single element spanning the full block. Stairs/
+// slabs/fences/plants/etc. either have multiple elements or a partial
+// extent and fail this — by design, they're excluded this pass (visual id
+// 0) rather than rendered wrong-shaped; see BlockRegistry.hpp.
+bool IsFullCube(const json& elements) {
+    return elements.is_array() && elements.size() == 1 && IsFullCubeElement(elements[0]);
+}
+
+// Finds the first full-cube-shaped element in a model with MULTIPLE
+// elements — grass_block (and anything else using the same tinted-overlay
+// technique: a base cube plus a separate biome-tinted overlay element on
+// the same footprint) has 2 elements and so fails IsFullCube's strict
+// single-element check above, even though it's visually still just an
+// opaque full cube; this second element (the tint overlay) isn't something
+// the current single-texture-per-face greedy mesher can layer in anyway, so
+// using just the base element's own faces — silently dropping the overlay —
+// is the closest this pass can render it, and is a lot better than the
+// whole block excluding to nothing (which is what "what happened to the
+// grass" turned out to be).
+const json* FindOpaqueCubeElement(const json& elements) {
+    if (!elements.is_array()) return nullptr;
+    for (const json& elem : elements) {
+        if (IsFullCubeElement(elem)) return &elem;
+    }
+    return nullptr;
 }
 
 // Decodes a state id's offset within its block's [minStateId, maxStateId]
@@ -261,6 +293,21 @@ uint16_t InternVisual(const FaceNames& faces) {
     return id;
 }
 
+// Vanilla has no per-block "is this translucent" field in minecraft-data or
+// the blockstate/model JSON we already parse — real rendering-layer
+// assignment lives in code, not data. Rather than shipping a huge hardcoded
+// per-version block list, this covers the name patterns the task actually
+// asked for (glass, slime, honey) plus the other common vanilla translucent
+// full cubes; anything else that happens to be a full cube renders through
+// the normal opaque path exactly as before.
+bool IsTransparentCubeName(const std::string& name) {
+    if (name.find("glass") != std::string::npos) return true;
+    static const std::unordered_set<std::string> named = {
+        "slime_block", "honey_block", "ice", "frosted_ice",
+    };
+    return named.contains(name);
+}
+
 // Resolves one state id to a visual id, or 0 if the variant/model/texture
 // chain doesn't fully resolve to a renderable full cube. Any unexpected
 // shape in the resource-pack JSON (a "texture" value that isn't a string,
@@ -269,16 +316,24 @@ uint16_t InternVisual(const FaceNames& faces) {
 // every other block.
 uint16_t ResolveStateVisual(const BlockDef& def, const json& blockstateJson, int32_t stateId) {
     try {
+        // Known-translucent full cubes (glass, slime, honey, ice, ...) are
+        // deliberately excluded here even though they'd otherwise resolve
+        // fine — they need ResolveStateNonCubeVisual's alpha-blended,
+        // no-backface-cull path below instead, not the opaque one.
+        if (IsTransparentCubeName(def.name)) return 0;
+
         DecodedProps props = DecodeProps(def.states, stateId - def.minStateId);
 
         std::string modelId;
         if (!FindVariantModel(blockstateJson, props, modelId)) return 0;
 
         const ResolvedModel& model = ResolveModel(modelId);
-        if (!model.hasElements || !IsFullCube(model.elements)) return 0;
+        if (!model.hasElements) return 0;
+        const json* cubeElement = FindOpaqueCubeElement(model.elements);
+        if (!cubeElement) return 0;
 
         static const char* dirs[6] = { "up", "down", "north", "south", "east", "west" }; // ChunkMesher's 0..5 order.
-        const json& faces = model.elements[0]["faces"];
+        const json& faces = (*cubeElement)["faces"];
 
         FaceNames faceNames;
         for (int f = 0; f < 6; f++) {
@@ -293,21 +348,6 @@ uint16_t ResolveStateVisual(const BlockDef& def, const json& blockstateJson, int
             + ": " + e.what());
         return 0;
     }
-}
-
-// Vanilla has no per-block "is this translucent" field in minecraft-data or
-// the blockstate/model JSON we already parse — real rendering-layer
-// assignment lives in code, not data. Rather than shipping a huge hardcoded
-// per-version block list, this covers the name patterns the task actually
-// asked for (glass, slime, honey) plus the other common vanilla translucent
-// full cubes; anything else that happens to be a full cube renders through
-// the normal opaque path exactly as before.
-bool IsTransparentCubeName(const std::string& name) {
-    if (name.find("glass") != std::string::npos) return true;
-    static const std::unordered_set<std::string> named = {
-        "slime_block", "honey_block", "ice", "frosted_ice",
-    };
-    return named.contains(name);
 }
 
 uint16_t InternNonCubeVisual(NonCubeVisual&& visual) {
@@ -381,6 +421,20 @@ uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJs
                     std::string stem;
                     if (ResolveTextureRef(model.textures, texField.get<std::string>(), stem)) {
                         element.faceTextures[static_cast<size_t>(f)] = stem;
+
+                        // Defaults to the full texture when this face doesn't
+                        // specify its own "uv" — every vanilla template this
+                        // pass actually sees (slabs, snow layers, torches, ...)
+                        // does specify one, but this keeps a missing one from
+                        // rendering as nothing rather than guessing wrong.
+                        glm::vec4 uv(0.0f, 0.0f, 16.0f, 16.0f);
+                        const json& faceJson = faces[dirs[f]];
+                        if (faceJson.contains("uv") && faceJson["uv"].is_array() && faceJson["uv"].size() == 4) {
+                            uv = glm::vec4(
+                                faceJson["uv"][0].get<double>(), faceJson["uv"][1].get<double>(),
+                                faceJson["uv"][2].get<double>(), faceJson["uv"][3].get<double>());
+                        }
+                        element.faceUVs[static_cast<size_t>(f)] = uv;
                     }
                 }
             }

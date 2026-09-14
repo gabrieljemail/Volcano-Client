@@ -67,6 +67,12 @@ static bool g_firstFramePresented = false;
 
 static void WindowFocusCallback(GLFWwindow* win, int focused)
 {
+    // Only fires inside glfwPollEvents(), which only the main thread calls
+    // (VolcanoClient.cpp's message loop) — direct glfwSetInputMode calls
+    // here are fine. Also mirrors focus into GlobalState so render-thread
+    // code (NotifyFramePresented) can check it without calling GLFW itself.
+    if (g_globalState) g_globalState->windowFocused.store(focused != 0);
+
     if (focused)
     {
         // Don't steal the cursor back from ImGui while a Screen (connect
@@ -93,10 +99,12 @@ void NotifyFramePresented()
     // The window may already have (real) focus by the time this first
     // frame lands, in which case no further WindowFocusCallback will ever
     // fire to lock the cursor — so apply the same check here once, now
-    // that the window is genuinely on screen.
-    if (window && glfwGetWindowAttrib(window, GLFW_FOCUSED) && !GUIController::IsScreenOpen())
+    // that the window is genuinely on screen. Runs on the render thread
+    // (DrawFrame calls this), so it can't call glfwGetWindowAttrib/
+    // glfwSetInputMode itself — see GlobalState::pendingCursorMode.
+    if (g_globalState && g_globalState->windowFocused.load() && !GUIController::IsScreenOpen())
     {
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        g_globalState->pendingCursorMode.store(GLFW_CURSOR_DISABLED);
     }
 #endif
 }
