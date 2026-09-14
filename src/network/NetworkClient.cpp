@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 
 namespace Volcano {
@@ -487,6 +488,71 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 }
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Remove Entities: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::PlayerInfoUpdate) {
+            try {
+                uint8_t actions = reader.ReadByte();
+                constexpr uint8_t ADD_PLAYER = 0x01, INITIALIZE_CHAT = 0x02, UPDATE_GAME_MODE = 0x04,
+                                   UPDATE_LISTED = 0x08, UPDATE_LATENCY = 0x10, UPDATE_DISPLAY_NAME = 0x20,
+                                   UPDATE_HAT = 0x40, UPDATE_LIST_ORDER = 0x80;
+
+                int32_t count = reader.ReadVarInt();
+                for (int32_t i = 0; i < count; i++) {
+                    std::array<uint8_t, 16> uuid{};
+                    reader.ReadBytes(uuid.data(), uuid.size());
+
+                    std::optional<std::string> name;
+                    if (actions & ADD_PLAYER) {
+                        name = reader.ReadString();
+                        int32_t propCount = reader.ReadVarInt();
+                        for (int32_t p = 0; p < propCount; p++) {
+                            reader.ReadString(); // property name — skin data, unused (no skin rendering yet)
+                            reader.ReadString(); // property value
+                            if (reader.ReadBool()) reader.ReadString(); // signature, when present
+                        }
+                    }
+                    if (actions & INITIALIZE_CHAT) {
+                        if (reader.ReadBool()) { // chat session present
+                            reader.Skip(16); // session uuid
+                            reader.ReadLong(); // public key expire time
+                            reader.Skip(static_cast<size_t>(reader.ReadVarInt())); // key bytes
+                            reader.Skip(static_cast<size_t>(reader.ReadVarInt())); // key signature
+                        }
+                    }
+                    if (actions & UPDATE_GAME_MODE) reader.ReadVarInt();
+                    if (actions & UPDATE_LISTED) reader.ReadVarInt();
+                    if (actions & UPDATE_LATENCY) reader.ReadVarInt();
+                    if (actions & UPDATE_DISPLAY_NAME) {
+                        if (reader.ReadBool()) ReadTextComponent(reader); // display name NBT, unused — plain name is enough for now
+                    }
+                    if (actions & UPDATE_LIST_ORDER) reader.ReadVarInt();
+                    if (actions & UPDATE_HAT) reader.ReadBool();
+
+                    if (name.has_value()) {
+                        std::lock_guard<std::mutex> lock(state->playerListMutex);
+                        state->playerList[FormatUuid(uuid)] = *name;
+                    }
+                }
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Player Info Update: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::PlayerInfoRemove) {
+            try {
+                int32_t count = reader.ReadVarInt();
+                std::lock_guard<std::mutex> lock(state->playerListMutex);
+                for (int32_t i = 0; i < count; i++) {
+                    std::array<uint8_t, 16> uuid{};
+                    reader.ReadBytes(uuid.data(), uuid.size());
+                    state->playerList.erase(FormatUuid(uuid));
+                }
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Player Info Remove: ") + e.what());
             }
             continue;
         }
