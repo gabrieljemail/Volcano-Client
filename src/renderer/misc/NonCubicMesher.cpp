@@ -36,14 +36,9 @@ void NonCubicMesher::Shutdown() {
     slabsInitialized = false;
 }
 
-// Per-face faux lighting, same constants ChunkMesher uses for full cubes —
-// keeps partial/transparent-cube shapes shaded consistently with the
-// opaque terrain around them.
-static constexpr float FACE_LIGHT[6] = { 1.0f, 0.5f, 0.8f, 0.8f, 0.6f, 0.6f }; // Up, Down, North, South, East, West.
-
-// Neighbor offset for each of ChunkMesher's 6 face indices, used only to
+// Neighbor offset for each of ChunkMesher's 6 face indices — used both to
 // cull a transparent-cube face against an identical neighbor (see
-// MeshTransparentCube).
+// MeshTransparentCube) and to sample the real light a face is exposed to.
 static constexpr int FACE_DX[6] = { 0, 0, 0, 0, 1, -1 };
 static constexpr int FACE_DY[6] = { 1, -1, 0, 0, 0, 0 };
 static constexpr int FACE_DZ[6] = { 0, 0, -1, 1, 0, 0 };
@@ -64,6 +59,18 @@ static Block GetBlockAcrossChunks(const Chunk& chunk, const World& world, int lx
     int worldX = chunk.getX() * CHUNK_SIZE_X + lx;
     int worldZ = chunk.getZ() * CHUNK_SIZE_Z + lz;
     return world.GetBlock(worldX, ly + WORLD_MIN_Y, worldZ);
+}
+
+// Same cross-chunk fallback, for the light sample at the block a face is
+// exposed to (see ChunkMesher's own GetLightAcrossChunks).
+static uint8_t GetLightAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
+    if (lx >= 0 && lx < CHUNK_SIZE_X && lz >= 0 && lz < CHUNK_SIZE_Z) {
+        return chunk.getLight(lx, ly, lz);
+    }
+
+    int worldX = chunk.getX() * CHUNK_SIZE_X + lx;
+    int worldZ = chunk.getZ() * CHUNK_SIZE_Z + lz;
+    return world.GetLight(worldX, ly + WORLD_MIN_Y, worldZ);
 }
 
 // Four corners of one face of an axis-aligned box, in some consistent
@@ -96,7 +103,7 @@ static std::array<glm::vec3, 4> FaceCorners(const glm::vec3& min, const glm::vec
 // the whole texture (full cubes, cross planes).
 static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices,
         const std::array<glm::vec3, 4>& corners, const glm::vec4& uvRect,
-        uint16_t textureLayer, bool biomeTinted, float light) {
+        uint16_t textureLayer, bool biomeTinted, uint8_t light) {
     glm::vec2 uvMin = glm::vec2(uvRect.x, uvRect.y) / 16.0f;
     glm::vec2 uvMax = glm::vec2(uvRect.z, uvRect.w) / 16.0f;
     const std::array<glm::vec2, 4> uvs = {
@@ -105,7 +112,7 @@ static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& i
     };
 
     uint32_t base = static_cast<uint32_t>(vertices.size());
-    uint32_t packed = MiscVertex::Pack(textureLayer, static_cast<uint8_t>(light * 15.0f), biomeTinted);
+    uint32_t packed = MiscVertex::Pack(textureLayer, light, biomeTinted);
 
     for (int i = 0; i < 4; i++) {
         vertices.push_back(MiscVertex{ corners[static_cast<size_t>(i)], uvs[static_cast<size_t>(i)], packed });
@@ -118,8 +125,9 @@ static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& i
 // units) unconditionally — partial shapes (slabs, carpets, ...) are rare
 // enough, and varied enough in footprint, that neighbor-based face culling
 // isn't worth the complexity ChunkMesher's greedy sweep uses for full cubes.
-static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const glm::vec3& blockOrigin,
-        const TextureManager& textureManager, std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
+static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const Chunk& chunk, const World& world,
+        int bx, int by, int bz, const glm::vec3& blockOrigin, const TextureManager& textureManager,
+        std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
     glm::vec3 boxMin = blockOrigin + element.from / 16.0f;
     glm::vec3 boxMax = blockOrigin + element.to / 16.0f;
 
@@ -129,8 +137,9 @@ static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
         bool tinted = IsBiomeTinted(textureName);
+        uint8_t light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
         EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), element.faceUVs[static_cast<size_t>(f)],
-            layer, tinted, FACE_LIGHT[f]);
+            layer, tinted, light);
     }
 }
 
@@ -156,8 +165,9 @@ static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, ui
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
         bool tinted = IsBiomeTinted(textureName);
+        uint8_t light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
         EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), element.faceUVs[static_cast<size_t>(f)],
-            layer, tinted, FACE_LIGHT[f]);
+            layer, tinted, light);
     }
 }
 
@@ -166,11 +176,13 @@ static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, ui
 // backface culling — so 180° of spacing gives N crossing planes, matching
 // vanilla's 2-plane X-shape at CROSS_BILLBOARD_COUNT's default of 2: 45° and
 // 135°, the same pair of diagonals vanilla's block/cross model uses).
-static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const glm::vec3& blockOrigin,
-        const TextureManager& textureManager, std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
+static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const Chunk& chunk,
+        int bx, int by, int bz, const glm::vec3& blockOrigin, const TextureManager& textureManager,
+        std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
     uint16_t layer = textureManager.GetLayerIndex(visual.crossTexture);
     bool tinted = IsBiomeTinted(visual.crossTexture);
-    constexpr float light = 0.9f; // Flat — a billboard has no single well-defined face normal to shade by direction.
+    // Flat — a billboard has no single well-defined face normal to sample a neighbor by; use the block's own light.
+    uint8_t light = chunk.getLight(bx, by, bz);
 
     glm::vec3 center = blockOrigin + glm::vec3(0.5f, 0.0f, 0.5f);
     int planeCount = CROSS_BILLBOARD_COUNT > 0 ? CROSS_BILLBOARD_COUNT : 1;
@@ -206,7 +218,7 @@ Mesh NonCubicMesher::MeshChunk(const Chunk& chunk, const World& world, const Tex
                 glm::vec3 blockOrigin(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
 
                 if (visual.shape == BlockRegistry::NonCubeShape::Cross) {
-                    MeshCross(visual, blockOrigin, textureManager, vertices, indices);
+                    MeshCross(visual, chunk, x, y, z, blockOrigin, textureManager, vertices, indices);
                     continue;
                 }
 
@@ -215,7 +227,7 @@ Mesh NonCubicMesher::MeshChunk(const Chunk& chunk, const World& world, const Tex
                         MeshTransparentCube(element, block.nonCubeVisualId, chunk, world, x, y, z, blockOrigin,
                             textureManager, vertices, indices);
                     } else {
-                        MeshElementFaces(element, blockOrigin, textureManager, vertices, indices);
+                        MeshElementFaces(element, chunk, world, x, y, z, blockOrigin, textureManager, vertices, indices);
                     }
                 }
             }
