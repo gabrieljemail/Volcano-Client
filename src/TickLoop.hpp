@@ -29,7 +29,11 @@ public:
 
     explicit TickLoop(GlobalState* state);
 
-    void Advance(float frameDeltaTime);
+    // inputAllowed gates WASD/jump/look — gravity, collision, and applying
+    // the server's teleports/position sync still run every call regardless,
+    // so a screen (pause, death, chat, ...) being open doesn't freeze the
+    // player mid-air or leave a pending respawn teleport stuck unapplied.
+    void Advance(float frameDeltaTime, bool inputAllowed);
 
     // Smoothly interpolated position for rendering this frame. NOT the
     // authoritative tick position (which only updates once per Tick()) —
@@ -68,7 +72,7 @@ private:
     glm::vec3 velocity{0.0f};
     bool grounded = false;
 
-    void Tick();
+    void Tick(bool inputAllowed);
     bool IsSolid(int x, int y, int z) const;
     bool AabbOverlapsSolid(glm::vec3 center) const;
     void MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float delta);

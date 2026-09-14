@@ -10,9 +10,8 @@ namespace Volcano::EntityRegistry {
 
 namespace {
 
-// Kept in sync with BlockRegistry's pinned minecraft-data version (see its
-// own comment for why 26.1, the closest available folder to this client's
-// protocol 776 / Minecraft 26.2, is used).
+// Kept in sync with BlockRegistry's pinned minecraft-data version and
+// PROTOCOL_VERSION (NetworkClient.hpp) — all three must agree.
 constexpr const char* MC_DATA_VERSION = "26.1";
 const std::string ENTITIES_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/entities.json";
 

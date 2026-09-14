@@ -136,6 +136,7 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
             if (packetId == 0x00) {
                 std::string reason = reader.ReadString();
                 Log::Error("[NET] Server disconnected during login: " + reason);
+                lastError = reason;
                 return false;
             }
 
@@ -145,11 +146,13 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
                     << " while waiting for Login Success (likely an Encryption "
                     << "Request packet — not handled yet).";
                 Log::Error(oss.str());
+                lastError = "Server requires online-mode authentication (not supported yet).";
             }
             return false;
         }
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Connection failed: ") + e.what());
+        lastError = e.what();
         return false;
     }
 }
@@ -161,6 +164,7 @@ void NetworkClient::RunSession(GlobalState* state, std::stop_token stopToken)
         RunPlayLoop(state, stopToken);
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Session error: ") + e.what());
+        lastError = e.what();
     }
 }
 
@@ -255,6 +259,7 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
             // producing garbage (or throwing) instead of the real reason.
             std::string reason = PlainText(ReadTextComponent(reader));
             Log::Error("[NET] Server disconnected during configuration: " + reason);
+            lastError = reason;
             return false;
         }
 
@@ -274,6 +279,37 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
         if (packetId == PlayS2C::LoginPlay) {
             Log::Info("[NET] Entered Play state.");
+            continue;
+        }
+
+        if (packetId == PlayS2C::PlayerCombatKill) {
+            reader.ReadVarInt(); // playerId — always the receiving player themselves.
+            std::string message = PlainText(ReadTextComponent(reader));
+            state->ReportDeath(message);
+            continue;
+        }
+
+        if (packetId == PlayS2C::SetHealth) {
+            float health = reader.ReadFloat();
+            reader.ReadVarInt(); // food, unused
+            reader.ReadFloat();  // saturation, unused
+
+            // Catches joining a server while already dead from a previous
+            // session — PlayerCombatKill above only fires at the actual
+            // moment of death, never on a later rejoin, so without this the
+            // death screen would just never appear (stuck with no chunks
+            // loading and chat disabled, both the server's own normal
+            // behavior for a not-yet-respawned player). Don't stomp a
+            // real death message a PlayerCombatKill already supplied,
+            // in case both arrive around the same live death.
+            if (health <= 0.0f) {
+                std::string existing;
+                {
+                    std::lock_guard<std::mutex> lock(state->deathMutex);
+                    existing = state->deathMessage;
+                }
+                state->ReportDeath(existing.empty() ? "You died." : existing);
+            }
             continue;
         }
 
@@ -521,6 +557,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             // here meant a kick's real reason was never actually visible.
             std::string reason = PlainText(ReadTextComponent(reader));
             Log::Error("[NET] Server disconnected: " + reason);
+            lastError = reason;
             return;
         }
 
@@ -556,6 +593,40 @@ void SendChatMessage(GlobalState* state, const std::string& message)
         connection->SendPacket(PlayC2S::ChatMessage, writer.Data());
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Failed to send chat message: ") + e.what());
+    }
+}
+
+void SendChatCommand(GlobalState* state, const std::string& command)
+{
+    Connection* connection = state->activeConnection.load();
+    if (connection == nullptr) {
+        Log::Info("[NET] Dropped outgoing command, no active connection: /" + command);
+        return;
+    }
+
+    try {
+        PacketWriter writer;
+        writer.WriteString(command); // No leading "/" — the packet field is just the command text.
+        connection->SendPacket(PlayC2S::ChatCommand, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send chat command: ") + e.what());
+    }
+}
+
+void SendRespawnRequest(GlobalState* state)
+{
+    Connection* connection = state->activeConnection.load();
+    if (connection == nullptr) {
+        Log::Info("[NET] Dropped respawn request, no active connection.");
+        return;
+    }
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(0); // action 0 = perform_respawn.
+        connection->SendPacket(PlayC2S::ClientCommand, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send respawn request: ") + e.what());
     }
 }
 

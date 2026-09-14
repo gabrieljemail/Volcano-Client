@@ -18,7 +18,7 @@ TickLoop::TickLoop(GlobalState* stateIn) : state(stateIn)
     previousPosition = currentPosition = state->player->GetPosition();
 }
 
-void TickLoop::Advance(float frameDeltaTime)
+void TickLoop::Advance(float frameDeltaTime, bool inputAllowed)
 {
     // Hold off simulating entirely until the world has something to stand
     // on — otherwise gravity runs from frame one against an empty World
@@ -44,14 +44,14 @@ void TickLoop::Advance(float frameDeltaTime)
         }
     }
 
-    jumpQueued = jumpQueued || state->input->WasActivated("Jump");
+    if (inputAllowed) jumpQueued = jumpQueued || state->input->WasActivated("Jump");
 
     accumulator += frameDeltaTime;
     if (accumulator > MAX_ACCUMULATED_TIME) accumulator = MAX_ACCUMULATED_TIME;
 
     while (accumulator >= FIXED_DT)
     {
-        Tick();
+        Tick(inputAllowed);
         accumulator -= FIXED_DT;
     }
 }
@@ -76,7 +76,7 @@ void TickLoop::QueueTeleport(glm::vec3 position)
     pendingTeleport = position;
 }
 
-void TickLoop::Tick()
+void TickLoop::Tick(bool inputAllowed)
 {
     previousPosition = currentPosition;
 
@@ -93,8 +93,8 @@ void TickLoop::Tick()
     // (0.91 / 0.02) are vanilla's own too — much less momentum lost per
     // tick, and a much smaller push from input, which is exactly why
     // vanilla air control feels so limited compared to ground movement.
-    float forwardInput = state->input->GetAxis("Move.Forward");
-    float rightInput = state->input->GetAxis("Move.Right");
+    float forwardInput = inputAllowed ? state->input->GetAxis("Move.Forward") : 0.0f;
+    float rightInput = inputAllowed ? state->input->GetAxis("Move.Right") : 0.0f;
 
     float yaw = glm::radians(state->player->camera.GetYaw());
     glm::vec3 forward{ sin(yaw), 0.0f, cos(yaw) };

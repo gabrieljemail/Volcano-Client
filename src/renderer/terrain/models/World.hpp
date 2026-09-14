@@ -38,6 +38,15 @@ public:
         return chunks.emplace(key, std::move(chunk)).first->second;
     }
 
+    // Drops every chunk — used when returning to the connect screen after a
+    // disconnect, so a fresh connection doesn't layer new chunks on top of
+    // the previous session's leftover world.
+    void Clear()
+    {
+        std::unique_lock lock(mutex);
+        chunks.clear();
+    }
+
     // Solid-block lookup for collision, in world-block coordinates (not
     // chunk-local). Air (including chunks that don't exist) reads as Air,
     // matching Chunk::getBlock's own out-of-bounds behavior.

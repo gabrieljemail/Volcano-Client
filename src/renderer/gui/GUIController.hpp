@@ -79,6 +79,8 @@ private:
     static GUI::GUIWindow* debugWindow;
     static GUI::GUIComponent* debugText;
     static GUI::Screen* pauseScreen;
+    static GUI::Screen* deathScreen;
+    static GUI::GUIComponent* deathMessageText;
 
     static bool chatInputOpen;
     static bool chatInputJustOpened; // Consumed once by RenderChatInputBox to grab keyboard focus the frame it opens.

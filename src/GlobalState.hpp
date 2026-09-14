@@ -138,6 +138,57 @@ struct GlobalState {
     // reading/writing TickLoop's position state.
     std::atomic<bool> worldReady{false};
 
+    // GLFW only guarantees glfwSetInputMode/glfwGetWindowAttrib are safe to
+    // call from the thread that created the window — the main (GLFW-owning)
+    // thread here, not the render thread GUIController and
+    // NotifyFramePresented actually run on. Calling them cross-thread was
+    // undefined behavior and the real cause of the pause screen's cursor
+    // getting warped back to center every frame (not, as first suspected, a
+    // Remote Desktop quirk). Those call sites now store a request here
+    // instead; the main loop in VolcanoClient.cpp applies it. -1 = no
+    // pending request. windowFocused mirrors real focus state, kept current
+    // by WindowFocusCallback (main thread, safe to read GLFW from) so
+    // NotifyFramePresented can check focus without calling GLFW itself.
+    std::atomic<int> pendingCursorMode{-1};
+    std::atomic<bool> windowFocused{false};
+
+    // Set by NetworkThread when a session ends unexpectedly (kicked,
+    // connection dropped, login failure) rather than via a deliberate
+    // app-level stop — polled once per frame by the main GLFW loop in
+    // VolcanoClient.cpp, which resets world/render state and reopens the
+    // connect screen with disconnectReason shown. Guarded by
+    // disconnectMutex since std::string isn't safe to share via the atomic
+    // bool alone.
+    std::atomic<bool> disconnected{false};
+    std::mutex disconnectMutex;
+    std::string disconnectReason;
+
+    void ReportDisconnect(const std::string& reason)
+    {
+        {
+            std::lock_guard<std::mutex> lock(disconnectMutex);
+            disconnectReason = reason;
+        }
+        disconnected.store(true);
+    }
+
+    // Set by NetworkClient on PlayS2C::PlayerCombatKill — polled by
+    // GUIController::Update() (render thread), which shows a death screen
+    // with deathMessage and a Respawn button. Same mutex-for-the-string,
+    // atomic-for-the-flag pattern as disconnected/disconnectReason above.
+    std::atomic<bool> playerDied{false};
+    std::mutex deathMutex;
+    std::string deathMessage;
+
+    void ReportDeath(const std::string& message)
+    {
+        {
+            std::lock_guard<std::mutex> lock(deathMutex);
+            deathMessage = message;
+        }
+        playerDied.store(true);
+    }
+
     glm::vec3 cameraPosition{0.0f, 0.0f, 5.0f};
 
     // Set by VulkanInit's GLFW framebuffer-size callback (main thread) and

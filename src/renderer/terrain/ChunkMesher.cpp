@@ -110,8 +110,19 @@ static FaceTexture GetFaceTexture(uint16_t visualId, int face, const TextureMana
 static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, const TextureManager& textureManager,
         std::vector<PackedVertex>& vertices, std::vector<uint32_t>& indices) {
     const int dims[3] = { CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z };
-    const int u = (axis + 1) % 3;
-    const int v = (axis + 2) % 3;
+
+    // u/v name the other two axes the mask sweeps across, and directly
+    // become each quad's texture U/V direction (see the UV-packing comment
+    // below) — so for the two "side" axes (X=0, Z=2), v must be Y (world-
+    // vertical) or the texture ends up rotated 90° on that wall. Z (axis 2)
+    // already got this right via the plain (axis+1)%3/(axis+2)%3 formula
+    // (u=X horizontal, v=Y vertical); X (axis 0) didn't (u=Y, v=Z — texture
+    // U driven by height instead of depth), which is what put a sideways/
+    // vertical grain on every X-facing wall. Y (axis 1, floor/ceiling) is
+    // unaffected either way since both remaining axes are horizontal.
+    int u, v;
+    if (axis == 0) { u = 2; v = 1; }
+    else { u = (axis + 1) % 3; v = (axis + 2) % 3; }
 
     std::vector<MaskCell> mask(dims[u] * dims[v]);
 
