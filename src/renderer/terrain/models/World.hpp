@@ -55,6 +55,21 @@ public:
         return it->second.getBlock(localX, worldY - WORLD_MIN_Y, localZ);
     }
 
+    // Same shape as GetBlock, for the meshers' cross-chunk light lookups.
+    uint8_t GetLight(int worldX, int worldY, int worldZ) const
+    {
+        int chunkX = FloorDiv(worldX, CHUNK_SIZE_X);
+        int chunkZ = FloorDiv(worldZ, CHUNK_SIZE_Z);
+
+        std::shared_lock lock(mutex);
+        auto it = chunks.find(ChunkKey(chunkX, chunkZ));
+        if (it == chunks.end()) return 15; // No chunk loaded there — full-bright default, same as Chunk's own.
+
+        int localX = worldX - chunkX * CHUNK_SIZE_X;
+        int localZ = worldZ - chunkZ * CHUNK_SIZE_Z;
+        return it->second.getLight(localX, worldY - WORLD_MIN_Y, localZ);
+    }
+
 private:
     mutable std::shared_mutex mutex;
     std::unordered_map<int64_t, Chunk> chunks;
