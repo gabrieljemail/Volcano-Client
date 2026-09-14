@@ -107,7 +107,15 @@ void TickLoop::Tick(bool inputAllowed)
     constexpr float AIR_FRICTION = 0.91f;
     constexpr float AIR_ACCELERATION = 0.02f; // flat, unlike ground accel below — not attribute-scaled in vanilla either
 
-    float movementSpeed = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1));
+    // Client-side-only sprint/sneak: vanilla applies these as attribute
+    // modifiers server-side, but here it's simplest to just scale the speed
+    // used below directly. Sneak wins if both are held, matching vanilla
+    // (can't sprint while sneaking).
+    bool sneaking = state->input->IsActive("Sneak");
+    bool sprinting = !sneaking && state->input->IsActive("Sprint");
+    float speedMultiplier = sneaking ? 0.3f : (sprinting ? 1.3f : 1.0f);
+
+    float movementSpeed = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1)) * speedMultiplier;
     float friction = grounded ? GROUND_FRICTION : AIR_FRICTION;
     // *0.98 reproduces vanilla's verified terminal walking speed (0.2159
     // blocks/tick) from the default 0.1 attribute value.
@@ -142,6 +150,9 @@ void TickLoop::Tick(bool inputAllowed)
 
     currentPosition = pos;
     state->player->SetPosition(currentPosition);
+
+    // Scope-limited sneak: just lower the camera, don't touch the collision AABB.
+    state->player->camera.eyeOffset.y = sneaking ? 1.27f : 1.62f;
 
     // Gravity + drag apply every tick regardless of grounded state, but only
     // AFTER this tick's move — resting on the ground works because the
