@@ -3,6 +3,8 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <mutex>
+#include <string>
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
 #include "RenderThread.hpp"
@@ -11,10 +13,21 @@
 #include "models/Mesh.hpp"
 #include "terrain/VisibleChunkController.hpp"
 #include "entity/EntityRenderer.hpp"
+#include "misc/SelectionRenderer.hpp"
 #include "gui/GUIController.hpp"
 #include "../TickLoop.hpp"
+#include "../interaction/InteractionManager.hpp"
 
 using namespace std;
+
+namespace Volcano {
+// Declared here rather than including network/NetworkClient.hpp — same
+// reasoning as GUIController.cpp's own forward declarations of this
+// function's siblings: that header drags in asio.hpp, which on Windows
+// pulls in <windows.h>. This one free function is all PollInputs actually
+// needs from it.
+void SendHeldItemSlot(GlobalState* state, uint8_t slot);
+}
 
 namespace Volcano {
 
@@ -29,83 +42,37 @@ RenderThread::RenderThread(Volcano::GlobalState* globalState) : state(globalStat
     }
 
     lastFrameTime = chrono::steady_clock::now();
+    frameStartTime = lastFrameTime;
+    nextFrameTarget = frameStartTime + chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
 }
 
 RenderThread::~RenderThread()
 {}
 
-void RenderThread::Start()
+void RenderThread::RunFrame()
 {
-    worker = jthread([this](stop_token st) {
-        this->ThreadEntry(st);
-    });
+    WaitForTargetFrame();
+    UpdateDeltaTime();
+    PollInputs();
+    DrawFrame();
+    // Both PollInputs (F11, TickLoop's jump check) and DrawFrame (via
+    // GUIController::Update()'s Escape check) read this frame's
+    // press/release edges above — only clear them now that both have
+    // had their chance, not before.
+    state->input->EndFrame();
 }
 
-void RenderThread::RequestStop()
+void RenderThread::Shutdown()
 {
-    worker.request_stop();
-}
-
-bool RenderThread::HasStopped() const
-{
-    return finished.load();
-}
-
-void RenderThread::Stop()
-{
-    worker.request_stop();
-    if (worker.joinable())
-    {
-        worker.join();
-    }
-}
-
-void RenderThread::ThreadEntry(stop_token stopToken)
-{
-    cout << "[INFO] Render thread created." << endl;
-
-    try {
-        RenderLoop(stopToken);
-    } catch (const exception& e) {
-        cerr << "[ERROR] Render thread crashed during startup: " << e.what() << endl;
-    }
-
     // The last submitted frame's command buffer may still be executing on
     // the GPU (fences are only waited on at the *start* of the next frame,
-    // which never comes once the loop above has exited) and it references
+    // which never comes once main()'s loop has exited) and it references
     // ImGui's descriptor pool/pipeline. GUIController::Shutdown() destroys
     // those Vulkan objects outright, so without this wait it tears down
-    // resources the GPU is still using — previously masked entirely by the
-    // present-time deadlock this loop used to hit before ever reaching here.
+    // resources the GPU is still using.
     vkDeviceWaitIdle(GetDevice());
 
-    // Cleanup GUI controller
     GUIController::Shutdown();
-
-    finished.store(true);
-}
-
-void RenderThread::RenderLoop(stop_token stopToken)
-{
-    frameStartTime = chrono::steady_clock::now();
-    nextFrameTarget = frameStartTime + chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
-
-    while (!stopToken.stop_requested() && !state->shouldClose)
-    {
-        WaitForTargetFrame();
-        UpdateDeltaTime();
-        PollInputs();
-        DrawFrame();
-        // Both PollInputs (F11, TickLoop's jump check) and DrawFrame (via
-        // GUIController::Update()'s Escape check) read this frame's
-        // press/release edges above — only clear them now that both have
-        // had their chance, not before.
-        state->input->EndFrame();
-    }
-
-    // When the render loop exits for some reason, tell the main thread to shut down.
-    state->shouldClose = true;
-    // And then continue to the destructor to join the thread.
 }
 
 void RenderThread::WaitForTargetFrame()
@@ -142,6 +109,15 @@ void RenderThread::UpdateDeltaTime()
 
 void RenderThread::PollInputs()
 {
+    // Dispatches the KeyCallback/CursorPosCallback that feed InputHandler's
+    // state, plus window-manager events (resize, focus, close). Used to run
+    // in main()'s own separate loop, on the same (GLFW-owning) thread as
+    // this one now was a *different* thread — see the class comment. Polling
+    // here, immediately before this frame's input is read below, keeps the
+    // latency-minimizing order intact: capture as late as possible,
+    // immediately before the frame that uses it.
+    glfwPollEvents();
+
     // Bind the close button (and Alt+F4).
     if (glfwWindowShouldClose(state->window))
     {
@@ -204,6 +180,29 @@ void RenderThread::PollInputs()
     // mid-air and a pending teleport never lands until the screen closes.
     bool inputAllowed = !GUIController::IsScreenOpen() && !GUIController::IsChatInputOpen();
 
+    // Hotbar slot selection ("1".."9" — see their registration in
+    // VolcanoClient.cpp). Gated the same way "G"/ToggleLighting is: typing a
+    // digit into chat or a text field must not also swap the held slot.
+    // Applied immediately to local state (read straight off GlobalState by
+    // GUIController::RenderHotbarAndArmor, no round trip needed for the HUD
+    // to update) and reported to the server so its own notion of the held
+    // slot — which future block-interaction packets need to agree with —
+    // doesn't silently drift from what's shown locally.
+    if (inputAllowed)
+    {
+        for (int slot = 0; slot < 9; slot++)
+        {
+            if (!state->input->WasActivated("Hotbar." + std::to_string(slot))) continue;
+
+            {
+                std::lock_guard<std::mutex> lock(state->inventory.mutex);
+                state->inventory.selectedHotbarSlot = static_cast<uint8_t>(slot);
+            }
+            SendHeldItemSlot(state, static_cast<uint8_t>(slot));
+            break; // Two number keys can't both have been pressed the same frame in practice; stop at the first.
+        }
+    }
+
     if (inputAllowed)
     {
         // Mouse sensitivity is applied entirely at the axis level (see the
@@ -214,9 +213,29 @@ void RenderThread::PollInputs()
         state->player->camera.ApplyMouseDelta(dx, dy, 1.0f);
     }
 
-    // Gravity/collision/movement now live in TickLoop, run at a fixed 20Hz
-    // regardless of render framerate — see the tick-loop plan.
-    state->tickLoop->Advance(frameDeltaTime, inputAllowed);
+    // Mainhand/offhand interaction (attack; block breaking/placing once
+    // added) — same inputAllowed gate as Hotbar/Camera above.
+    state->interaction->Update(inputAllowed);
+
+    // Gravity/collision/movement run on NetworkThread's own steady 20Hz
+    // clock now (see the tick-loop plan), not here — this just publishes
+    // what Tick() needs from this frame's input. Jump/JumpHold are gated by
+    // inputAllowed right at this read site (a screen/chat box being open
+    // means a jump press is never even latched, not latched-and-ignored),
+    // matching TickLoop::RequestJump's own comment; Move/Sneak/Sprint are
+    // published unconditionally, same as before — FixedStep() zeroes the
+    // movement axes itself when input isn't allowed.
+    if (inputAllowed && state->input->WasActivated("Jump"))
+    {
+        state->tickLoop->RequestJump();
+    }
+    state->tickLoop->PublishInput(
+        inputAllowed,
+        state->input->GetAxis("Move.Forward"),
+        state->input->GetAxis("Move.Right"),
+        state->input->IsActive("Sneak"),
+        state->input->IsActive("Sprint"),
+        inputAllowed && state->input->IsActive("JumpHold"));
 }
 
 void RenderThread::DrawFrame()
@@ -433,20 +452,22 @@ void RenderThread::RecordAndSubmitFrame()
     // partial-volume shapes (slabs, carpets, ...), and cross-shaped plants
     // (grass, flowers, ...) — see NonCubicMesher/VulkanInit's
     // nonCubicPipeline. Drawn last (after opaque terrain and entities) with
-    // alpha blending and no depth write, so a translucent quad always
-    // composites correctly over the already-opaque color buffer behind it.
+    // alpha blending, and with depth writes ON — see that pipeline's own
+    // comment for why this is really a cutout pass rather than a translucent
+    // one, and what the old writes-off behavior did to stairs and slabs.
     //
-    // Sorted back-to-front by chunk distance from the camera before
+    // Still sorted back-to-front by chunk distance from the camera before
     // drawing, so two overlapping translucent chunks (e.g. looking through
     // one pane of glass at another) blend in the right order — without this,
     // the chunk that happened to be emitted later always "won" regardless of
     // which was actually nearer, and which chunk that was could silently
     // change from frame to frame (e.g. crossing a chunk boundary), reading
-    // as random flicker rather than a consistent-but-wrong order. This is
-    // per-CHUNK only, not per-triangle: two overlapping translucent surfaces
-    // WITHIN the same chunk mesh still draw in mesher-emission order, so
-    // that finer-grained case can still look wrong — a real fix needs
-    // per-triangle sorting (or per-element separate draws), not done here.
+    // as random flicker rather than a consistent-but-wrong order. Depth
+    // writes make this ordering irrelevant for the opaque/cutout majority of
+    // the pass (the depth test resolves those per-fragment now), but it
+    // still matters for whatever genuinely blends, and it's per-CHUNK only:
+    // two overlapping translucent surfaces WITHIN one chunk mesh still draw
+    // in mesher-emission order.
     {
         std::lock_guard<std::mutex> lock(state->nonCubicRenderListMutex);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, nonCubicPipeline);
@@ -480,6 +501,12 @@ void RenderThread::RecordAndSubmitFrame()
             }
         }
     }
+
+    // Block selection outline/fill — after opaque/entity/non-cubic so it
+    // blends against whatever's actually there (including translucent
+    // surfaces like glass), and depth-tests against a wall correctly hiding
+    // it — see SelectionRenderer's own comment.
+    SelectionRenderer::RecordDraw(cmd, currentFrame, state);
 
     // Render ImGui GUI
     GUIController::Render(cmd);

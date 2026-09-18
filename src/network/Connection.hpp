@@ -3,9 +3,11 @@
 #define VOLCANO_CONNECTION_H
 
 #include <asio.hpp>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Volcano {
@@ -15,10 +17,12 @@ namespace Volcano {
 // around a VarInt packet ID + payload bytes). No protocol/state-machine
 // knowledge lives here — see NetworkClient for that.
 //
-// Synchronous for now: the only user right now (NetworkClient's
-// Handshake->Login sequence) is a short, one-shot exchange. A continuous
-// async receive loop — needed once we're pumping Play-state packets
-// indefinitely — is a separate, later step.
+// Reads/writes themselves are still synchronous (see ReadPacket/SendPacket)
+// — the only asynchronous piece is WaitForReadable below, a pure readiness
+// check used to bound how long the Play loop can block with nothing to
+// read. A full async_read/async_write rewrite (posting the tick timer
+// through the same io_context instead of polling readiness) is a separate,
+// later step — see the tick-loop plan's "blocker" section.
 class Connection {
 public:
     explicit Connection(asio::io_context& ioContext) : socket(ioContext) {}
@@ -35,18 +39,58 @@ public:
     // compressed framing below once EnableCompression() has been called
     // (triggered by the server's Set Compression packet).
     //
-    // Thread-safe with itself (guarded by writeMutex below) since chat
-    // sending (GUIController, via NetworkClient::SendChatMessage) calls
-    // this directly from the render thread, concurrently with the network
-    // thread's own SendPacket calls (Keep Alive replies, etc.) — NOT
-    // thread-safe with ReadPacket, but that's fine: a blocking socket's
-    // send() and recv() are independent directions at the OS level, and
-    // only the network thread ever reads.
+    // NETWORK THREAD ONLY. This writes to the socket synchronously and
+    // holds no lock; anything on another thread must go through
+    // QueuePacket() below instead.
+    //
+    // It used to be callable from anywhere, guarded by a write mutex, on the
+    // reasoning that a blocking socket's send() and recv() are independent
+    // directions at the OS level so only writers needed to exclude each
+    // other. That stopped being true once WaitForReadable() added
+    // socket.async_wait() and socket.cancel() on the network thread: asio
+    // documents basic_stream_socket as "Shared objects: Unsafe", and on the
+    // Windows IOCP backend cancel() issues CancelIoEx on the handle, which
+    // cancels outstanding I/O on that handle regardless of which thread
+    // issued it. A chat message sent from the render thread could therefore
+    // race the readability timer expiring on the network thread, and the
+    // worst case was not a lost message but a PARTIAL write — a half-written
+    // frame desyncs the packet stream permanently for the rest of the
+    // session. Widening the mutex to cover reads would have fixed it only by
+    // blocking every send for up to the full WaitForReadable timeout; the
+    // queue below fixes it without that.
     void SendPacket(int32_t packetId, const std::vector<uint8_t>& payload);
+
+    // Thread-safe way to send from any thread other than the network one
+    // (chat/commands/respawn from the render thread — see
+    // NetworkClient::SendChatMessage). Copies the packet onto an outbound
+    // queue and returns immediately without touching the socket; the network
+    // thread drains it via FlushOutbound() below, so every actual write
+    // still happens on the one thread that owns this socket.
+    //
+    // Fire-and-forget: a queued packet goes out within one RunPlayLoop
+    // iteration (~15ms), or is dropped silently if the session ends first.
+    void QueuePacket(int32_t packetId, std::vector<uint8_t> payload);
+
+    // NETWORK THREAD ONLY. Writes out everything QueuePacket() has
+    // accumulated since the last call, in order. Called once per RunPlayLoop
+    // iteration. Throws whatever SendPacket throws (a dead socket) — the
+    // same failure the loop's own sends would hit on that iteration anyway.
+    void FlushOutbound();
 
     // Blocks for one full packet. Returns its packet ID; `outPayload` is set
     // to everything after the packet-ID VarInt.
     int32_t ReadPacket(std::vector<uint8_t>& outPayload);
+
+    // Blocks until either the socket has data ready to read or timeout
+    // elapses — without consuming any bytes, so ReadPacket() above still
+    // does the actual reading exactly as before. Lets the Play loop (see
+    // NetworkClient::RunPlayLoop) interleave TickLoop::Tick() between
+    // packets on a bounded cadence instead of sitting inside ReadPacket()'s
+    // indefinite blocking read for however long the server goes quiet
+    // between packets (idle time between Keep Alives can be many seconds).
+    // Returns true once data is ready (call ReadPacket() next); false if
+    // timeout elapsed with nothing arriving.
+    bool WaitForReadable(std::chrono::milliseconds timeout);
 
     // Called once, after receiving the server's Set Compression packet.
     // From this point on, every packet in both directions is framed as
@@ -65,7 +109,12 @@ public:
 private:
     asio::ip::tcp::socket socket;
     int32_t threshold = -1; // -1 == compression not yet enabled
-    std::mutex writeMutex; // Guards SendPacket against concurrent callers — see its own comment.
+
+    // Packets pushed by other threads (QueuePacket) and drained by the
+    // network thread (FlushOutbound). The mutex guards only this vector —
+    // never a socket operation — so a cross-thread send never waits on I/O.
+    std::mutex outboundMutex;
+    std::vector<std::pair<int32_t, std::vector<uint8_t>>> outbound;
 
     uint8_t ReadByteBlocking();
     void SendUncompressed(int32_t packetId, const std::vector<uint8_t>& payload);

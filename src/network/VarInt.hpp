@@ -42,6 +42,14 @@ public:
         bytes.push_back(static_cast<uint8_t>(value & 0xFF));
     }
 
+    // Same big-endian encoding as WriteUShortBE, for protocol fields typed
+    // as a plain (signed) short rather than a VarInt — e.g. PlayC2S::
+    // SetHeldItem's slotId. Matches PacketReader::ReadShort's byte order.
+    void WriteShort(int16_t value)
+    {
+        WriteUShortBE(static_cast<uint16_t>(value));
+    }
+
     void WriteBool(bool value)
     {
         bytes.push_back(value ? 1u : 0u);

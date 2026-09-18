@@ -12,7 +12,7 @@ namespace Volcano {
 // World/chunk store. Written from the main thread (placeholder generation
 // at startup, and network-thread-parsed chunks handed off and inserted from
 // the main thread — see GlobalState::NetworkInbox) and read every tick from
-// RenderThread's thread via TickLoop::Advance's collision checks, so the
+// NetworkThread via TickLoop::Tick's collision checks, so the
 // chunk map itself is guarded by a shared_mutex: readers (GetBlock) take a
 // shared lock, writers (GetOrCreateChunk/InsertChunk) take a unique lock.
 // Individual Chunk contents are not separately synchronized — nothing
@@ -65,18 +65,19 @@ public:
     }
 
     // Same shape as GetBlock, for the meshers' cross-chunk light lookups.
-    uint8_t GetLight(int worldX, int worldY, int worldZ) const
+    // Both channels in one lookup/lock — see LightSample's own comment.
+    LightSample GetLightSample(int worldX, int worldY, int worldZ) const
     {
         int chunkX = FloorDiv(worldX, CHUNK_SIZE_X);
         int chunkZ = FloorDiv(worldZ, CHUNK_SIZE_Z);
 
         std::shared_lock lock(mutex);
         auto it = chunks.find(ChunkKey(chunkX, chunkZ));
-        if (it == chunks.end()) return 15; // No chunk loaded there — full-bright default, same as Chunk's own.
+        if (it == chunks.end()) return LightSample{}; // No chunk loaded there — same default as Chunk's own.
 
         int localX = worldX - chunkX * CHUNK_SIZE_X;
         int localZ = worldZ - chunkZ * CHUNK_SIZE_Z;
-        return it->second.getLight(localX, worldY - WORLD_MIN_Y, localZ);
+        return it->second.getLightSample(localX, worldY - WORLD_MIN_Y, localZ);
     }
 
 private:

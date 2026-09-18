@@ -6,33 +6,45 @@
 namespace Volcano {
 
 namespace {
-constexpr float PLAYER_HALF_WIDTH = 0.3f;
-constexpr float PLAYER_HEIGHT = 1.8f;
-// Fixed-timestep accumulators can spiral if a frame stalls badly (a
-// breakpoint, alt-tab, a slow load) — clamp how much time can accumulate so
-// a stall causes a pause, not a burst of catch-up ticks.
-constexpr float MAX_ACCUMULATED_TIME = 0.25f;
-// Vanilla's own step height: obstructions this tall or shorter (slabs,
-// snow layers/carpets, a staircase's first step) are auto-climbed on a
-// horizontal move instead of blocking it — see MoveAxis/TryStepUp.
-constexpr float STEP_HEIGHT = 0.6f;
+    constexpr float PLAYER_HALF_WIDTH = 0.3f;
+    constexpr float PLAYER_HEIGHT = 1.8f;
+    // Fixed-timestep accumulators can spiral if a frame stalls badly (a
+    // breakpoint, alt-tab, a slow load) — clamp how much time can accumulate so
+    // a stall causes a pause, not a burst of catch-up ticks.
+    constexpr float MAX_ACCUMULATED_TIME = 0.25f;
+    // Vanilla's own step height: obstructions this tall or shorter (slabs,
+    // snow layers/carpets, a staircase's first step) are auto-climbed on a
+    // horizontal move instead of blocking it — see MoveAxis/TryStepUp.
+    constexpr float STEP_HEIGHT = 0.6f;
 
-// Sneak eye-height dip — half of vanilla's real drop (1.62 standing to 1.27
-// sneaking, a 0.35 dip) per request, since a more subtle dip reads better
-// once eased in over time instead of snapped.
-constexpr float STANDING_EYE_HEIGHT = 1.62f;
-constexpr float SNEAK_EYE_HEIGHT = STANDING_EYE_HEIGHT - (1.62f - 1.27f) * 0.5f;
-// Exponential ease rate applied per-tick below — higher = snappier. Framerate
-// (tick-rate) independent the same way RenderThread's FOV easing is.
-constexpr float EYE_HEIGHT_EASE_RATE = 10.0f;
+    // Sneak eye-height dip — half of vanilla's real drop (1.62 standing to 1.27
+    // sneaking, a 0.35 dip), since a more subtle dip reads better
+    // once eased in over time instead of snapped.
+    constexpr float STANDING_EYE_HEIGHT = 1.62f;
+    constexpr float SNEAK_EYE_HEIGHT = STANDING_EYE_HEIGHT - (1.62f - 1.27f) * 0.5f;
+    // Exponential ease rate applied per-tick below — higher = snappier. Framerate
+    // (tick-rate) independent the same way RenderThread's FOV easing is.
+    constexpr float EYE_HEIGHT_EASE_RATE = 10.0f;
 } // namespace
 
 TickLoop::TickLoop(GlobalState* stateIn) : state(stateIn)
 {
     previousPosition = currentPosition = state->player->GetPosition();
+    renderPositionSnapshot = currentPosition;
 }
 
-void TickLoop::Advance(float frameDeltaTime, bool inputAllowed)
+void TickLoop::PublishInput(bool inputAllowedIn, float moveForward, float moveRight,
+                             bool sneaking, bool sprinting, bool jumpHeld)
+{
+    inputAllowed.store(inputAllowedIn);
+    moveForwardInput.store(moveForward);
+    moveRightInput.store(moveRight);
+    sneakActive.store(sneaking);
+    sprintActive.store(sprinting);
+    jumpHeldActive.store(jumpHeld);
+}
+
+void TickLoop::Tick()
 {
     // Hold off simulating entirely until the world has something to stand
     // on — otherwise gravity runs from frame one against an empty World
@@ -40,54 +52,94 @@ void TickLoop::Advance(float frameDeltaTime, bool inputAllowed)
     // has had a chance to load. See GlobalState::worldReady for the
     // ordering guarantee that makes reading cached position state below
     // safe once this becomes true.
+    //
+    // This check must come before the lastTickTime read/write below, not
+    // after it. MeshingThread writes lastTickTime too (via
+    // SyncToPlayerPosition), and its right to do so rests entirely on
+    // worldReady still being false at that moment — the same argument every
+    // other field here relies on. Touching lastTickTime above this line
+    // opted it out of that argument and left it as the one piece of
+    // TickLoop state genuinely written by two threads at once.
     if (!state->worldReady.load()) return;
 
-    // Apply any teleport the server sent since the last frame. Done here,
-    // on the render thread, because past this point this thread owns the
+    // Self-timed: NetworkThread calls this once per loop iteration (see
+    // NetworkClient::RunPlayLoop) rather than passing a frame delta, since
+    // it has no frame of its own to measure. Returning above without
+    // updating this is what keeps a long wait for the world to load from
+    // showing up as one huge dt the moment it finishes: SyncToPlayerPosition
+    // re-arms lastTickTime immediately before worldReady flips, so the first
+    // dt measured here spans that re-arm, not the whole load.
+    auto now = std::chrono::steady_clock::now();
+    float dt = std::chrono::duration<float>(now - lastTickTime).count();
+    lastTickTime = now;
+
+    // Apply any teleport the server sent since the last call. Done here,
+    // on NetworkThread, because past this point this thread owns the
     // position/velocity state below — see QueueTeleport's comment.
+    //
+    // Velocity is deliberately left alone here. SynchronizePlayerPosition
+    // (see its handler's comment: "also every later teleport") is the same
+    // packet vanilla servers send both for an actual teleport and for a
+    // routine mid-flight resync — there's no way to tell those apart from
+    // the packet alone, and the server never includes a velocity to
+    // substitute in. Zeroing it unconditionally used to reset the player's
+    // fall speed to 0 whenever a routine resync happened to land mid-fall,
+    // which is most of the time a fall lasts long enough for one to arrive
+    // — that was this bug's actual cause, not anything physics-related.
+    // Vanilla's own client carries velocity across this packet too; grounded
+    // still resets, since the new position's ground contact is unknown.
     {
         std::lock_guard<std::mutex> lock(teleportMutex);
         if (pendingTeleport.has_value())
         {
             previousPosition = currentPosition = *pendingTeleport;
             state->player->SetPosition(currentPosition);
-            velocity = glm::vec3(0.0f);
             grounded = false;
             accumulator = 0.0f;
             pendingTeleport.reset();
         }
     }
 
-    // WasActivated("Jump") is the edge case: a tap that lands in a frame
-    // which runs zero Tick()s must not be lost, so it latches here and stays
-    // true until a Tick() actually consumes it (see jumpQueued's comment).
-    // IsActive("JumpHold") adds vanilla's repeat-jump-on-landing on top of
-    // that: as long as Space is physically down, this re-latches every
-    // single frame regardless of whether the previous latch was already
-    // consumed — so even though Tick() unconditionally clears jumpQueued
-    // after checking it (discarding a jump attempt made while airborne),
-    // holding the key means the very next frame queues another attempt, and
-    // the first Tick() where the player is grounded again actually jumps.
-    // Both stay gated behind inputAllowed — a screen/chat box being open
+    bool inputAllowedNow = inputAllowed.load();
+
+    // The jumpRequested edge case: a tap that lands in a call which runs
+    // zero FixedStep()s must not be lost, so it latches here and stays true
+    // until a FixedStep() actually consumes it (see jumpQueued's comment).
+    // jumpHeldActive adds vanilla's repeat-jump-on-landing on top of that:
+    // as long as Space is physically down, this re-latches every single
+    // call regardless of whether the previous latch was already consumed —
+    // so even though FixedStep() unconditionally clears jumpQueued after
+    // checking it (discarding a jump attempt made while airborne), holding
+    // the key means the very next call queues another attempt, and the
+    // first FixedStep() where the player is grounded again actually jumps.
+    // Both stay gated behind inputAllowedNow — a screen/chat box being open
     // must not also make the player jump underneath it.
-    if (inputAllowed) {
-        jumpQueued = jumpQueued || state->input->WasActivated("Jump") || state->input->IsActive("JumpHold");
+    if (inputAllowedNow) {
+        if (jumpRequested.exchange(false)) jumpQueued = true;
+        if (jumpHeldActive.load()) jumpQueued = true;
     }
 
-    accumulator += frameDeltaTime;
+    accumulator += dt;
     if (accumulator > MAX_ACCUMULATED_TIME) accumulator = MAX_ACCUMULATED_TIME;
 
     while (accumulator >= FIXED_DT)
     {
-        Tick(inputAllowed);
+        FixedStep(inputAllowedNow);
         accumulator -= FIXED_DT;
+    }
+
+    // Cache the interpolated position for GetRenderPosition() — see its own
+    // comment on why this can't be computed live from another thread.
+    {
+        std::lock_guard<std::mutex> lock(renderPositionMutex);
+        renderPositionSnapshot = glm::mix(previousPosition, currentPosition, accumulator / FIXED_DT);
     }
 }
 
 glm::vec3 TickLoop::GetRenderPosition() const
 {
-    float alpha = accumulator / FIXED_DT;
-    return glm::mix(previousPosition, currentPosition, alpha);
+    std::lock_guard<std::mutex> lock(renderPositionMutex);
+    return renderPositionSnapshot;
 }
 
 void TickLoop::SyncToPlayerPosition()
@@ -96,6 +148,11 @@ void TickLoop::SyncToPlayerPosition()
     velocity = glm::vec3(0.0f);
     grounded = false;
     accumulator = 0.0f;
+    lastTickTime = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(renderPositionMutex);
+        renderPositionSnapshot = currentPosition;
+    }
 }
 
 void TickLoop::QueueTeleport(glm::vec3 position)
@@ -104,9 +161,15 @@ void TickLoop::QueueTeleport(glm::vec3 position)
     pendingTeleport = position;
 }
 
-void TickLoop::Tick(bool inputAllowed)
+void TickLoop::FixedStep(bool inputAllowedNow)
 {
     previousPosition = currentPosition;
+
+    // See GlobalState::attackStrengthTicker's own comment — reset by
+    // InteractionManager::PrimaryTrigger on a swing, incremented here once
+    // per real fixed tick regardless of input, same as vanilla's own
+    // per-tick ticker.
+    state->attackStrengthTicker.fetch_add(1, std::memory_order_relaxed);
 
     // Horizontal movement follows vanilla's real per-tick model: accelerate
     // toward the input direction, then apply momentum-preserving friction,
@@ -121,8 +184,8 @@ void TickLoop::Tick(bool inputAllowed)
     // (0.91 / 0.02) are vanilla's own too — much less momentum lost per
     // tick, and a much smaller push from input, which is exactly why
     // vanilla air control feels so limited compared to ground movement.
-    float forwardInput = inputAllowed ? state->input->GetAxis("Move.Forward") : 0.0f;
-    float rightInput = inputAllowed ? state->input->GetAxis("Move.Right") : 0.0f;
+    float forwardInput = inputAllowedNow ? moveForwardInput.load() : 0.0f;
+    float rightInput = inputAllowedNow ? moveRightInput.load() : 0.0f;
 
     float yaw = glm::radians(state->player->camera.GetYaw());
     glm::vec3 forward{ sin(yaw), 0.0f, cos(yaw) };
@@ -139,8 +202,8 @@ void TickLoop::Tick(bool inputAllowed)
     // modifiers server-side, but here it's simplest to just scale the speed
     // used below directly. Sneak wins if both are held, matching vanilla
     // (can't sprint while sneaking).
-    bool sneaking = state->input->IsActive("Sneak");
-    bool sprinting = !sneaking && state->input->IsActive("Sprint");
+    bool sneaking = sneakActive.load();
+    bool sprinting = !sneaking && sprintActive.load();
     float speedMultiplier = sneaking ? 0.3f : (sprinting ? 1.3f : 1.0f);
 
     float movementSpeed = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1)) * speedMultiplier;
@@ -184,8 +247,11 @@ void TickLoop::Tick(bool inputAllowed)
     // own comment) rather than snapped, so the dip reads as a smooth crouch
     // instead of a jump cut.
     float targetEyeHeight = sneaking ? SNEAK_EYE_HEIGHT : STANDING_EYE_HEIGHT;
-    float& eyeHeight = state->player->camera.eyeOffset.y;
-    eyeHeight += (targetEyeHeight - eyeHeight) * (1.0f - std::exp(-EYE_HEIGHT_EASE_RATE * FIXED_DT));
+    std::atomic<float>& eyeHeight = state->player->camera.eyeHeight;
+    float currentEyeHeight = eyeHeight.load(std::memory_order_relaxed);
+    eyeHeight.store(
+        currentEyeHeight + (targetEyeHeight - currentEyeHeight) * (1.0f - std::exp(-EYE_HEIGHT_EASE_RATE * FIXED_DT)),
+        std::memory_order_relaxed);
 
     // Gravity + drag apply every tick regardless of grounded state, but only
     // AFTER this tick's move — resting on the ground works because the
@@ -210,7 +276,22 @@ void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float del
     {
         if (axis == 1)
         {
-            if (delta < 0.0f) grounded = true;
+            if (delta < 0.0f)
+            {
+                // Snap exactly to whatever surface stopped this fall,
+                // instead of leaving position untouched (the previous
+                // behavior, which rests the player however far they fell
+                // *this tick* above the true surface — see
+                // FindGroundContactHeight's own comment for why that gap
+                // is what was behind the server rejecting every grounded
+                // tick as "moved wrongly" once onGround started being
+                // reported honestly).
+                position.y = FindGroundContactHeight(position.x, position.z, position.y, tentative.y);
+                grounded = true;
+            }
+            // Moving up into a ceiling: left as the original "just don't
+            // move" behavior — this doesn't set grounded and isn't part of
+            // the resting-position consistency the server checks.
             vel[axis] = 0.0f;
             return;
         }
@@ -220,8 +301,12 @@ void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float del
         // onto whatever's in the way and let the move through instead of
         // stopping dead against a slab/stair/snow layer. Never attempted for
         // axis 1 above — this is purely a horizontal-collision affordance
-        // and must never touch vertical velocity/gravity resolution.
-        std::optional<float> stepUpY = TryStepUp(position, tentative);
+        // and must never touch vertical velocity/gravity resolution. Also
+        // never attempted mid-air: `grounded` is false while jumping/falling,
+        // and stepping up then would let the player climb a solid face one
+        // STEP_HEIGHT hop at a time just by holding into it, instead of
+        // properly colliding with it.
+        std::optional<float> stepUpY = grounded ? TryStepUp(position, tentative) : std::nullopt;
         if (stepUpY.has_value())
         {
             tentative.y = *stepUpY;
@@ -229,6 +314,17 @@ void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float del
             return; // vel[axis] stays as-is — the move succeeded.
         }
 
+        // Step-up refused: this is a real wall, so slide up flush against it
+        // rather than leaving `position` untouched (the previous behavior,
+        // which froze the player however far short of the wall this tick's
+        // move would have carried them). That gap is the same "rest at an
+        // arbitrary distance from the true contact surface" shape that made
+        // the server reject every grounded tick as "moved wrongly" before
+        // FindGroundContactHeight resolved the vertical case exactly — it
+        // just never got flagged here because a horizontal overshoot is
+        // bounded by walk speed (~0.216 blocks/tick) rather than by fall
+        // speed, so the gap stays far smaller.
+        position[axis] = FindWallContactCoordinate(axis, position, tentative[axis]);
         vel[axis] = 0.0f;
         return;
     }
@@ -274,6 +370,135 @@ std::optional<float> TickLoop::TryStepUp(glm::vec3 position, glm::vec3 tentative
     return snappedY;
 }
 
+// See the header's own comment.
+float TickLoop::FindGroundContactHeight(float worldX, float worldZ, float clearY, float blockedY) const
+{
+    constexpr float epsilon = 1e-4f; // Same tolerance AabbOverlapsSolid uses.
+
+    float minX = worldX - PLAYER_HALF_WIDTH, maxX = worldX + PLAYER_HALF_WIDTH;
+    float minZ = worldZ - PLAYER_HALF_WIDTH, maxZ = worldZ + PLAYER_HALF_WIDTH;
+
+    int bx0 = static_cast<int>(std::floor(minX + epsilon));
+    int bx1 = static_cast<int>(std::floor(maxX - epsilon));
+    int bz0 = static_cast<int>(std::floor(minZ + epsilon));
+    int bz1 = static_cast<int>(std::floor(maxZ - epsilon));
+    // blockedY is the feet height the blocked attempt targeted; clearY is
+    // the feet height we know is still clear. Whatever stopped this fall
+    // has its top surface somewhere in that range — same range TryStepUp's
+    // own downward search bounds itself to, just resolved exactly here
+    // instead of by stepping through it.
+    // -1: a collision box can reach up to 0.5 into the cell above its own
+    // (fences, walls — see BlockRegistry::AABB), so the cell below the lowest
+    // one the range touches can still hold the surface being landed on.
+    int by0 = static_cast<int>(std::floor(blockedY - epsilon)) - 1;
+    int by1 = static_cast<int>(std::floor(clearY + epsilon));
+
+    float best = blockedY; // Fallback if nothing matches (shouldn't happen — the caller only calls this once AabbOverlapsSolid(tentative) is already known true) — never worse than the old "freeze" behavior's own floor.
+
+    for (int by = by0; by <= by1; by++) {
+        for (int bz = bz0; bz <= bz1; bz++) {
+            for (int bxCoord = bx0; bxCoord <= bx1; bxCoord++) {
+                Block block = state->world->GetBlock(bxCoord, by, bz);
+                BlockRegistry::CollisionBoxes shape = BlockRegistry::GetCollisionBoxes(block);
+                glm::vec3 origin(static_cast<float>(bxCoord), static_cast<float>(by), static_cast<float>(bz));
+
+                for (int i = 0; i < shape.count; i++) {
+                    glm::vec3 boxMin = origin + shape.boxes[static_cast<size_t>(i)].min;
+                    glm::vec3 boxMax = origin + shape.boxes[static_cast<size_t>(i)].max;
+
+                    bool horizontalOverlap = minX < boxMax.x - epsilon && maxX > boxMin.x + epsilon
+                        && minZ < boxMax.z - epsilon && maxZ > boxMin.z + epsilon;
+                    if (!horizontalOverlap) continue;
+
+                    // Only a surface actually within this fall's sweep range
+                    // could be what stopped it — one above clearY means we
+                    // were already resting on (or inside) it before this
+                    // move even started, a different case entirely.
+                    if (boxMax.y > clearY + epsilon || boxMax.y < blockedY - epsilon) continue;
+
+                    best = std::max(best, boxMax.y);
+                }
+            }
+        }
+    }
+
+    return best;
+}
+
+// See the header's own comment.
+float TickLoop::FindWallContactCoordinate(int axis, glm::vec3 position, float blockedCoord) const
+{
+    constexpr float epsilon = 1e-4f; // Same tolerance AabbOverlapsSolid uses.
+
+    const int otherAxis = (axis == 0) ? 2 : 0;
+    const float clearCoord = position[axis];
+    const bool movingPositive = blockedCoord > clearCoord;
+
+    // MoveAxis resolves one axis per call, so the other two keep the extent
+    // the player already has — only `axis` is in motion here.
+    const float otherMin = position[otherAxis] - PLAYER_HALF_WIDTH;
+    const float otherMax = position[otherAxis] + PLAYER_HALF_WIDTH;
+    const float yMin = position.y;
+    const float yMax = position.y + PLAYER_HEIGHT;
+
+    // Cells to scan along the moving axis: everything the player's AABB
+    // sweeps through between the known-clear start and the blocked target.
+    const float sweepMin = std::min(clearCoord, blockedCoord) - PLAYER_HALF_WIDTH;
+    const float sweepMax = std::max(clearCoord, blockedCoord) + PLAYER_HALF_WIDTH;
+
+    int a0 = static_cast<int>(std::floor(sweepMin + epsilon));
+    int a1 = static_cast<int>(std::floor(sweepMax - epsilon));
+    int o0 = static_cast<int>(std::floor(otherMin + epsilon));
+    int o1 = static_cast<int>(std::floor(otherMax - epsilon));
+    int by0 = static_cast<int>(std::floor(yMin + epsilon)) - 1; // -1: tall boxes, see FindGroundContactHeight.
+    int by1 = static_cast<int>(std::floor(yMax - epsilon));
+
+    float best = blockedCoord; // Fallback if nothing matches (shouldn't happen — the caller only calls this once AabbOverlapsSolid(tentative) is already known true); clamped back to clearCoord below, i.e. never worse than the old "freeze" behavior.
+
+    for (int by = by0; by <= by1; by++) {
+        for (int o = o0; o <= o1; o++) {
+            for (int a = a0; a <= a1; a++) {
+                int cell[3] = {0, by, 0};
+                cell[axis] = a;
+                cell[otherAxis] = o;
+
+                Block block = state->world->GetBlock(cell[0], cell[1], cell[2]);
+                BlockRegistry::CollisionBoxes shape = BlockRegistry::GetCollisionBoxes(block);
+                glm::vec3 origin(static_cast<float>(cell[0]), static_cast<float>(cell[1]), static_cast<float>(cell[2]));
+
+                for (int i = 0; i < shape.count; i++) {
+                    glm::vec3 boxMin = origin + shape.boxes[static_cast<size_t>(i)].min;
+                    glm::vec3 boxMax = origin + shape.boxes[static_cast<size_t>(i)].max;
+
+                    // Only a box the player already shares the other two axes
+                    // with can be what this move ran into — the same overlap
+                    // test AabbOverlapsSolid does, minus the moving axis.
+                    bool crossOverlap = yMin < boxMax.y - epsilon && yMax > boxMin.y + epsilon
+                        && otherMin < boxMax[otherAxis] - epsilon && otherMax > boxMin[otherAxis] + epsilon;
+                    if (!crossOverlap) continue;
+
+                    // Where the player's center ends up with their leading
+                    // face flush against this box's facing face.
+                    float contact = movingPositive
+                        ? boxMin[axis] - PLAYER_HALF_WIDTH
+                        : boxMax[axis] + PLAYER_HALF_WIDTH;
+
+                    // Boxes behind the direction of travel can't have stopped
+                    // this move — we were already clear of them at
+                    // clearCoord, so they'd only drag the result backwards.
+                    if (movingPositive ? contact < clearCoord - epsilon
+                                       : contact > clearCoord + epsilon) continue;
+
+                    best = movingPositive ? std::min(best, contact) : std::max(best, contact);
+                }
+            }
+        }
+    }
+
+    // Never move backwards, whatever the geometry says.
+    return movingPositive ? std::max(best, clearCoord) : std::min(best, clearCoord);
+}
+
 bool TickLoop::AabbOverlapsSolid(glm::vec3 center) const
 {
     constexpr float epsilon = 1e-4f;
@@ -283,7 +508,7 @@ bool TickLoop::AabbOverlapsSolid(glm::vec3 center) const
 
     int minX = static_cast<int>(std::floor(playerMin.x + epsilon));
     int maxX = static_cast<int>(std::floor(playerMax.x - epsilon));
-    int minY = static_cast<int>(std::floor(playerMin.y + epsilon));
+    int minY = static_cast<int>(std::floor(playerMin.y + epsilon)) - 1; // -1: tall boxes, see FindGroundContactHeight.
     int maxY = static_cast<int>(std::floor(playerMax.y - epsilon));
     int minZ = static_cast<int>(std::floor(playerMin.z + epsilon));
     int maxZ = static_cast<int>(std::floor(playerMax.z - epsilon));

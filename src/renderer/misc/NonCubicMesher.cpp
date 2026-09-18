@@ -62,15 +62,16 @@ static Block GetBlockAcrossChunks(const Chunk& chunk, const World& world, int lx
 }
 
 // Same cross-chunk fallback, for the light sample at the block a face is
-// exposed to (see ChunkMesher's own GetLightAcrossChunks).
-static uint8_t GetLightAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
+// exposed to (see ChunkMesher's own GetLightAcrossChunks). Both channels
+// from one lookup — see LightSample's own comment.
+static LightSample GetLightAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
     if (lx >= 0 && lx < CHUNK_SIZE_X && lz >= 0 && lz < CHUNK_SIZE_Z) {
-        return chunk.getLight(lx, ly, lz);
+        return chunk.getLightSample(lx, ly, lz);
     }
 
     int worldX = chunk.getX() * CHUNK_SIZE_X + lx;
     int worldZ = chunk.getZ() * CHUNK_SIZE_Z + lz;
-    return world.GetLight(worldX, ly + WORLD_MIN_Y, worldZ);
+    return world.GetLightSample(worldX, ly + WORLD_MIN_Y, worldZ);
 }
 
 // Four corners of one face of an axis-aligned box, in some consistent
@@ -101,18 +102,30 @@ static std::array<glm::vec3, 4> FaceCorners(const glm::vec3& min, const glm::vec
 // degenerates to, so this is a strict generalization of the old hardcoded
 // full-texture UVs, not a behavior change for anything that already used
 // the whole texture (full cubes, cross planes).
+//
+// `verticalFace` flips V, for the same reason ChunkMesher's own texV does:
+// texture V runs DOWN the image (V=0 is its top row), while every vertical
+// quad this file emits is built with corners 0/1 along its BOTTOM edge and
+// 2/3 along its top (see FaceCorners' four side cases, and MeshCross's own
+// corner list). Handing those corners an unflipped V therefore pinned the
+// top of the texture to the bottom of the quad — the same upside-down side
+// textures the terrain pass had. True for the four side faces (2-5) and for
+// cross billboards; false for Up/Down faces, which are horizontal and have
+// no up/down to get wrong.
 static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices,
         const std::array<glm::vec3, 4>& corners, const glm::vec4& uvRect,
-        uint16_t textureLayer, bool biomeTinted, uint8_t light) {
+        uint16_t textureLayer, bool biomeTinted, LightSample light, bool verticalFace) {
     glm::vec2 uvMin = glm::vec2(uvRect.x, uvRect.y) / 16.0f;
     glm::vec2 uvMax = glm::vec2(uvRect.z, uvRect.w) / 16.0f;
+    float vBottom = verticalFace ? uvMax.y : uvMin.y;
+    float vTop = verticalFace ? uvMin.y : uvMax.y;
     const std::array<glm::vec2, 4> uvs = {
-        glm::vec2(uvMin.x, uvMin.y), glm::vec2(uvMax.x, uvMin.y),
-        glm::vec2(uvMax.x, uvMax.y), glm::vec2(uvMin.x, uvMax.y)
+        glm::vec2(uvMin.x, vBottom), glm::vec2(uvMax.x, vBottom),
+        glm::vec2(uvMax.x, vTop), glm::vec2(uvMin.x, vTop)
     };
 
     uint32_t base = static_cast<uint32_t>(vertices.size());
-    uint32_t packed = MiscVertex::Pack(textureLayer, light, biomeTinted);
+    uint32_t packed = MiscVertex::Pack(textureLayer, light.sky, light.block, biomeTinted);
 
     for (int i = 0; i < 4; i++) {
         vertices.push_back(MiscVertex{ corners[static_cast<size_t>(i)], uvs[static_cast<size_t>(i)], packed });
@@ -169,9 +182,9 @@ static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
         bool tinted = IsBiomeTinted(textureName);
-        uint8_t light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
+        LightSample light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
         EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), element.faceUVs[static_cast<size_t>(f)],
-            layer, tinted, light);
+            layer, tinted, light, f >= 2);
     }
 }
 
@@ -198,9 +211,9 @@ static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, ui
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
         bool tinted = IsBiomeTinted(textureName);
-        uint8_t light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
+        LightSample light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
         EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), element.faceUVs[static_cast<size_t>(f)],
-            layer, tinted, light);
+            layer, tinted, light, f >= 2);
     }
 }
 
@@ -215,7 +228,7 @@ static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const Chunk& c
     uint16_t layer = textureManager.GetLayerIndex(visual.crossTexture);
     bool tinted = IsBiomeTinted(visual.crossTexture);
     // Flat — a billboard has no single well-defined face normal to sample a neighbor by; use the block's own light.
-    uint8_t light = chunk.getLight(bx, by, bz);
+    LightSample light = chunk.getLightSample(bx, by, bz);
 
     glm::vec3 center = blockOrigin + glm::vec3(0.5f, 0.0f, 0.5f);
     int planeCount = CROSS_BILLBOARD_COUNT > 0 ? CROSS_BILLBOARD_COUNT : 1;
@@ -233,7 +246,8 @@ static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const Chunk& c
             glm::vec3(p1.x, 1.0f, p1.z),
             glm::vec3(p0.x, 1.0f, p0.z),
         };
-        EmitQuad(vertices, indices, corners, glm::vec4(0.0f, 0.0f, 16.0f, 16.0f), layer, tinted, light);
+        EmitQuad(vertices, indices, corners, glm::vec4(0.0f, 0.0f, 16.0f, 16.0f), layer, tinted, light,
+            /* verticalFace */ true);
     }
 }
 

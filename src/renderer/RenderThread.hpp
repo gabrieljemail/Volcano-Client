@@ -3,10 +3,7 @@
 #define RENDER_THREAD_H
 
 #include <vulkan/vulkan.hpp>
-#include <thread>
-#include <stop_token>
-#include <memory>
-#include <atomic>
+#include <chrono>
 #include "../GlobalState.hpp"
 #include "gui/GUIController.hpp"
 
@@ -14,37 +11,35 @@ using namespace std;
 
 namespace Volcano {
 
+// Runs on the main (GLFW-owning) thread now — see the tick-loop plan's
+// thread-merge step. There used to be a real render thread here, separate
+// from main()'s glfwPollEvents() loop, purely because input had to be
+// *captured* on the GLFW thread but was *consumed* here; now that this
+// loop runs directly in main(), RunFrame() below calls glfwPollEvents()
+// itself (see PollInputs()) and there's no cross-thread input buffering or
+// shutdown hand-off left to manage.
 class RenderThread {
 public:
     explicit RenderThread(Volcano::GlobalState* globalState);
     ~RenderThread();
-    void Start();
-    // Signals the render loop to exit without waiting for it. The caller
-    // (the GLFW-owning main thread) must keep pumping glfwPollEvents() —
-    // via HasStopped() below — until the thread actually finishes, rather
-    // than blocking in Stop()/join() with no message pump running: on
-    // Windows, the render thread's last vkQueuePresentKHR can depend on the
-    // window's message queue being serviced, and a thread blocked in join()
-    // services no messages, which deadlocks the driver instead of raising a
-    // TDR (observed as a permanently frozen display on shutdown).
-    void RequestStop();
-    // True once the render thread has finished RenderLoop and its own
-    // GUIController::Shutdown() — i.e. it has stopped touching Vulkan/GLFW
-    // and it's safe to stop pumping messages and join.
-    bool HasStopped() const;
-    // Blocks until the render thread has fully exited. Must be called
-    // before VulkanInit::Cleanup() destroys the device/window out from
-    // under it — jthread's own destructor does this too, but only once the
-    // RenderThread object itself is destroyed, which on a normal shutdown
-    // happens after main() has already returned. Call RequestStop() and
-    // poll HasStopped() (while still pumping messages) first; by the time
-    // HasStopped() is true this just joins the (already finished) thread.
-    void Stop();
+
+    // One iteration of the frame loop — call this directly from main()'s
+    // own while loop instead of starting a separate thread. Runs
+    // WaitForTargetFrame -> UpdateDeltaTime -> PollInputs -> DrawFrame ->
+    // EndFrame, the same sequence RenderLoop used to run once per thread
+    // iteration.
+    void RunFrame();
+
+    // Tears down the GUI/ImGui Vulkan resources and waits for the GPU to
+    // finish with them first — call once after main()'s loop exits, before
+    // VulkanInit::Cleanup() destroys the device/window out from under
+    // them. Previously done at the tail of the render thread's own
+    // ThreadEntry once its loop exited; there's no separate thread to do
+    // that hand-off through anymore, so main() just calls this directly.
+    void Shutdown();
 
 private:
     Volcano::GlobalState* state;
-    jthread worker;
-    std::atomic<bool> finished{false};
 
     // Timing variables:
     chrono::steady_clock::time_point frameStartTime;
@@ -80,8 +75,6 @@ private:
     // only this thread's own frame loop ever touches it.
     float currentFovOffset = 0.0f;
 
-    void ThreadEntry(stop_token stopToken);
-    void RenderLoop(stop_token stopToken);
     void WaitForTargetFrame();
     void UpdateDeltaTime();
     void PollInputs();

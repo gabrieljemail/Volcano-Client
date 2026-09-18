@@ -13,8 +13,9 @@ layout(location = 0) in uvec3 packedData;
 
 layout(location = 0) out vec2 fragUV;
 layout(location = 1) flat out uint fragLayer;
-layout(location = 2) out float fragLight;
+layout(location = 2) out float fragSkyLight;
 layout(location = 3) flat out uint fragBiomeTinted;
+layout(location = 4) out float fragBlockLight;
 
 void main() {
     uint word0 = packedData.x;
@@ -51,5 +52,9 @@ void main() {
 
     fragUV = vec2(u, v);
     fragLayer = textureLayer;
-    fragLight = max(float(blockLight), float(skyLight)) / 15.0;
+    // Kept apart rather than combined here — terrain.frag's own curve caps
+    // sky-only light lower than block light, to make torches/lava read as
+    // actual light sources instead of the same flat brightness as daylight.
+    fragSkyLight = float(skyLight) / 15.0;
+    fragBlockLight = float(blockLight) / 15.0;
 }

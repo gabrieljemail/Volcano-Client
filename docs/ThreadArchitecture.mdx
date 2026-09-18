@@ -1,7 +1,10 @@
 # Thread Architecture: Merging Render into Main, Tick into Network
 
-Status: proposed, not started. No code has changed yet — this is the plan to
-implement and check off.
+Status: implemented. All six migration steps below have landed — the client
+is down to 3 threads (Main/Render, NetworkThread, MeshingThread) and
+`InputHandler`'s cross-thread buffering is gone. See "Implementation notes"
+at the end for a few spots where the actual change went slightly beyond what
+this plan originally spelled out, and why.
 
 ## Why
 
@@ -249,3 +252,55 @@ tick from RenderThread's thread"; they'll come from NetworkThread instead.
 - **NetworkThread responsiveness**: with a 10–20ms read timeout, confirm
   Keep Alive replies and chat sends still go out promptly and the timeout
   polling doesn't measurably increase CPU usage on that thread.
+
+## Implementation notes
+
+A few places where implementing this surfaced gaps the plan above didn't
+spell out, or where the actual change went beyond what's written above:
+
+- **Every input `Tick()` reads needed publishing, not just Jump.** The plan
+  only calls out `jumpRequested` explicitly, but `Tick()`'s fixed-step body
+  also reads Move.Forward/Move.Right/Sneak/Sprint/JumpHold straight from
+  `InputHandler` — all of which become the same kind of cross-thread read
+  once `Tick()` moves to NetworkThread, just level-triggered instead of
+  edge-triggered. `TickLoop::PublishInput()` (plain atomics, no mutex —
+  level state tolerates last-write-wins) covers all five; `RequestJump()`
+  stays the one atomic-exchange latch, for the edge case a level read can't
+  handle. `RenderThread::PollInputs()` calls both every frame.
+- **`Camera::eyeOffset` became `Camera::eyeHeight`, an `atomic<float>`.**
+  `TickLoop::FixedStep`'s sneak eye-height easing writes it every fixed
+  step; `GetEyePosition`/`GetViewMatrix` read it every render frame. It was
+  a plain `glm::vec3` (x/z always 0) back when both sides ran on
+  RenderThread — yaw/pitch in the same class were already atomic for
+  exactly this reason, eyeOffset was just never updated to match once it
+  gained a writer on a different thread.
+- **`GetRenderPosition()`'s snapshot is written at the end of every `Tick()`
+  call, not every `FixedStep()`.** One `Tick()` call can run zero or more
+  `FixedStep()`s depending on accumulated time; the snapshot is the
+  interpolated `glm::mix(previousPosition, currentPosition,
+  accumulator/FIXED_DT)` — the same formula `GetRenderPosition()` used to
+  compute live — cached once per `Tick()` instead of recomputed live, so it
+  still reflects sub-tick interpolation, just relocated to where it's safe
+  to read `accumulator`/`previousPosition`/`currentPosition` (NetworkThread,
+  which owns them) rather than computed from another thread.
+- **NetworkClient stayed decoupled from TickLoop entirely**, via
+  `NetworkClient::SetTickCallback(std::function<void()>)` rather than
+  `RunPlayLoop` reaching into `state->tickLoop` directly — the same reason
+  `GUIController.cpp` forward-declares `SendChatMessage` instead of
+  including `NetworkClient.hpp`. `NetDiag` (see `tools/netdiag_main.cpp`)
+  links this same `RunPlayLoop` without ever compiling `TickLoop.cpp` (it's
+  a headless network-only diagnostic with no Player/World/TickLoop at all);
+  a direct call would have been an undefined-symbol link error for that
+  target, or required dragging TickLoop's dependency chain into a tool that
+  has no use for it. `NetworkThread::ThreadEntry` sets the callback to
+  `[this] { state->tickLoop->Tick(); }` before calling `RunSession()`;
+  `NetDiag` never sets it, so it stays the default no-op.
+- **`Tick()` is called every `RunPlayLoop` iteration, not only on a
+  timeout/lull.** The plan's phrasing suggested only ticking when the read
+  times out; calling it unconditionally instead avoids stalling
+  movement/gravity for the whole duration of a back-to-back packet burst
+  (e.g. the initial flood of chunk data right after spawn) — `Tick()` is
+  self-timed against real elapsed wall time either way, so calling it more
+  often than strictly necessary during a burst is harmless, while calling
+  it too rarely during one is a real regression (physics freezing until the
+  burst lets up, bounded only by `MAX_ACCUMULATED_TIME`'s 0.25s clamp).

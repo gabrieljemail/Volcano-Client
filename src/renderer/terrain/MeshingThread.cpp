@@ -70,8 +70,8 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
         {
             if (!state->worldReady.load())
             {
-                // Initial spawn. Safe against RenderThread's concurrent
-                // Advance() calls only because worldReady is still false
+                // Initial spawn. Safe against NetworkThread's concurrent
+                // Tick() calls only because worldReady is still false
                 // here and these writes precede (in this thread's program
                 // order) the eventual worldReady.store(true) below — see
                 // that store's comment.
@@ -84,7 +84,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             }
             else
             {
-                // Every later teleport: the render thread owns TickLoop's
+                // Every later teleport: NetworkThread owns TickLoop's
                 // simulation state once worldReady is set, so hand it over
                 // rather than writing it from here.
                 state->tickLoop->QueueTeleport(*spawnPosition);

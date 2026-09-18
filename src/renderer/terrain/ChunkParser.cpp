@@ -153,10 +153,10 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
             block.visualId = BlockRegistry::MapStateId(stateId);
             if (block.visualId == 0) {
                 block.nonCubeVisualId = BlockRegistry::MapStateIdNonCube(stateId);
-                if (block.nonCubeVisualId != 0) {
-                    block.nonCubeCollidable = BlockRegistry::GetNonCubeVisual(block.nonCubeVisualId).collidable;
-                }
             }
+            // Resolved straight from the state id, independent of both visual
+            // ids — see Block::collisionShapeId.
+            block.collisionShapeId = BlockRegistry::MapStateIdCollisionShape(stateId);
             chunk->setBlock(x, sectionBaseY + ylocal, z, block);
         }
 

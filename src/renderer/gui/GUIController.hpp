@@ -4,10 +4,12 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <vulkan/vulkan.hpp>
 #include <imgui.h>
 #include "../VulkanInit.hpp"
+#include "../TextureManager.hpp"
 #include "ImGuiVulkan.hpp"
 #include "GlobalState.hpp"
 #include "models/GUIWindow.hpp"
@@ -17,7 +19,8 @@ namespace Volcano {
 
 class GUIController {
 public:
-    static void Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState);
+    static void Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState,
+                      const TextureManager* textureManager);
     static void Shutdown();
     static void NewFrame();
     static void Update(float deltaTime);
@@ -65,18 +68,10 @@ public:
     // auto-sizes that axis to fit the label.
     static bool DrawStyledButton(const std::string& label, ImVec2 size = ImVec2(0.0f, 0.0f));
 
-    // Which hotbar slot (0-8) RenderHotbarAndArmor highlights. A standalone
-    // placeholder here rather than reading GlobalState::inventory's own
-    // selectedHotbarSlot — the GUI and the inventory data model are
-    // deliberately kept decoupled until real inventory packet handling
-    // exists to connect them; whoever adds that later just calls this from
-    // wherever the Set Held Item packet lands, instead of GUIController
-    // needing to know anything about InventoryManager. Clamped to 0-8.
-    static void SetSelectedHotbarSlot(uint8_t slot);
-
 private:
     static GlobalState* state;
     static GLFWwindow* windowHandle;
+    static const TextureManager* textureManager;
     static std::vector<GUI::GUIWindow*> windows;
     static GUI::Screen* activeScreen;
     static ImGuiVulkanContext imguiContext;
@@ -90,12 +85,70 @@ private:
     static GUI::Screen* pauseScreen;
     static GUI::Screen* deathScreen;
     static GUI::GUIComponent* deathMessageText;
+    static GUI::Screen* inventoryScreen; // See RenderInventoryScreen's own comment.
 
     static bool chatInputOpen;
     static bool chatInputJustOpened; // Consumed once by RenderChatInputBox to grab keyboard focus the frame it opens.
     static char chatInputBuffer[256];
 
-    static uint8_t selectedHotbarSlot;
+    // One ImGui-registered texture per distinct item icon actually drawn
+    // this session, keyed by TextureManager texture-array layer (not by
+    // item id — several items can share a layer, e.g. none currently do,
+    // but nothing stops it) — created lazily the first time a layer is
+    // needed and kept for the rest of the session rather than recreated
+    // every frame every slot is drawn. See GetItemIcon()/Shutdown().
+    struct ItemIcon {
+        VkImageView view = VK_NULL_HANDLE; // A single-layer 2D view into TextureManager::array's underlying image.
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE; // == the ImTextureID ImGui draws with.
+    };
+    static std::unordered_map<uint16_t, ItemIcon> itemIconCache;
+
+    // A single-image (not texture-array-layer) icon loaded straight from a
+    // PNG on disk — for standalone HUD art like the crosshair that isn't
+    // part of TextureManager's block/item atlas (wrong size, not a game
+    // block/item). Owns the whole image, unlike ItemIcon above (which only
+    // owns a view into TextureManager's shared image) — Shutdown() must
+    // destroy the image/allocation too, not just the view.
+    struct StandaloneIcon {
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    };
+    // Loaded once in Init(); null (every field VK_NULL_HANDLE) if the PNG is
+    // missing or fails to load — RenderCrosshair() draws nothing in that
+    // case rather than crashing startup over missing HUD art.
+    static StandaloneIcon crosshairIcon;
+    static StandaloneIcon crosshairEntityIcon; // "Looking at an entity" variant — see GlobalState::lookingAtEntity.
+
+    // Loads one standalone PNG (path) into a StandaloneIcon — image, view,
+    // and an ImGui-registered descriptor set, uploaded via the same
+    // staging-buffer-then-copy path TextureManager::UploadLayer uses (see
+    // BeginOneShotCommands/TransitionImageLayout in VulkanInit.hpp). Never
+    // throws: any failure (missing file, Vulkan call failing) is logged and
+    // returns a default (all-null) StandaloneIcon — see its own comment.
+    static StandaloneIcon LoadStandaloneIcon(const std::string& path);
+    // Draws the centered crosshair every HUD frame — plain or the
+    // "looking at an entity" variant, per GlobalState::lookingAtEntity.
+    static void RenderCrosshair();
+
+    // Resolves (creating and caching on first use) the ImTextureID for one
+    // texture-array layer, for drawing an item icon via ImDrawList::
+    // AddImage. ImGui's Vulkan backend draws a single flat 2D texture per
+    // ImTextureID, not an indexed array layer the way the 3D world pass
+    // samples TextureManager::array — so each distinct layer needs its own
+    // narrow (single-layer, single-mip) VkImageView and a descriptor set
+    // registered via ImGui_ImplVulkan_AddTexture wrapping it.
+    static ImTextureID GetItemIcon(uint16_t textureLayer);
+
+    // Resolves an inventory slot's contents straight to a drawable icon —
+    // ItemRegistry::Lookup + GetItemIcon in one call, so every slot-drawing
+    // call site (hotbar/armor, the inventory screen) shares one path
+    // instead of each re-deriving "empty slot / unresolved id / no icon
+    // texture" separately. Returns 0 (draw nothing) for an empty slot, an
+    // unknown item id, or an item with no resolved icon texture (see
+    // ItemRegistry::ItemTypeInfo::hasTexture).
+    static ImTextureID IconForItem(const ItemStack& item);
 
     static void RenderComponent(GUI::GUIComponent* component);
     static void RenderScreen(GUI::Screen& screen);
@@ -112,6 +165,17 @@ private:
     static void RenderPlayerStatusBars();
     static void RenderHotbarAndArmor();
     static void RenderMovementStatePanel();
+
+    // The player's own inventory screen (armor + main inventory grid +
+    // hotbar), toggled by "E" (see Update()) the same way "Esc" toggles
+    // pauseScreen — set as inventoryScreen's Screen::customContent, so it
+    // gets OpenScreen/CloseScreen's usual HUD-hiding/cursor-release/
+    // Escape-to-close behavior for free. View-only: there's no Click
+    // Container Slot handling (or any other block/container interaction in
+    // this client yet), so slots aren't clickable — this just shows
+    // whatever NetworkClient's Set Container Content/Slot handlers have
+    // written into state->inventory.
+    static void RenderInventoryScreen();
     // Top-left corner of the (still-placeholder) hotbar, resolved fresh
     // every frame the same way every other HUD element is — see
     // ResolveAnchor. The other three HUD methods above all derive their own

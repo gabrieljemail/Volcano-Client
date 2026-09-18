@@ -7,12 +7,21 @@
 #include <string_view>
 #include <unordered_map>
 #include <bitset>
-#include <mutex>
 #include <GLFW/glfw3.h>
 
 namespace Volcano {
 
 constexpr size_t MAX_KEYS = 512; // covers GLFW_KEY_LAST (~348) with headroom for mouse buttons
+
+// Mouse buttons share the same keysDown/keysPressedThisFrame/
+// keysReleasedThisFrame bitsets as keyboard keys (see InputState) rather
+// than getting their own — offsetting them past GLFW_KEY_LAST, instead of
+// using GLFW's own 0-7 button codes directly, means they stay unambiguous
+// even if a future GLFW header widens the key range. RegisterAction's
+// `triggers` accepts these the same as any GLFW_KEY_* constant.
+constexpr size_t MOUSE_BUTTON_OFFSET = GLFW_KEY_LAST + 1;
+constexpr uint16_t MOUSE_BUTTON_LEFT = static_cast<uint16_t>(MOUSE_BUTTON_OFFSET + GLFW_MOUSE_BUTTON_LEFT);
+constexpr uint16_t MOUSE_BUTTON_RIGHT = static_cast<uint16_t>(MOUSE_BUTTON_OFFSET + GLFW_MOUSE_BUTTON_RIGHT);
 
 enum class InputActionTriggerType {
     PRESS,
@@ -46,10 +55,14 @@ struct InputAxis {
 // Cache-line aligned so polling this every frame doesn't thrash the cache
 // with unrelated data, per the spec's InputState design.
 //
-// Owned exclusively by the render thread: only ProcessFrame() writes to it
-// (snapshotting the live, main-thread-written state below), so every
-// IsKeyDown/WasActivated/GetAxis read during a frame is race-free and sees
-// one consistent picture for that whole frame.
+// Owned exclusively by the main/render thread: KeyCallback (fired by
+// glfwPollEvents(), called from PollInputs() at the top of every frame — see
+// the tick-loop plan's thread-merge step) and every IsKeyDown/WasActivated/
+// GetAxis reader all run on that one thread now, so there's nothing left to
+// race. This used to be a snapshot ProcessFrame() copied from a
+// mutex-guarded live/pending split written by GLFW callbacks on a genuinely
+// different (main, pre-merge) thread — see git history for that shape if
+// the render loop is ever split back onto its own thread.
 struct alignas(64) InputState {
     std::bitset<MAX_KEYS> keysDown;
     std::bitset<MAX_KEYS> keysPressedThisFrame;
@@ -63,6 +76,7 @@ public:
         glfwSetWindowUserPointer(window, this);
         glfwSetKeyCallback(window, KeyCallback);
         glfwSetCursorPosCallback(window, CursorPosCallback);
+        glfwSetMouseButtonCallback(window, MouseButtonCallback);
 
 #ifdef _WIN32
         // On Windows, GLFW_FOCUSED can already read true here even though
@@ -77,51 +91,30 @@ public:
 #endif
     }
 
-    // Takes everything the GLFW callbacks have accumulated since the last
-    // call and makes it this frame's input picture. Runs at the start of
-    // the render loop's PollInputs().
-    //
-    // The pending/drain split matters: GLFW callbacks fire on the MAIN
-    // thread (whose glfwPollEvents() loop is the only thing that dispatches
-    // them), at arbitrary moments relative to the render thread's frame
-    // boundaries. Edge bits used to be written straight into `state` and
-    // cleared by EndFrame() at the end of each render frame — so a press
-    // that landed after a frame's readers had already run (very likely,
-    // since DrawFrame() then blocks for most of the frame in
-    // vkWaitForFences/vkQueuePresentKHR under FIFO/VSync) was wiped before
-    // any reader ever saw it. That's why edge-triggered actions — Jump,
-    // F11, Escape, chat's "T" — effectively never fired, while HOLD-style
-    // input (WASD, reading keysDown) always worked. Latching into
-    // `pending*` and draining here means a press can't be dropped no
-    // matter when it arrives; it's simply observed by the next frame.
+    // Resolves this frame's axis values from whatever KeyCallback/
+    // CursorPosCallback wrote directly into `state`/mouseDeltaX/Y during
+    // this frame's glfwPollEvents() (called at the top of PollInputs(),
+    // just before this). Kept as its own named call — matching the render
+    // loop's WaitForTargetFrame -> UpdateDeltaTime -> PollInputs -> ...
+    // shape — even though it's just UpdateAxes() now that there's no
+    // cross-thread pending/live split left to drain.
     void ProcessFrame()
     {
-        {
-            std::lock_guard<std::mutex> lock(inputMutex);
-            state.keysDown = liveKeysDown;
-            state.keysPressedThisFrame = pendingPressed;
-            state.keysReleasedThisFrame = pendingReleased;
-            pendingPressed.reset();
-            pendingReleased.reset();
-
-            mouseDeltaX = pendingMouseDeltaX;
-            mouseDeltaY = pendingMouseDeltaY;
-            pendingMouseDeltaX = 0.0;
-            pendingMouseDeltaY = 0.0;
-        }
-
-        UpdateAxes(); // Reads the mouseDeltaX/Y just drained above.
+        UpdateAxes();
     }
 
-    // Kept as the render loop's explicit "this frame is over" marker, but
-    // the edge bits it used to clear are now bounded by ProcessFrame()'s
-    // drain instead (see above) — clearing here as well just means an
-    // edge is never visible past the frame that drained it, even if
-    // ProcessFrame() isn't reached next iteration.
+    // The render loop's explicit "this frame is over" marker: clears the
+    // press/release edge bits (so an edge is only ever visible for the one
+    // frame it happened in) and the accumulated mouse delta (so the next
+    // frame's CursorPosCallback calls start accumulating from zero) — see
+    // CursorPosCallback's own comment for why mouseDeltaX/Y accumulate
+    // rather than overwrite.
     void EndFrame()
     {
         state.keysPressedThisFrame.reset();
         state.keysReleasedThisFrame.reset();
+        mouseDeltaX = 0.0;
+        mouseDeltaY = 0.0;
     }
 
     void RegisterAction(const std::string& name, InputActionTriggerType triggerType,
@@ -192,40 +185,59 @@ public:
 
 private:
     GLFWwindow* window;
-    InputState state; // Render-thread-owned snapshot; see InputState's own comment.
+    InputState state; // Main/render-thread-owned; see InputState's own comment.
     std::unordered_map<std::string, InputAction> actions;
     std::unordered_map<std::string, InputAxis> axes;
-    double mouseDeltaX = 0.0, mouseDeltaY = 0.0; // Drained from pendingMouseDelta* by ProcessFrame.
 
-    // Written by the GLFW callbacks on the main thread, drained by
-    // ProcessFrame() on the render thread — all under inputMutex. See
-    // ProcessFrame()'s comment for why edge state has to be latched here
-    // rather than written straight into `state`.
-    std::mutex inputMutex;
-    std::bitset<MAX_KEYS> liveKeysDown;
-    std::bitset<MAX_KEYS> pendingPressed;
-    std::bitset<MAX_KEYS> pendingReleased;
+    // Accumulated by CursorPosCallback across every mouse-move event this
+    // frame's glfwPollEvents() dispatches, read by UpdateAxes(), then reset
+    // to zero by EndFrame() — see EndFrame's own comment.
+    double mouseDeltaX = 0.0, mouseDeltaY = 0.0;
     double lastMouseX = 0.0, lastMouseY = 0.0;
-    double pendingMouseDeltaX = 0.0, pendingMouseDeltaY = 0.0;
     bool firstMouseEvent = true;
 
+    // Fired by glfwPollEvents() (called from PollInputs(), on this same
+    // thread) — writes straight into `state` with no locking needed now
+    // that nothing else touches it from another thread. See InputState's
+    // own comment for why that's safe.
     static void KeyCallback(GLFWwindow* win, int key, int scancode, int action, int mods)
     {
         auto* self = static_cast<InputHandler*>(glfwGetWindowUserPointer(win));
         if (!self || key < 0 || static_cast<size_t>(key) >= MAX_KEYS) return;
 
-        std::lock_guard<std::mutex> lock(self->inputMutex);
         if (action == GLFW_PRESS)
         {
-            self->liveKeysDown.set(key);
-            self->pendingPressed.set(key);
+            self->state.keysDown.set(key);
+            self->state.keysPressedThisFrame.set(key);
         }
         else if (action == GLFW_RELEASE)
         {
-            self->liveKeysDown.reset(key);
-            self->pendingReleased.set(key);
+            self->state.keysDown.reset(key);
+            self->state.keysReleasedThisFrame.set(key);
         }
-        // GLFW_REPEAT: liveKeysDown already true, nothing to change.
+        // GLFW_REPEAT: keysDown already true, nothing to change.
+    }
+
+    // Fired by glfwPollEvents(), same as KeyCallback — writes into the same
+    // bitsets, offset by MOUSE_BUTTON_OFFSET (see its own comment).
+    static void MouseButtonCallback(GLFWwindow* win, int button, int action, int mods)
+    {
+        (void)mods;
+        auto* self = static_cast<InputHandler*>(glfwGetWindowUserPointer(win));
+        if (!self || button < 0) return;
+        size_t key = MOUSE_BUTTON_OFFSET + static_cast<size_t>(button);
+        if (key >= MAX_KEYS) return;
+
+        if (action == GLFW_PRESS)
+        {
+            self->state.keysDown.set(key);
+            self->state.keysPressedThisFrame.set(key);
+        }
+        else if (action == GLFW_RELEASE)
+        {
+            self->state.keysDown.reset(key);
+            self->state.keysReleasedThisFrame.set(key);
+        }
     }
 
     static void CursorPosCallback(GLFWwindow* win, double xpos, double ypos)
@@ -236,7 +248,6 @@ private:
         #endif
         if (!self) return;
 
-        std::lock_guard<std::mutex> lock(self->inputMutex);
         if (self->firstMouseEvent)
         {
             self->lastMouseX = xpos;
@@ -245,8 +256,13 @@ private:
             return;
         }
 
-        self->pendingMouseDeltaX += xpos - self->lastMouseX;
-        self->pendingMouseDeltaY += ypos - self->lastMouseY;
+        // Accumulate rather than overwrite: glfwPollEvents() can dispatch
+        // several cursor-move events in one call (a fast mouse polling
+        // faster than the frame rate), and every bit of motion this frame
+        // should count toward this frame's look delta, not just the last
+        // event before EndFrame() resets it to zero.
+        self->mouseDeltaX += xpos - self->lastMouseX;
+        self->mouseDeltaY += ypos - self->lastMouseY;
         self->lastMouseX = xpos;
         self->lastMouseY = ypos;
     }

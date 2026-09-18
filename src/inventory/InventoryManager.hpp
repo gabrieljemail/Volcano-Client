@@ -35,10 +35,12 @@ struct InventoryManager {
     SlotGroup armor{"Armor", ARMOR_SIZE};
     SlotGroup offhand{"Offhand", 1};
 
-    // Which hotbar slot (0-8) is currently held/selected — set by the
-    // future Set Held Item packet, read by the future held-item/hotbar-
-    // highlight GUI. Not the same thing as any SlotGroup index; it's a
-    // separate piece of state vanilla tracks alongside the slots themselves.
+    // Which hotbar slot (0-8) is currently held/selected — read directly by
+    // GUIController::RenderHotbarAndArmor for the held-slot highlight;
+    // meant to be set by a future Set Held Item packet handler (none exists
+    // yet, so this just stays 0). Not the same thing as any SlotGroup
+    // index; it's a separate piece of state vanilla tracks alongside the
+    // slots themselves.
     uint8_t selectedHotbarSlot = 0;
 
     // Routes one flat protocol slot index — the player inventory window's

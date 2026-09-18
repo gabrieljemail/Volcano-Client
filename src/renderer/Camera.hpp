@@ -11,7 +11,14 @@ namespace Volcano {
 
 class Camera {
 public:
-    glm::vec3 eyeOffset{0.0f, 1.62f, 0.0f}; // standing eye height above feet
+    // Vertical eye offset above the feet — eased between standing/sneaking
+    // height every fixed step by TickLoop::FixedStep (NetworkThread) and
+    // read every frame by GetEyePosition/GetViewMatrix (RenderThread).
+    // Atomic for the same cross-thread reason yaw/pitch below are, now that
+    // TickLoop runs on NetworkThread instead of sharing RenderThread's own
+    // thread — was a plain glm::vec3 (x/z always 0) back when both sides
+    // ran on the same thread.
+    std::atomic<float> eyeHeight{1.62f}; // standing eye height above feet
 
     void ApplyMouseDelta(float dx, float dy, float sensitivity)
     {
@@ -24,10 +31,11 @@ public:
     // Yaw only (no pitch): the horizontal-plane heading used to project
     // WASD-style movement input into world-space forward/right vectors.
     float GetYaw() const { return yaw.load(std::memory_order_relaxed); }
+    float GetPitch() const { return pitch.load(std::memory_order_relaxed); }
 
     glm::vec3 GetEyePosition(glm::vec3 playerFeetPosition) const
     {
-        return playerFeetPosition + eyeOffset;
+        return playerFeetPosition + glm::vec3(0.0f, eyeHeight.load(std::memory_order_relaxed), 0.0f);
     }
 
     glm::mat4 GetViewMatrix(glm::vec3 playerFeetPosition) const

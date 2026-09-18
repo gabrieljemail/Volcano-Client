@@ -172,6 +172,11 @@ uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
     return it->second;
 }
 
+bool TextureManager::HasLayer(const std::string& textureName) const
+{
+    return layerLookup.contains(textureName);
+}
+
 void TextureManager::GenerateMipmaps()
 {
     VkCommandBuffer cmd = BeginOneShotCommands();

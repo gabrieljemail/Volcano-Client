@@ -1,3 +1,4 @@
+#include <cctype>
 #include <thread>
 #include <memory>
 #include <vector>
@@ -14,6 +15,7 @@
 #include "models/PackedVertex.hpp"
 #include "terrain/ChunkMesher.hpp"
 #include "entity/EntityRenderer.hpp"
+#include "misc/SelectionRenderer.hpp"
 #include "misc/MiscVertex.hpp"
 #include "misc/NonCubicMesher.hpp"
 
@@ -329,10 +331,29 @@ void CreateGraphicsPipeline()
 //    both sides (a cross billboard, the inner face of a glass pane) rather
 //    than closed solids, so the task's "shouldn't contribute to backface
 //    culling" is satisfied by disabling culling for the pass entirely.
-//  - Alpha blending on, depth WRITE off (but depth TEST still on): lets
-//    partially transparent geometry blend over whatever the opaque pass
-//    already wrote, without one piece of this pass's own geometry
-//    occluding another based on draw order alone.
+//  - Alpha blending on, and depth WRITE on alongside depth TEST.
+//
+// That depth write used to be off, on the reasoning that this is the
+// "transparent" pass and one piece of it shouldn't occlude another. That
+// reasoning doesn't survive contact with what this pass actually draws:
+// stairs, slabs, carpets and snow layers are fully OPAQUE solids that just
+// happen not to fill their voxel, and misc.frag discards every texel below
+// 1% alpha, so this is really a cutout pass, not a translucent one. With
+// writes off, nothing here could occlude anything else here — so a slab's
+// own far-side and underside faces (drawn, since culling is off) painted
+// straight over its near faces whenever they happened to be emitted later,
+// which is what read as stairs and slabs being "inside-out", having
+// "duplicate" surfaces against a neighbouring full cube, and flickering as
+// the draw order shifted. Writing depth lets the depth test resolve all of
+// that per-fragment, independent of emission order, without needing
+// backface culling that the cross billboards still can't tolerate.
+//
+// The trade-off is genuinely translucent texels (0 < alpha < 1, e.g.
+// stained glass) now write depth too and so can occlude translucent
+// geometry behind them. Fixing that properly needs a third pass that draws
+// truly translucent surfaces after this one with writes off — worth doing
+// when stained glass/water actually render, but strictly better than every
+// opaque partial shape in the world being drawn inside-out.
 void CreateNonCubicPipeline()
 {
     VkDevice dev = GetDevice();
@@ -409,7 +430,7 @@ void CreateNonCubicPipeline()
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_FALSE; // See this function's own comment on why.
+    depthStencil.depthWriteEnable = VK_TRUE; // See this function's own comment on why.
     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
@@ -646,13 +667,25 @@ void Init(GlobalState* state)
     // exports by string name" pattern is also what a reflective DLL
     // loader/injector does, and it's what got this unsigned, no-reputation
     // binary flagged as Trojan.Injector/Rootkit by Malwarebytes and Avast.
+    // Keep the instance's required API version at this project's existing
+    // 1.1 floor rather than whatever vkEnumerateInstanceVersion reports.
+    // That call returns the Vulkan LOADER's own compiled ceiling, which is
+    // not a guarantee that every installed ICD (GPU driver) actually
+    // implements it — requesting it via require_api_version() made
+    // vk-bootstrap's PhysicalDeviceSelector reject any physical device
+    // whose real VkPhysicalDeviceProperties::apiVersion fell short,
+    // producing "no_suitable_device" on this machine. The debug overlay's
+    // reported Vulkan version doesn't come from this requested value
+    // anyway — see physicalDevice.properties.apiVersion below, which is
+    // the selected device's own true supported version, independent of
+    // what we request here.
     vkb::InstanceBuilder instanceBuilder(vkGetInstanceProcAddr);
     auto instanceReturn = instanceBuilder
         .set_app_name(APP_NAME)
         .set_app_version(APP_VERSION)
         .set_engine_name(ENGINE_NAME)
         .set_engine_version(ENGINE_VERSION)
-        .require_api_version(1,1,0)
+        .require_api_version(1, 1, 0)
         // .request_validation_layers()
         .build();
 
@@ -686,10 +719,67 @@ void Init(GlobalState* state)
     requiredFeatures.fillModeNonSolid = VK_TRUE;
 
     vkb::PhysicalDeviceSelector physDeviceSelector(instance);
-    auto physDeviceSelectorReturn = physDeviceSelector
+    physDeviceSelector
         .set_surface(surface)
-        .set_required_features(requiredFeatures)
-        .select(); // TODO: Read settings.json if the user has a preferred device name.
+        .set_required_features(requiredFeatures);
+
+    // Graphics.PreferredDevice (settings.json): when non-empty, pick the
+    // device whose name contains it (case-insensitively, so "nvidia" is
+    // enough for "NVIDIA GeForce RTX 4070") instead of whatever
+    // vk-bootstrap's own ranking puts first — the usual reason to set it
+    // being a laptop where the default pick is the integrated GPU. Empty
+    // (the default this Get() writes on first run) keeps that ranking.
+    //
+    // A name matching nothing is a warning, not a failure: set_name() would
+    // make selection fail outright, which turns a stale settings.json into
+    // a client that won't start. Falling through to the default device and
+    // logging the names that *were* available makes the setting
+    // self-correcting instead.
+    std::string preferredDevice = std::get<std::string>(
+        g_globalState->config->Get("Graphics.PreferredDevice", std::string{}));
+    if (!preferredDevice.empty())
+    {
+        auto lowered = [](std::string s) {
+            for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return s;
+        };
+        std::string needle = lowered(preferredDevice);
+
+        // select_devices() applies the same surface/feature requirements as
+        // select() below, so anything it returns is already a device this
+        // client can actually run on — the name match only reorders them.
+        auto candidates = physDeviceSelector.select_devices();
+        if (candidates)
+        {
+            std::string available;
+            bool matched = false;
+            for (const vkb::PhysicalDevice& candidate : candidates.value())
+            {
+                if (!available.empty()) available += ", ";
+                available += candidate.name;
+                if (!matched && lowered(candidate.name).find(needle) != std::string::npos)
+                {
+                    physDeviceSelector.set_name(candidate.name);
+                    cout << "[INFO] Graphics.PreferredDevice \"" << preferredDevice
+                         << "\" matched Vulkan device: " << candidate.name << endl;
+                    matched = true;
+                }
+            }
+            if (!matched)
+            {
+                cerr << "[WARN] Graphics.PreferredDevice \"" << preferredDevice
+                     << "\" matched no suitable Vulkan device (available: " << available
+                     << ") — falling back to the default device." << endl;
+            }
+        }
+        else
+        {
+            cerr << "[WARN] Could not enumerate Vulkan devices to honor Graphics.PreferredDevice: "
+                 << candidates.error().message() << " — falling back to the default device." << endl;
+        }
+    }
+
+    auto physDeviceSelectorReturn = physDeviceSelector.select();
 
     if (!physDeviceSelectorReturn)
     {
@@ -701,6 +791,8 @@ void Init(GlobalState* state)
     physicalDevice = physDeviceSelectorReturn.value();
     cout << "[INFO] Found Vulkan GPU: " << physicalDevice.name << endl;
     cout << "[INFO] Vulkan API version: " << physicalDevice.properties.apiVersion << endl;
+    g_globalState->systemInfo.DetectGPU(physicalDevice.properties.deviceName,
+        physicalDevice.properties.vendorID, physicalDevice.properties.apiVersion);
 
     // Get the logical device.
     vkb::DeviceBuilder deviceBuilder{physicalDevice};
@@ -740,6 +832,10 @@ void Init(GlobalState* state)
         return;
     }
     swapchain = swapchainBuilderReturn.value();
+    // Records what vk-bootstrap actually granted, not just what
+    // DesiredPresentMode() asked for — see GlobalState::presentMode's own
+    // comment for why those can differ.
+    g_globalState->presentMode = static_cast<uint8_t>(swapchain.present_mode);
 
     // Get the queues from vkb::Device.
     graphicsQueue = device.get_queue(vkb::QueueType::graphics).value();
@@ -927,6 +1023,9 @@ void Init(GlobalState* state)
     // layout above, plus commandPool just above (see its own comment).
     EntityRenderer::Init();
 
+    // Block selection outline/fill — same prerequisites as EntityRenderer.
+    SelectionRenderer::Init();
+
     // Create semaphores and fences.
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1001,6 +1100,8 @@ void RecreateSwapchain(int width, int height)
     }
     swapchain = swapchainBuilderReturn.value();
     swapchainExtent = swapchain.extent;
+    // See the Init() call site's own comment on this same line.
+    g_globalState->presentMode = static_cast<uint8_t>(swapchain.present_mode);
 
     CreateDepthResources();
     CreateSwapchainImageViews();
@@ -1108,6 +1209,7 @@ void Cleanup()
     ChunkMesher::Shutdown();
     NonCubicMesher::Shutdown();
     EntityRenderer::Shutdown();
+    SelectionRenderer::Shutdown();
 
     if (vmaAllocator != VK_NULL_HANDLE) {
         vmaDestroyAllocator(vmaAllocator);

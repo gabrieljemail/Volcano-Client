@@ -8,6 +8,7 @@
 #include <string>
 #include <thread>
 #include "../GlobalState.hpp"
+#include "../TickLoop.hpp"
 #include "NetworkClient.hpp"
 
 namespace Volcano {

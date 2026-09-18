@@ -6,7 +6,6 @@
 #include <iostream>
 #include <stop_token>
 #include "../src/network/NetworkClient.hpp"
-
 int main(int argc, char** argv)
 {
     std::string host = argc > 1 ? argv[1] : "108.197.182.119";
@@ -15,7 +14,6 @@ int main(int argc, char** argv)
 
     Volcano::GlobalState state{};
     state.LoadSettings(); // RunConfiguration() below reads Graphics.RenderDistance from state.config.
-
     asio::io_context ioContext;
     Volcano::NetworkClient client(ioContext);
     if (client.ConnectAndLogin(host, port, username)) {
