@@ -1,0 +1,154 @@
+# Volcano Client Code Style
+
+This describes how code in this project is written and organized. It applies
+to the client itself and, since the client's classes double as the public
+mod API (mods link against them directly and build a DLL rather than going
+through a separate injection/mapping toolchain), it also describes the shape
+mod authors should expect and follow when extending or overloading them.
+
+## Formatting
+
+BSD-style (Allman) braces — an opening brace always starts its own line,
+never shares one with the statement that owns it.
+
+Correct:
+```cpp
+void MyFunction()
+{
+    DoSomething();
+}
+```
+
+Incorrect:
+```cpp
+void MyFunction() {
+    DoSomething();
+}
+```
+
+## Naming
+
+Upper camel case (`PascalCase`) for everything — namespaces, classes,
+methods, free functions — except variables, which are lower camel case
+(`camelCase`) with no `m_`/`s_`/Hungarian prefix, whether they're locals,
+parameters, or class members.
+
+Correct:
+```cpp
+Volcano::GUI::GUIController::CreateWindow(windowName, anchor);
+```
+
+Incorrect:
+```cpp
+volcano::gui::gui_controller::create_window(window_name, anchor);
+```
+
+Namespace nesting mirrors the folder a file lives in — `Volcano::GUI` for
+`src/renderer/gui/`, `Volcano` for everything directly under `src/` — so the
+namespace path and the include path never disagree.
+
+## Object-Oriented Design
+
+Reach functionality through an owning instance, not a free function that
+takes the thing it operates on as an argument.
+
+Correct:
+```cpp
+myClass->MyMethod();
+```
+
+Incorrect:
+```cpp
+MyClassMethod(myClass);
+```
+
+A free function is only acceptable as a narrow escape hatch when a class
+method genuinely isn't reachable — e.g. `GUIController.cpp` forward-declares
+`SendChatMessage(GlobalState*, ...)` instead of including
+`NetworkClient.hpp`, purely to avoid that header's `asio`/`<windows.h>`
+include pulling in a macro collision. That's a compilation workaround, not a
+model to copy — default to an instance method every other time.
+
+## Comments
+
+Comment blocks describe what the code is doing at a glance, not a
+line-by-line restatement of the code beneath them.
+
+Correct:
+```cpp
+// Let the scheduler do other things until done.
+while (!isComplete)
+{
+    std::this_thread::yield();
+}
+```
+
+Incorrect:
+```cpp
+// Wait for isComplete to be true to continue.
+// isComplete is set by the code above.
+while (!isComplete)
+{
+    // Allow the OS to do other things for now.
+    std::this_thread::yield();
+}
+```
+
+## File Organization
+
+A class or non-class type (struct, enum) with little enough implementation
+gets a single `.hpp` and no matching `.cpp` — `GUIWindow`, `GUIComponent`,
+`Resolution`, and `NetworkInbox` all live entirely in their headers this way.
+A class only earns a separate `.cpp` once its implementation is substantial
+enough to be worth splitting from its declaration (`TickLoop`, `Config`,
+`NetworkClient`).
+
+Correct:
+```
+models/MyStruct.hpp
+```
+
+Incorrect:
+```
+models/MyStruct.hpp
+models/MyStruct.cpp
+```
+
+Every header, regardless of which of the two shapes above it takes, opens
+with both `#pragma once` and a traditional guard, matched to its namespace
+path (e.g. `TickLoop.hpp` → `VOLCANO_TICK_LOOP_H`):
+
+```cpp
+#pragma once
+#ifndef VOLCANO_MY_CLASS_H
+#define VOLCANO_MY_CLASS_H
+
+// ...
+
+#endif
+```
+
+## Global Access
+
+`GlobalState` is the single, thread-safe access point for the whole client:
+it holds raw pointers to every thread-owning class and major manager
+(`InputHandler`, `Player`, `World`, `PlayerAttributes`, `TickLoop`, ...).
+When a new thread or manager class is added, it gets a pointer added to
+`GlobalState` so anything else — another internal system, or a mod DLL
+linking against the same classes — can reach it the same way everything
+else does, rather than threading a new parameter through unrelated call
+chains.
+
+Any mutable data exposed this way that crosses threads gets its own
+dedicated mutex, named `<field>Mutex` and declared immediately next to the
+field it guards, rather than one lock covering unrelated state — see
+`health`/`healthMutex`, `entities`/`entitiesMutex`, and
+`playerList`/`playerListMutex` in `GlobalState.hpp`. Document who writes and
+who reads the field in a comment above it; the mutex name alone doesn't say
+that.
+
+`Config::Active()` is the one narrow exception — a static accessor that
+exists purely for code with no `GlobalState*` in hand at all (`Logger`'s free
+functions). It's a fallback for that specific case, not a second pattern to
+reach for — new code should take a `GlobalState*` rather than inventing its
+own static/singleton accessor.

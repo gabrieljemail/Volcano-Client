@@ -83,6 +83,13 @@ namespace PlayC2S { // Play state, serverbound (client -> server)
     // ("perform_respawn") — the other two (request_stats/request_gamerule_
     // values) aren't used by this client.
     constexpr int32_t ClientCommand = 0x0C;
+
+    // 0x35 per resources/maps/protocol.json (play.toServer.types.packet,
+    // mapping "held_item_slot") — reports which hotbar slot is now selected.
+    // Single field: i16 slotId (0-8). Named SetHeldItem to mirror
+    // PlayS2C::SetHeldItem (0x69), the clientbound counterpart the server
+    // sends when it forces a slot change — same field, opposite direction.
+    constexpr int32_t SetHeldItem = 0x35;
 }
 
 namespace PlayS2C { // Play state, clientbound (server -> client)
@@ -134,6 +141,14 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     // for GUIController::RenderPlayerStatusBars' HUD display.
     constexpr int32_t SetHealth = 0x68;                // SET_HEALTH
 
+    // RESPAWN — sent on every dimension change, not just death/respawn
+    // (e.g. a portal). Its SpawnInfo payload (dimension id + name, hashed
+    // seed, gamemode, previousGamemode, isDebug, isFlat, an optional death
+    // GlobalPos, portalCooldown, seaLevel) plus a trailing u8 copyMetadata
+    // bitmask — this client only reads the dimension name off the front of
+    // it (for the log line) before resetting world state; see its handler.
+    constexpr int32_t Respawn = 0x52;                  // RESPAWN
+
     // Not handled yet, listed so the "unhandled packet" log is readable.
     // Ping arrives constantly and is purely a latency probe (Keep Alive is
     // what actually holds the connection open), so ignoring it is safe.
@@ -147,6 +162,17 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     // a separately-named add/update packet the way some doc sites do).
     constexpr int32_t PlayerInfoRemove = 0x45;         // PLAYER_INFO_REMOVE
     constexpr int32_t PlayerInfoUpdate = 0x46;         // PLAYER_INFO_UPDATE
+
+    // Inventory sync — IDs read the same way as the entity/tab-list IDs
+    // above, from this client's own bundled protocol.json's play.toClient.
+    // types.packet mapper: 0x12 window_items, 0x14 set_slot, 0x69
+    // held_item_slot. windowId 0 (used by both SetContainerContent and
+    // SetContainerSlot) is always the player's own inventory — this client
+    // never opens a server-side container (chest, furnace, ...) since it
+    // can't interact with blocks yet, so any other windowId is ignored.
+    constexpr int32_t SetContainerContent = 0x12; // WINDOW_ITEMS — full inventory resync (e.g. right after spawn).
+    constexpr int32_t SetContainerSlot = 0x14;    // SET_SLOT — one slot changed (e.g. picking something up).
+    constexpr int32_t SetHeldItem = 0x69;         // HELD_ITEM_SLOT (clientbound) — server forces the selected hotbar slot.
 
     // UPDATE_TIME — ID read the same way as the entity/tab-list IDs above,
     // from this client's own bundled protocol.json's play.toClient.types.

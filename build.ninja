@@ -49,11 +49,23 @@ cmake_ninja_workdir = C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/
 
 build cmake_object_order_depends_target_VolcanoClient: phony || .
 
+build CMakeFiles/VolcanoClient.dir/src/Config.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/Config.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\Config.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
 build CMakeFiles/VolcanoClient.dir/src/Logger.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/Logger.cpp || cmake_object_order_depends_target_VolcanoClient
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\Logger.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src
@@ -65,7 +77,19 @@ build CMakeFiles/VolcanoClient.dir/src/PlayerAttributes.cpp.obj: CXX_COMPILER__V
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\PlayerAttributes.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/SystemInfo.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/SystemInfo.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\SystemInfo.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src
@@ -77,7 +101,7 @@ build CMakeFiles/VolcanoClient.dir/src/TickLoop.cpp.obj: CXX_COMPILER__VolcanoCl
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\TickLoop.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src
@@ -89,10 +113,34 @@ build CMakeFiles/VolcanoClient.dir/src/VolcanoClient.cpp.obj: CXX_COMPILER__Volc
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\VolcanoClient.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/interaction/InteractionManager.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/interaction/InteractionManager.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\interaction\InteractionManager.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\interaction
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/inventory/ItemRegistry.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/inventory/ItemRegistry.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\inventory\ItemRegistry.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\inventory
   TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
   TARGET_PDB = VolcanoClient.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
@@ -101,7 +149,7 @@ build CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.obj: CXX_COMPILER_
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\network\Connection.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\network
@@ -113,7 +161,7 @@ build CMakeFiles/VolcanoClient.dir/src/network/MSAuth.cpp.obj: CXX_COMPILER__Vol
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\network\MSAuth.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\network
@@ -125,7 +173,7 @@ build CMakeFiles/VolcanoClient.dir/src/network/NBT.cpp.obj: CXX_COMPILER__Volcan
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\network\NBT.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\network
@@ -137,7 +185,7 @@ build CMakeFiles/VolcanoClient.dir/src/network/NetworkClient.cpp.obj: CXX_COMPIL
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\network\NetworkClient.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\network
@@ -149,7 +197,7 @@ build CMakeFiles/VolcanoClient.dir/src/network/NetworkThread.cpp.obj: CXX_COMPIL
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\network\NetworkThread.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\network
@@ -161,7 +209,7 @@ build CMakeFiles/VolcanoClient.dir/src/network/TextComponent.cpp.obj: CXX_COMPIL
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\network\TextComponent.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\network
@@ -173,7 +221,19 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/RenderThread.cpp.obj: CXX_COMPIL
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\RenderThread.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/SplashScreen.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/SplashScreen.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\SplashScreen.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer
@@ -185,7 +245,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/TextureManager.cpp.obj: CXX_COMP
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\TextureManager.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer
@@ -197,7 +257,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/VulkanInit.cpp.obj: CXX_COMPILER
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\VulkanInit.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer
@@ -209,7 +269,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.obj: C
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\entity\EntityRenderer.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\entity
@@ -221,7 +281,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/entity/models/EntityRegistry.cpp
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\entity\models\EntityRegistry.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\entity\models
@@ -233,7 +293,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/gui/ControlRenderer.cpp.obj: CXX
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\gui\ControlRenderer.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui
@@ -245,7 +305,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/gui/GUIController.cpp.obj: CXX_C
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\gui\GUIController.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui
@@ -257,7 +317,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/gui/ImGuiVulkan.cpp.obj: CXX_COM
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\gui\ImGuiVulkan.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui
@@ -269,7 +329,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/gui/OverlayController.cpp.obj: C
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\gui\OverlayController.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui
@@ -281,10 +341,34 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/gui/models/Chat.cpp.obj: CXX_COM
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\gui\models\Chat.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui\models
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/misc/NonCubicMesher.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/misc/NonCubicMesher.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\misc\NonCubicMesher.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\misc
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/misc/SelectionRenderer.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/misc/SelectionRenderer.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\misc\SelectionRenderer.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\misc
   TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
   TARGET_PDB = VolcanoClient.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
@@ -293,7 +377,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/models/SlabBuffer.cpp.obj: CXX_C
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\models\SlabBuffer.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\models
@@ -305,7 +389,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkMesher.cpp.obj: CXX
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\terrain\ChunkMesher.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\terrain
@@ -317,7 +401,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkParser.cpp.obj: CXX
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\terrain\ChunkParser.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\terrain
@@ -329,7 +413,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/terrain/MeshingThread.cpp.obj: C
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\terrain\MeshingThread.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\terrain
@@ -341,7 +425,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/terrain/VisibleChunkController.c
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\terrain\VisibleChunkController.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\terrain
@@ -353,7 +437,7 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/terrain/models/BlockRegistry.cpp
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\terrain\models\BlockRegistry.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\terrain\models
@@ -365,7 +449,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/vk-bootstrap/src/VkBootstra
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\vk-bootstrap\src\VkBootstrap.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions -w
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0 -w
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\vk-bootstrap\src
@@ -377,7 +461,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui.cpp.obj: CXX_CO
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui\imgui.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions -w
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0 -w
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui
@@ -389,7 +473,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_demo.cpp.obj: C
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui\imgui_demo.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions -w
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0 -w
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui
@@ -401,7 +485,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_draw.cpp.obj: C
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui\imgui_draw.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions -w
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0 -w
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui
@@ -413,7 +497,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_tables.cpp.obj:
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui\imgui_tables.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions -w
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0 -w
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui
@@ -425,7 +509,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_widgets.cpp.obj
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui\imgui_widgets.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions -w
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0 -w
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui
@@ -437,7 +521,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_g
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui\backends\imgui_impl_glfw.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions -w
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0 -w
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui\backends
@@ -449,7 +533,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_v
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui\backends\imgui_impl_vulkan.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -g -gcodeview -O0 -ffast-math -fms-compatibility -fms-extensions -w
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0 -w
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\C_\Apps\Libraries\ImGui\backends
@@ -465,7 +549,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_v
 #############################################
 # Link the executable VolcanoClient.exe
 
-build VolcanoClient.exe: CXX_EXECUTABLE_LINKER__VolcanoClient_Debug CMakeFiles/VolcanoClient.dir/src/Logger.cpp.obj CMakeFiles/VolcanoClient.dir/src/PlayerAttributes.cpp.obj CMakeFiles/VolcanoClient.dir/src/TickLoop.cpp.obj CMakeFiles/VolcanoClient.dir/src/VolcanoClient.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/MSAuth.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NBT.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NetworkClient.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NetworkThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/TextComponent.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/RenderThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/TextureManager.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/VulkanInit.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/entity/models/EntityRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/ControlRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/GUIController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/ImGuiVulkan.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/OverlayController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/models/Chat.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/models/SlabBuffer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkMesher.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkParser.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/MeshingThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/VisibleChunkController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/models/BlockRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/vk-bootstrap/src/VkBootstrap.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_demo.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_draw.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_tables.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_widgets.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_glfw.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_vulkan.cpp.obj | C$:/Apps/VulkanSDK/Lib/vulkan-1.lib C$:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib C$:/Apps/Libraries/ZLIB/zlib.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libcrypto.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libssl.lib
+build VolcanoClient.exe: CXX_EXECUTABLE_LINKER__VolcanoClient_Debug CMakeFiles/VolcanoClient.dir/src/Config.cpp.obj CMakeFiles/VolcanoClient.dir/src/Logger.cpp.obj CMakeFiles/VolcanoClient.dir/src/PlayerAttributes.cpp.obj CMakeFiles/VolcanoClient.dir/src/SystemInfo.cpp.obj CMakeFiles/VolcanoClient.dir/src/TickLoop.cpp.obj CMakeFiles/VolcanoClient.dir/src/VolcanoClient.cpp.obj CMakeFiles/VolcanoClient.dir/src/interaction/InteractionManager.cpp.obj CMakeFiles/VolcanoClient.dir/src/inventory/ItemRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/MSAuth.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NBT.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NetworkClient.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NetworkThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/TextComponent.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/RenderThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/SplashScreen.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/TextureManager.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/VulkanInit.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/entity/models/EntityRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/ControlRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/GUIController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/ImGuiVulkan.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/OverlayController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/models/Chat.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/misc/NonCubicMesher.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/misc/SelectionRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/models/SlabBuffer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkMesher.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkParser.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/MeshingThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/VisibleChunkController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/models/BlockRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/vk-bootstrap/src/VkBootstrap.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_demo.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_draw.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_tables.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_widgets.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_glfw.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_vulkan.cpp.obj | C$:/Apps/VulkanSDK/Lib/vulkan-1.lib C$:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib C$:/Apps/Libraries/ZLIB/zlib.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libcrypto.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libssl.lib
   CONFIG = Debug
   FLAGS = -O0 -g -Xclang -gcodeview -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
   LINK_FLAGS = -fuse-ld=lld -Xlinker /subsystem:console -fuse-ld=lld
@@ -492,7 +576,7 @@ build CMakeFiles/NetDiag.dir/tools/netdiag_main.cpp.obj: CXX_COMPILER__NetDiag_u
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\NetDiag.dir\tools\netdiag_main.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -g -gcodeview -O0 -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\NetDiag.dir
   OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\tools
@@ -504,7 +588,19 @@ build CMakeFiles/NetDiag.dir/src/Logger.cpp.obj: CXX_COMPILER__NetDiag_unscanned
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\NetDiag.dir\src\Logger.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -g -gcodeview -O0 -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\NetDiag.dir
+  OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\NetDiag.dir\
+  TARGET_PDB = NetDiag.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\NetDiag.dir
+
+build CMakeFiles/NetDiag.dir/src/Config.cpp.obj: CXX_COMPILER__NetDiag_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/Config.cpp || cmake_object_order_depends_target_NetDiag
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\NetDiag.dir\src\Config.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\NetDiag.dir
   OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src
@@ -516,7 +612,7 @@ build CMakeFiles/NetDiag.dir/src/network/Connection.cpp.obj: CXX_COMPILER__NetDi
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\NetDiag.dir\src\network\Connection.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -g -gcodeview -O0 -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\NetDiag.dir
   OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src\network
@@ -528,7 +624,7 @@ build CMakeFiles/NetDiag.dir/src/network/NBT.cpp.obj: CXX_COMPILER__NetDiag_unsc
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\NetDiag.dir\src\network\NBT.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -g -gcodeview -O0 -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\NetDiag.dir
   OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src\network
@@ -540,7 +636,7 @@ build CMakeFiles/NetDiag.dir/src/network/NetworkClient.cpp.obj: CXX_COMPILER__Ne
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\NetDiag.dir\src\network\NetworkClient.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -g -gcodeview -O0 -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\NetDiag.dir
   OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src\network
@@ -552,7 +648,7 @@ build CMakeFiles/NetDiag.dir/src/network/TextComponent.cpp.obj: CXX_COMPILER__Ne
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\NetDiag.dir\src\network\TextComponent.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -g -gcodeview -O0 -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\NetDiag.dir
   OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src\network
@@ -564,7 +660,7 @@ build CMakeFiles/NetDiag.dir/src/renderer/terrain/ChunkParser.cpp.obj: CXX_COMPI
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\NetDiag.dir\src\renderer\terrain\ChunkParser.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -g -gcodeview -O0 -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\NetDiag.dir
   OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src\renderer\terrain
@@ -576,10 +672,22 @@ build CMakeFiles/NetDiag.dir/src/renderer/terrain/models/BlockRegistry.cpp.obj: 
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\NetDiag.dir\src\renderer\terrain\models\BlockRegistry.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -g -gcodeview -O0 -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\NetDiag.dir
   OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src\renderer\terrain\models
+  TARGET_COMPILE_PDB = CMakeFiles\NetDiag.dir\
+  TARGET_PDB = NetDiag.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\NetDiag.dir
+
+build CMakeFiles/NetDiag.dir/src/renderer/entity/models/EntityRegistry.cpp.obj: CXX_COMPILER__NetDiag_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/entity/models/EntityRegistry.cpp || cmake_object_order_depends_target_NetDiag
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\NetDiag.dir\src\renderer\entity\models\EntityRegistry.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\NetDiag.dir
+  OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src\renderer\entity\models
   TARGET_COMPILE_PDB = CMakeFiles\NetDiag.dir\
   TARGET_PDB = NetDiag.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\NetDiag.dir
@@ -588,7 +696,7 @@ build CMakeFiles/NetDiag.dir/src/renderer/gui/models/Chat.cpp.obj: CXX_COMPILER_
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\NetDiag.dir\src\renderer\gui\models\Chat.cpp.obj.d
-  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -g -gcodeview -O0 -fms-compatibility -fms-extensions
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\NetDiag.dir
   OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src\renderer\gui\models
@@ -604,7 +712,7 @@ build CMakeFiles/NetDiag.dir/src/renderer/gui/models/Chat.cpp.obj: CXX_COMPILER_
 #############################################
 # Link the executable NetDiag.exe
 
-build NetDiag.exe: CXX_EXECUTABLE_LINKER__NetDiag_Debug CMakeFiles/NetDiag.dir/tools/netdiag_main.cpp.obj CMakeFiles/NetDiag.dir/src/Logger.cpp.obj CMakeFiles/NetDiag.dir/src/network/Connection.cpp.obj CMakeFiles/NetDiag.dir/src/network/NBT.cpp.obj CMakeFiles/NetDiag.dir/src/network/NetworkClient.cpp.obj CMakeFiles/NetDiag.dir/src/network/TextComponent.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/terrain/ChunkParser.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/terrain/models/BlockRegistry.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/gui/models/Chat.cpp.obj | C$:/Apps/VulkanSDK/Lib/vulkan-1.lib C$:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib C$:/Apps/Libraries/ZLIB/zlib.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libcrypto.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libssl.lib
+build NetDiag.exe: CXX_EXECUTABLE_LINKER__NetDiag_Debug CMakeFiles/NetDiag.dir/tools/netdiag_main.cpp.obj CMakeFiles/NetDiag.dir/src/Logger.cpp.obj CMakeFiles/NetDiag.dir/src/Config.cpp.obj CMakeFiles/NetDiag.dir/src/network/Connection.cpp.obj CMakeFiles/NetDiag.dir/src/network/NBT.cpp.obj CMakeFiles/NetDiag.dir/src/network/NetworkClient.cpp.obj CMakeFiles/NetDiag.dir/src/network/TextComponent.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/terrain/ChunkParser.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/terrain/models/BlockRegistry.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/entity/models/EntityRegistry.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/gui/models/Chat.cpp.obj | C$:/Apps/VulkanSDK/Lib/vulkan-1.lib C$:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib C$:/Apps/Libraries/ZLIB/zlib.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libcrypto.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libssl.lib
   CONFIG = Debug
   FLAGS = -O0 -g -Xclang -gcodeview -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
   LINK_FLAGS = -fuse-ld=lld -Xlinker /subsystem:console -fuse-ld=lld

@@ -1,5 +1,6 @@
 #include <iostream>
 #include <memory>
+#include <string>
 #include <thread>
 #include <chrono>
 #include <stop_token>
@@ -15,6 +16,7 @@
 #include "renderer/terrain/models/World.hpp"
 #include "renderer/terrain/models/BlockRegistry.hpp"
 #include "renderer/entity/models/EntityRegistry.hpp"
+#include "inventory/ItemRegistry.hpp"
 #include "renderer/terrain/ChunkMesher.hpp"
 #include "renderer/terrain/MeshingThread.hpp"
 #include "renderer/gui/GUIController.hpp"
@@ -24,6 +26,7 @@
 #include "network/NetworkThread.hpp"
 #include "PlayerAttributes.hpp"
 #include "TickLoop.hpp"
+#include "interaction/InteractionManager.hpp"
 #include <vector>
 using namespace std;
 
@@ -122,6 +125,10 @@ int main()
     Volcano::GlobalState state{};
     state.LoadSettings();
 
+    // No Vulkan/GLFW dependency — safe this early, and the debug overlay
+    // wants it available from the very first frame.
+    state.systemInfo.DetectCPU();
+
     // Create the render thread.
     Volcano::RenderThread renderer(&state);
     Init(&state);
@@ -172,8 +179,35 @@ int main()
     input.RegisterAction("Sprint", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_CONTROL});
     input.RegisterAction("Sneak", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_SHIFT});
     input.RegisterAction("OpenChat", InputActionTriggerType::PRESS, {GLFW_KEY_T});
+    input.RegisterAction("ToggleInventory", InputActionTriggerType::PRESS, {GLFW_KEY_E});
     input.RegisterAction("ToggleWireframe", InputActionTriggerType::PRESS, {GLFW_KEY_F3});
     input.RegisterAction("ToggleLighting", InputActionTriggerType::PRESS, {GLFW_KEY_G});
+
+    // Hotbar slot selection — vanilla's number-row bindings, key "1" for
+    // slot 0 through "9" for slot 8. One PRESS action per key rather than a
+    // single action with all nine triggers, since RenderThread::PollInputs
+    // needs to know WHICH slot was pressed, not just that some hotbar key
+    // was. GLFW_KEY_1..GLFW_KEY_9 are consecutive codepoints, so this can
+    // register all nine off one loop instead of nine near-identical lines.
+    for (int slot = 0; slot < 9; slot++)
+    {
+        input.RegisterAction("Hotbar." + std::to_string(slot),
+            InputActionTriggerType::PRESS, {static_cast<uint16_t>(GLFW_KEY_1 + slot)});
+    }
+
+    // Mainhand/offhand interaction — read by InteractionManager::Update.
+    // PrimaryAction is HOLD (vanilla lets holding the mouse down keep
+    // attacking, rate-limited by its own cooldown).
+    input.RegisterAction("PrimaryAction", InputActionTriggerType::HOLD, {MOUSE_BUTTON_LEFT});
+
+    // Secondary gets three actions on the same button — same pattern as
+    // Jump/JumpHold above — since "use item" isn't just a click: an instant
+    // item (a block, a bucket) only needs the press, but a continuous one
+    // (food, a shield, a bow) needs to know it's still held, and that it's
+    // been released, to know when to stop.
+    input.RegisterAction("SecondaryAction", InputActionTriggerType::PRESS, {MOUSE_BUTTON_RIGHT});
+    input.RegisterAction("SecondaryActionHold", InputActionTriggerType::HOLD, {MOUSE_BUTTON_RIGHT});
+    input.RegisterAction("SecondaryActionRelease", InputActionTriggerType::RELEASE, {MOUSE_BUTTON_RIGHT});
 
     // Builds the protocol block-state-id -> texture mapping from
     // minecraft-data + the vanilla blockstate/model JSON. Must happen before
@@ -187,6 +221,12 @@ int main()
     Volcano::TextureManager textureManager;
     textureManager.LoadResourcePack("resources/minecraft");
     Volcano::Log::Info("[INFO] Texture loading complete!");
+
+    // Resolves item icon texture layers against the array textureManager
+    // just built — must run after LoadResourcePack(), not alongside
+    // BlockRegistry/EntityRegistry::Init() above (which only need JSON,
+    // not the texture array).
+    Volcano::ItemRegistry::Init(textureManager);
 
     // Update texture descriptor set with the texture array
     VkDescriptorImageInfo imageInfo{};
@@ -204,7 +244,7 @@ int main()
     vkUpdateDescriptorSets(GetDevice(), 1, &textureWrite, 0, nullptr);
 
     // Initialize GUI controller framework with ImGui
-    Volcano::GUIController::Init(state.window, GetRenderPass(), 2, &state); // 2 is the swapchain image count
+    Volcano::GUIController::Init(state.window, GetRenderPass(), 2, &state, &textureManager); // 2 is the swapchain image count
 
     // World (placeholder — see the tick-loop plan) and attributes must exist
     // before GenerateChunks/TickLoop touch them.
@@ -213,6 +253,9 @@ int main()
 
     Volcano::PlayerAttributes attributes = Volcano::PlayerAttributes::Defaults();
     state.attributes = &attributes;
+
+    Volcano::InteractionManager interaction(&state);
+    state.interaction = &interaction;
 
     // The world now loads from whatever server the player connects to (see
     // the "Connect" screen below) instead of a hardcoded grid. GenerateChunks
@@ -224,7 +267,8 @@ int main()
     Volcano::TickLoop tickLoop(&state);
     state.tickLoop = &tickLoop;
 
-    renderer.Start(); // Beyond this point, we need GLFW to be running.
+    // No renderer.Start() anymore — the frame loop runs inline in this
+    // thread's own loop below (see the tick-loop plan's thread-merge step).
 
     // Meshing runs on its own thread too — greedy-meshing a full 16x384x16
     // chunk is real CPU work, and doing it inline on this thread (as it used
@@ -279,16 +323,18 @@ int main()
     connectScreen->components.push_back(connectButton);
     Volcano::GUIController::OpenScreen(connectScreen);
 
-    // Handle inputs and stay alive. Chunk/spawn handoff now happens
-    // entirely on MeshingThread (see above) — this loop is just the GLFW
-    // message pump.
+    // This is now the frame loop itself (see RenderThread::RunFrame — it
+    // calls glfwPollEvents() internally as the first step of PollInputs)
+    // rather than a separate 1ms message-pump loop alongside a dedicated
+    // render thread. Chunk/spawn handoff still happens entirely on
+    // MeshingThread (see above).
     while (!state.shouldClose)
     {
-        glfwPollEvents();
-
-        // GUIController and NotifyFramePresented run on the render thread,
-        // but GLFW only guarantees glfwSetInputMode is safe from this (the
-        // main, window-owning) thread — see GlobalState::pendingCursorMode.
+        // GUIController and NotifyFramePresented run in this same loop now,
+        // but GLFW still only guarantees glfwSetInputMode is safe from the
+        // thread that created the window — this one, same as before, just
+        // no longer a *different* thread than the one that just ran
+        // PollInputs/DrawFrame — see GlobalState::pendingCursorMode.
         if (int mode = state.pendingCursorMode.exchange(-1); mode != -1)
         {
             glfwSetInputMode(state.window, GLFW_CURSOR, mode);
@@ -308,60 +354,37 @@ int main()
             }
             Volcano::Log::Info("[INFO] Returned to connect screen: " + reason);
 
-            state.worldReady.store(false);
-            state.world->Clear();
-            {
-                std::lock_guard<std::mutex> lock(state.renderListMutex);
-                state.renderList.clear();
-            }
-            {
-                std::lock_guard<std::mutex> lock(state.nonCubicRenderListMutex);
-                state.nonCubicRenderList.clear();
-            }
-            {
-                std::lock_guard<std::mutex> lock(state.entitiesMutex);
-                state.entities.clear();
-            }
-            {
-                // Drop anything MeshingThread hasn't drained yet — otherwise
-                // a chunk still in flight from the old session could land
-                // after World::Clear() above and bleed into the new one.
-                std::lock_guard<std::mutex> lock(state.networkInbox.mutex);
-                while (!state.networkInbox.chunks.empty()) state.networkInbox.chunks.pop();
-                state.networkInbox.spawnPosition.reset();
-            }
+            // See GlobalState::ResetWorldState's own comment — same reset a
+            // mid-session dimension change (PlayS2C::Respawn) uses, just
+            // followed here by actually reopening the connect screen.
+            state.ResetWorldState();
 
             disconnectReasonText->SetLabel(reason);
             disconnectReasonText->SetVisibile(!reason.empty());
             Volcano::GUIController::OpenScreen(connectScreen);
         }
 
-        this_thread::sleep_for(chrono::milliseconds(1));
+        renderer.RunFrame();
     }
 
-    // The render thread must fully stop touching Vulkan/GLFW before we tear
-    // either down below. Signal it and keep pumping messages on this (the
-    // GLFW-owning) thread while it winds down, rather than blocking in
-    // Stop()/join() with no message pump running — on Windows, the render
-    // thread's last vkQueuePresentKHR can depend on the window's message
-    // queue being serviced, and blocking here with no pump deadlocks the
-    // driver (no TDR, display frozen) instead of shutting down cleanly.
-    // Previously nothing ever called VulkanInit::Cleanup() at all: the
-    // process just exited with the Vulkan device, swapchain, surface,
-    // instance and GLFW window all still alive, which is what was hanging
-    // the graphics driver on shutdown (observed on Windows/Intel Gen9).
-    renderer.RequestStop();
-    while (!renderer.HasStopped())
-    {
-        glfwPollEvents();
-        this_thread::sleep_for(chrono::milliseconds(1));
-    }
-    renderer.Stop(); // Thread has already finished; this just joins it.
+    // Tear down the GUI/ImGui Vulkan resources (waits for the GPU to finish
+    // with them first) before VulkanInit::Cleanup() below destroys the
+    // device/window out from under them. No thread hand-off needed for this
+    // anymore — RunFrame() above already stopped being called the moment
+    // state.shouldClose went true, so nothing is still touching Vulkan/GLFW
+    // by the time we get here. Previously nothing ever called
+    // VulkanInit::Cleanup() at all: the process just exited with the Vulkan
+    // device, swapchain, surface, instance and GLFW window all still alive,
+    // which is what was hanging the graphics driver on shutdown (observed
+    // on Windows/Intel Gen9) — the message-pump-while-stopping dance this
+    // used to require was specifically to avoid that while a second thread
+    // wound down; ThreadArchitecture.mdx's merge removes the second thread
+    // instead of working around it.
+    renderer.Shutdown();
 
     // MeshingThread must be fully joined before Cleanup() below — it calls
     // ChunkMesher::Shutdown(), which destroys the slab buffers MeshingThread
-    // writes into. Unlike RenderThread it doesn't touch GLFW/vkQueuePresentKHR,
-    // so no message-pump dance is needed here — Stop() alone is enough.
+    // writes into.
     meshingThread.Stop();
 
     Cleanup();

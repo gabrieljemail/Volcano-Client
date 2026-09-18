@@ -24,6 +24,7 @@ namespace {
 // minecraft-data has real block/entity id tables for.
 constexpr const char* MC_DATA_VERSION = "26.1";
 const std::string BLOCKS_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/blocks.json";
+const std::string COLLISION_SHAPES_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/blockCollisionShapes.json";
 const std::string ASSETS_ROOT = "resources/minecraft/assets/minecraft";
 
 // One property declared on a block in blocks.json's "states" array.
@@ -76,6 +77,12 @@ std::vector<uint16_t> g_stateIdToNonCubeVisual;
 std::vector<NonCubeVisual> g_nonCubeVisualTable;
 
 std::unordered_map<std::string, ResolvedModel> g_modelCache;
+
+// Collision data from blockCollisionShapes.json — see MapStateIdCollisionShape.
+// g_collisionShapes is indexed directly by the file's shape id (0 = empty).
+// Empty g_stateIdToCollisionShape means the file didn't load.
+std::vector<uint16_t> g_stateIdToCollisionShape;
+std::vector<CollisionBoxes> g_collisionShapes;
 
 std::mutex g_loggedMutex;
 std::unordered_set<int32_t> g_loggedOutOfRangeIds;
@@ -344,8 +351,8 @@ glm::vec3 RotateDirection(glm::vec3 v, int xDeg, int yDeg) {
     if (yDeg != 0) {
         int cs, sn;
         SinCos90(yDeg, cs, sn);
-        float x = v.x * static_cast<float>(cs) + v.z * static_cast<float>(sn);
-        float z = -v.x * static_cast<float>(sn) + v.z * static_cast<float>(cs);
+        float x = v.x * static_cast<float>(cs) - v.z * static_cast<float>(sn);
+        float z = v.x * static_cast<float>(sn) + v.z * static_cast<float>(cs);
         v.x = x;
         v.z = z;
     }
@@ -507,7 +514,6 @@ uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJs
 
             NonCubeVisual visual;
             visual.shape = NonCubeShape::Cross;
-            visual.collidable = false;
             visual.crossTexture = stem;
             return InternNonCubeVisual(std::move(visual));
         }
@@ -521,7 +527,6 @@ uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJs
 
         NonCubeVisual visual;
         visual.shape = transparentCube ? NonCubeShape::TransparentCube : NonCubeShape::Partial;
-        visual.collidable = true;
 
         for (const json& elem : model.elements) {
             if (!elem.contains("from") || !elem.contains("to") || !elem.contains("faces")) continue;
@@ -585,7 +590,86 @@ uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJs
 // wrap it in one last catch-all — nothing in here should be able to bring
 // the whole app down over a single bad block/file; anything that does is a
 // bug in this function, not a reason to crash the client.
+// Loads blockCollisionShapes.json into g_collisionShapes (by shape id) and
+// g_stateIdToCollisionShape (by protocol state id). Format: "shapes" maps a
+// shape id to a list of [minX,minY,minZ,maxX,maxY,maxZ] boxes in 0..1 block
+// units; "blocks" maps a block name to either one shape id (every state) or
+// an array indexed by (stateId - minStateId). Leaves both tables empty on any
+// failure, which makes MapStateIdCollisionShape report UNKNOWN and every
+// block fall back to "opaque full cube or nothing" — degraded, not broken.
+void LoadCollisionShapes(const std::vector<BlockDef>& blockDefs, int32_t maxStateId) {
+    std::ifstream file(COLLISION_SHAPES_JSON_PATH);
+    if (!file) {
+        Log::Error("[ERROR] BlockRegistry: couldn't open " + COLLISION_SHAPES_JSON_PATH
+            + " — collision falls back to full cubes only (shulker boxes, chests, slabs, ... won't be solid).");
+        return;
+    }
+
+    json data;
+    try {
+        file >> data;
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[ERROR] BlockRegistry: failed to parse blockCollisionShapes.json: ") + e.what());
+        return;
+    }
+    if (!data.contains("shapes") || !data["shapes"].is_object() || !data.contains("blocks") || !data["blocks"].is_object()) {
+        Log::Error("[ERROR] BlockRegistry: blockCollisionShapes.json is missing \"shapes\"/\"blocks\".");
+        return;
+    }
+
+    std::vector<CollisionBoxes> shapes;
+    int truncatedShapes = 0;
+    for (auto it = data["shapes"].begin(); it != data["shapes"].end(); ++it) {
+        int shapeId = std::stoi(it.key());
+        if (shapeId < 0 || shapeId >= Block::UNKNOWN_COLLISION_SHAPE) continue;
+        if (static_cast<size_t>(shapeId) >= shapes.size()) shapes.resize(static_cast<size_t>(shapeId) + 1);
+
+        CollisionBoxes& boxes = shapes[static_cast<size_t>(shapeId)];
+        for (const json& b : it.value()) {
+            if (!b.is_array() || b.size() != 6) continue;
+            if (boxes.count >= CollisionBoxes::MAX_BOXES) { truncatedShapes++; break; }
+            boxes.boxes[static_cast<size_t>(boxes.count++)] = AABB{
+                glm::vec3(b[0].get<float>(), b[1].get<float>(), b[2].get<float>()),
+                glm::vec3(b[3].get<float>(), b[4].get<float>(), b[5].get<float>()) };
+        }
+    }
+    if (truncatedShapes > 0) {
+        Log::Error("[WARN] BlockRegistry: " + std::to_string(truncatedShapes) + " collision shape(s) had more than "
+            + std::to_string(CollisionBoxes::MAX_BOXES) + " boxes; extra boxes dropped.");
+    }
+
+    std::vector<uint16_t> stateToShape(static_cast<size_t>(maxStateId) + 1, 0);
+    const json& blocks = data["blocks"];
+    int missingBlocks = 0;
+    for (const BlockDef& def : blockDefs) {
+        auto entry = blocks.find(def.name);
+        if (entry == blocks.end()) { missingBlocks++; continue; }
+
+        for (int32_t stateId = def.minStateId; stateId <= def.maxStateId; stateId++) {
+            int shapeId = 0;
+            if (entry->is_number_integer()) {
+                shapeId = entry->get<int>();
+            } else if (entry->is_array()) {
+                size_t index = static_cast<size_t>(stateId - def.minStateId);
+                if (index < entry->size() && (*entry)[index].is_number_integer()) shapeId = (*entry)[index].get<int>();
+            }
+            if (shapeId < 0 || static_cast<size_t>(shapeId) >= shapes.size()) shapeId = 0;
+            stateToShape[static_cast<size_t>(stateId)] = static_cast<uint16_t>(shapeId);
+        }
+    }
+    if (missingBlocks > 0) {
+        Log::Error("[WARN] BlockRegistry: " + std::to_string(missingBlocks)
+            + " block(s) have no entry in blockCollisionShapes.json; treating them as non-solid.");
+    }
+
+    g_collisionShapes = std::move(shapes);
+    g_stateIdToCollisionShape = std::move(stateToShape);
+    Log::Info("[INFO] BlockRegistry: loaded " + std::to_string(g_collisionShapes.size()) + " collision shapes.");
+}
+
 void InitImpl() {
+    g_stateIdToCollisionShape.clear();
+    g_collisionShapes.clear();
     g_visualFaceNames.clear();
     g_visualIntern.clear();
     g_nameToVisual.clear();
@@ -661,6 +745,16 @@ void InitImpl() {
     g_stateIdToVisual.assign(static_cast<size_t>(maxStateId) + 1, 0);
     g_stateIdToNonCubeVisual.assign(static_cast<size_t>(maxStateId) + 1, 0);
     g_maxLoadedStateId = maxStateId;
+
+    // Independent of the visual resolution below — collision must not depend
+    // on whether a block has drawable model geometry (see GetCollisionBoxes).
+    try {
+        LoadCollisionShapes(blockDefs, maxStateId);
+    } catch (const std::exception& e) {
+        g_stateIdToCollisionShape.clear();
+        g_collisionShapes.clear();
+        Log::Error(std::string("[ERROR] BlockRegistry: failed loading collision shapes: ") + e.what());
+    }
 
     int resolvedBlocks = 0, excludedBlocks = 0, nonCubeResolvedBlocks = 0;
 
@@ -787,24 +881,25 @@ const NonCubeVisual& GetNonCubeVisual(uint16_t nonCubeVisualId) {
     return g_nonCubeVisualTable[nonCubeVisualId];
 }
 
-CollisionBoxes GetCollisionBoxes(const Block& block) {
-    CollisionBoxes result;
+uint16_t MapStateIdCollisionShape(int32_t stateId) {
+    if (stateId >= 0 && static_cast<size_t>(stateId) < g_stateIdToCollisionShape.size()) {
+        return g_stateIdToCollisionShape[static_cast<size_t>(stateId)];
+    }
+    return Block::UNKNOWN_COLLISION_SHAPE;
+}
 
+CollisionBoxes GetCollisionBoxes(const Block& block) {
+    if (block.collisionShapeId != Block::UNKNOWN_COLLISION_SHAPE) {
+        if (block.collisionShapeId < g_collisionShapes.size()) return g_collisionShapes[block.collisionShapeId];
+        return CollisionBoxes{};
+    }
+
+    // Fallback — see Block::UNKNOWN_COLLISION_SHAPE.
+    CollisionBoxes result;
     if (block.visualId != 0) {
         result.boxes[0] = AABB{ glm::vec3(0.0f), glm::vec3(1.0f) };
         result.count = 1;
-        return result;
     }
-
-    if (block.nonCubeVisualId != 0 && block.nonCubeCollidable) {
-        const NonCubeVisual& visual = GetNonCubeVisual(block.nonCubeVisualId);
-        for (const NonCubeElement& elem : visual.elements) {
-            if (result.count >= CollisionBoxes::MAX_BOXES) break;
-            result.boxes[static_cast<size_t>(result.count)] = AABB{ elem.from / 16.0f, elem.to / 16.0f };
-            result.count++;
-        }
-    }
-
     return result;
 }
 

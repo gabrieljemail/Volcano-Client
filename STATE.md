@@ -1,0 +1,94 @@
+# Volcano Client State
+This document describes the current project state of Volcano Client. Bugs and feature descriptions are listed here, as well as testing sessions.
+
+## Current State
+Completion: **10% Complete.** (Estimate.)
+
+#### Implemented
+* GUI framework (ImGui-based, themed)
+* Basic renderer (Vulkan; terrain + entity + misc passes; texture atlas from minecraft-data)
+* Movement (fixed-tick simulation, AABB collision with auto step-up, sprint/sneak as client-side speed multipliers)
+* Network client (login/configuration/play, compression, chunk streaming, chat/commands, death/respawn)
+* Entity spawning/tracking (placeholder box + a real humanoid model; no other players' skins yet)
+* Player-status HUD (health/hunger/saturation bars, hotbar + armor slot placeholders, selected-slot indicator, chat)
+* Config system (settings.json, dot-path keys, self-defaulting)
+* Interaction manager skeleton (mainhand/offhand tracking, attack cooldown bookkeeping, primary/secondary mouse actions wired — no ray tracer yet, so nothing actually dispatches an attack/block-break/use/place)
+* Unloading chunks
+* Per-block lighting data from the server
+* Inventory UI and packet handling
+* Block selection
+* Tab list
+
+#### Not implemented:
+* Sound effects
+* Music
+* Shadow mapping (LATE)
+* Smooth lighting/SSAO (LATE)
+* View bobbing
+* Water/lava rendering
+* Settings GUI
+* Resource pack reloading (server-pushed packs are currently ignored entirely)
+* Mod loading (LATE)
+* Combat / attacking or interacting with entities
+* Block breaking/placing (no Player Digging / Block Place packet handling)
+* Riding entities
+* Chunk fading
+* Hand model / hand-swing animation
+* Dynamic motion sampled animations
+* Nametags
+* Title/subtitle and a proper action bar (action-bar messages currently just land in chat)
+
+## Bugs
+* When falling, your velocity will reset about 70% of the way down for no reason.
+  * **Lead, unconfirmed:** `TickLoop::FixedStep` zeroes velocity unconditionally on every server position correction (`TickLoop.cpp`, the `pendingTeleport` branch). The server corrects most often mid-fall, which would produce exactly this symptom. Worth checking before looking elsewhere — fix would be to only zero velocity when the correction is a real teleport, not a routine resync.
+* Chunks have faces in between each other. **Root cause confirmed:** `MeshingThread` never remeshes an already-loaded chunk's neighbors when a new chunk arrives next to them. A chunk meshed before its neighbor exists asks `World` for that neighbor, gets "no chunk there" (read as air), and permanently bakes in a face at that boundary — even after the real neighbor streams in a moment later and (correctly) doesn't draw its own matching face. Real fix needs two things this client doesn't have yet: a way to find/replace a specific chunk's existing mesh in `renderList`/`nonCubicRenderList` (currently append-only) and a way to free its old slab allocation when replaced (`SlabBuffer` is bump-allocate-only, no reuse story). Same underlying gap as "Fix the greedy meshing system" below and "Unloading chunks" in Not Implemented — worth tackling together.
+* Splash screen is fitted to the window instead of cropped to fit.
+* Stairs render backwards on the X axis; corner stairs render backwards on both X and Z. Reported live, not yet investigated — likely `NonCubicMesher`'s stair-rotation logic (the same code path the "chunks have faces in between each other" and depth-write fixes already touched this session).
+* ~~Player entity skins render as visual noise / corrupted pixel data~~ — **retracted, was a misdiagnosis.** The user correctly identified the real bug: the face texture was just UV-mapped wrong (see Fixed below — `HumanoidModel.hpp`'s per-face UV corners), not corrupted at rest. Last session's "confirmed via two independent decoders" claim was itself the error — both `steve.png`/`zombie.png` are 8-bit indexed/palette PNGs, and whatever ad-hoc preview was used for that check most likely read the raw index bytes without applying the PLTE palette, which produces exactly this kind of noise for a perfectly valid image. Left struck through rather than deleted so the wrong turn stays on record.
+
+## Fixed since last update (2026-09-15)
+* **Spawn Entity packets failed to parse 100% of the time** (49/49 in a 20s session — no entity ever spawned client-side). `lpVec3` (the velocity field) turned out to be variable-width, not the fixed 3×i16 the code assumed: 1 byte for a stationary entity, 6 for a moving one. The parser now resolves the width per packet against where the tail actually ends, rather than guessing. Verified live: 0 failures across a full session afterward. -- *`NetworkClient.cpp`*
+* Cross-thread chat/command/respawn sends could race the network thread's own socket cancel (`WaitForReadable`) and corrupt the packet stream with a partial write. `Connection` now takes an outbound queue; only the network thread ever touches the socket. -- *`Connection.hpp`, `Connection.cpp`, `NetworkClient.cpp`*
+* `GlobalState::activeConnection` held a raw pointer into a stack-local `NetworkClient`; another thread could load it, get descheduled, and use it after it was destroyed during shutdown. Now an aliasing `shared_ptr` that keeps the client alive for as long as any thread holds a copy. -- *`GlobalState.hpp`, `NetworkThread.cpp`*
+* Horizontal wall collisions froze the player short of the actual contact surface instead of snapping flush to it (same class of bug as the vertical landing-height fix, just with a smaller, walk-speed-bounded gap). Added the horizontal analogue of `FindGroundContactHeight`. **Not yet verified in the real client** — needs a live "moved wrongly" check walking into terrain. -- *`TickLoop.cpp`, `TickLoop.hpp`*
+* Vulkan device selection can now honor a `Graphics.PreferredDevice` name from settings.json (falls back to the default pick with a logged warning if nothing matches). -- *`VulkanInit.cpp`*
+* Humanoid model's "down" face UV now matches vanilla's vertical flip (visible on the underside of the head/feet). -- *`HumanoidModel.hpp`*
+* Crosshair renderer added — draws `resources/crosshair.png` centered on screen every HUD frame, as a standalone Vulkan texture outside TextureManager's block/item atlas (own image/view, no mip chain, loaded once in `GUIController::Init`). Added `GlobalState::lookingAtEntity` as the tracking field this task asked for, so a future raycast can swap in `resources/crosshair-entity.png` — nothing sets it yet, so only the plain crosshair shows for now. Verified live: renders crisp and exactly centered against the dev server. -- *`GUIController.hpp/.cpp`, `GlobalState.hpp`*
+* Hotbar slot switching — number keys "1".."9" now select hotbar slots 0-8 (`Hotbar.0`..`Hotbar.8` actions, gated the same as other HUD-affecting keys so typing in chat doesn't also switch slots), updating `InventoryManager::selectedHotbarSlot` locally and reporting it to the server via a new serverbound `PlayC2S::SetHeldItem` (0x35) packet. Verified live: pressing a number key moves the held-slot highlight to the correct slot and only that slot. -- *`VolcanoClient.cpp`, `RenderThread.cpp`, `NetworkClient.hpp/.cpp`, `PacketIds.hpp`, `VarInt.hpp`*
+
+## Fixed since last update (2026-09-16)
+* **Side textures were upside-down** in both mesh passes. Texture V runs down the image (V=0 is the top row), but both meshers fed it a coordinate that runs *up* the world on vertical faces, so the bottom of every wall sampled the top of its texture. Flipped V for side faces in `ChunkMesher` (terrain) and for side faces plus cross billboards in `NonCubicMesher` (slabs, stairs, plants — flowers were upside-down too). Up/Down faces are unchanged. **Not yet checked in-game** against a grass block side. -- *`ChunkMesher.cpp`, `NonCubicMesher.cpp`*
+* **Stairs and slabs rendered inside-out, with flicker and apparent duplicate faces.** The non-cubic pass had depth *writes* off, on the idea that it's the transparent pass. But stairs, slabs, carpets and snow layers are opaque, and `misc.frag` already discards transparent texels, so it's really a cutout pass. With writes off and backface culling off (the cross billboards need that), a shape's own back and underside faces painted over its front faces whenever they were emitted later. Depth writes are now on, so the depth test sorts this out per fragment. The face-culling logic itself (`IsFaceFlush` against opaque neighbours) and the stair rotation code checked out as correct. Trade-off: truly translucent texels (stained glass) now write depth too, which will need its own pass once those render. **Not yet checked in-game** against actual stairs/slabs. -- *`VulkanInit.cpp`, `RenderThread.cpp` (comment only)*
+* **Rubber-banding when standing on certain blocks.** Collision was built from each block's render model, so any block with no drawable geometry (shulker boxes, chests, beds, signs, skulls; also fences/walls, whose multipart blockstates aren't resolved) had no collision client-side. The player sank into them and the server teleported them back every tick — 722 corrections in one session standing on the red shulker box at spawn (0, 82, 0). Collision now comes from minecraft-data's `blockCollisionShapes.json` (real per-state shapes, up to 15 boxes, up to 1.5 tall), and the collision scans look one cell lower for the tall ones. Verified live: the next session had 7 corrections, spread across different spots rather than all at spawn (the first two were lag). Block-entity blocks are still invisible — rendering them is separate work. -- *`BlockRegistry.hpp/.cpp`, `Block.hpp`, `ChunkParser.cpp`, `TickLoop.cpp`*
+* **Terrain lit flat at light level 15 everywhere, even under tree canopy.** The client already parsed real per-block sky/block light from the server, but shaded with a straight `rawLevel/15` multiply — under vanilla's real (non-linear) response curve, light levels 11-15 all read as nearly full brightness, which is exactly what made shaded ground look the same as open sky. Both fragment shaders now apply vanilla's own curve (`level/(4-3*level)`, from `Lightmap.getBrightness`), remapped to a floor of 0.05 (half of the Nether's 0.1 ambientLight constant, per this task's own spec — the overworld's *own* floor is 0 either way, so this only matters as a stylistic "never quite crushed black" floor) and the normal ceiling of 1.0. Sky-only light is additionally capped at 0.85 so a real block-light source (torch, lava, glowstone) can still reach the full ceiling and read as visibly glowing against its sky-lit surroundings — a flat stand-in for real bloom. This needed sky and block light kept as two separate channels all the way to the shader instead of pre-merged (`Chunk` now stores two arrays; `MaskCell`/`MiscVertex::Pack` carry both). **Verified only that it builds and runs without visual regression in a lit courtyard** — not yet checked against actual under-canopy shade or a real light source, since that spawn didn't have either. -- *`Chunk.hpp`, `World.hpp`, `ChunkMesher.cpp`, `NonCubicMesher.cpp`, `MiscVertex.hpp`, `terrain.vert/.frag`, `misc.vert/.frag`*
+* **Humanoid faces (head, body, arms, legs) were UV-rotated on 3 of 6 box faces (down/north/east)**, most visibly on the head — Steve's front-face texture (eyes/nose/mouth) rendered transposed instead of upright. Root cause: `HumanoidModel::BuildMesh` paired each face's 4 UV corners with its 4 geometric corners the same way for every face (`(u0,v0),(u1,v0),(u1,v1),(u0,v1)`), but that pairing is only correct when a face's local tangent axes (`FaceDef::u`/`v`) happen to align with the same world axes the texture-rect math (`FaceUVRect`) assumes — true for up/west/south, false for down/north/east (verified directly against vanilla's real `ModelPart.Cube`/`Polygon` vertex-to-UV remap in the bundled `resources/minecraft-code`, not guessed). Swapping `FaceDef::u`/`v` themselves to fix it was not an option — it flips the sign of `u×v`, handing those faces backface-culling-breaking winding on any box where width≠depth. Added `HumanoidModel::detail::FaceUVCorners`, which gives each face its own correct corner pairing (a mirror for up/west/south, a transpose for down/north/east) instead of the one-size-fits-all pattern. Also separately: the humanoid mesh's local "front" turned out to sit on local -Z (matches vanilla's own vertex order), but this engine's own yaw convention (`TickLoop`'s `forward{ sin(yaw), 0, cos(yaw) }`, proven correct for the local player's own movement) treats +Z as forward — so a remote player/zombie's whole body was yaw-rotated 90°-ish off from where it should face for a given position, which is almost certainly the "Steve is to the right of the podium instead of in front of it, like it was rotated around a pivot" report. Fixed by turning the mesh 180° around the vertical axis inside `BuildMesh` itself, rather than touching the yaw-rotation matrix both `entity.vert` and `entity_textured.vert` share (that matrix already matches `TickLoop`'s proven-correct convention for a +Z-forward mesh; touching it would've meant also flagging the placeholder-cube shader, where a sign error is currently invisible only because untextured cubes have no facing to look wrong). **UV-corner fix is verified against vanilla's own source, high confidence. The 180° facing fix is the best analysis available without a live entity to rotate in front of the camera — please check Steve/a zombie's face lines up with their walking direction.** -- *`HumanoidModel.hpp`*
+* **`Helpers.hpp` didn't compile** (missing semicolons after `Quat3`/`Quat4`, non-static `constexpr` members on the `Matrix3i`/`3f`/`4i`/`4f` structs) — only surfaced now because nothing had included the file since these structs were added to it until `InteractionManager.hpp` did. -- *`Helpers.hpp`*
+* **Step-up applied while airborne, not just on the ground.** `MoveAxis` tried `TryStepUp` on any blocked horizontal move regardless of `grounded`, so jumping/falling into a solid face let the player climb it a `STEP_HEIGHT` (0.6-block) hop at a time instead of colliding with it like a wall. Now gated on `grounded`. -- *`TickLoop.cpp`*
+* **Ghost chunk geometry after a dimension change** (e.g. dying and respawning back at the world spawn) — the old dimension's chunks, entities, and both render lists just kept rendering forever, since nothing ever cleared them. The server's `Respawn` packet (sent on every dimension change, not only death) was previously unhandled entirely. The disconnect-screen reset (world/render-list/entity clear, already existed, only ever ran when returning to the connect screen) is now a shared `GlobalState::ResetWorldState()`, called on `Respawn` too — same reset, but without reopening the connect screen, so the session stays connected while the new dimension's chunks stream in. **Not yet verified against a live respawn/dimension change** — only that it builds and the reset is a safe no-op mid-connect-screen-return (its original call site). -- *`GlobalState.hpp`, `VolcanoClient.cpp`, `NetworkClient.cpp`, `PacketIds.hpp`*
+
+## Tasks
+[x] Contemplate my life choices.
+[x] Add key actions for switching hotbar slots.
+[x] Fix stair and slab rendering.
+[x] Fix side textures being upside-down.
+[x] Add the crosshair to the GUI and add relevant tracking fields, such as the attack indicator. Use resources/crosshair.png for the source image.
+[x] Take a nap.
+[x] Add the block overlay, using settings.json fields for styling and the collision model for the shape.
+[ ] Fix the greedy meshing system.
+[ ] Replace the implicit Vulkan backface culling with basic compute shader backface culling.
+[x] Eat lunch.
+[x] Take a shower.
+[ ] Re-create the splash screen and fix the scaling.
+[ ] Create an `src/gui/screens` directory and move screen classes there.
+[ ] Create an SettingsScreen class in `gui/screens` that displays links to other (future for now) options screens.
+[ ] Create a GraphicsSettingsScreen class in `gui/screens` that allows you to control graphics settings found in settings.json.
+[ ] Pick an icon font (FontAwesome or Material) and drop it in `resources/fonts/` so `GUIController::Init` can merge its glyphs into the atlas — blocks a real heart/hunger icon HUD instead of the current labeled bars.
+[ ] Verify the new horizontal wall-collision snap (`TickLoop::FindWallContactCoordinate`) feels right in the real client — walk into a wall and watch for a "moved wrongly" kick, same test the old TODO asked for.
+[ ] Commit `STATE.md` to git — it's currently untracked, so there's no history of it and it's one `git clean` away from gone.
+[x] Create `InteractionManager` (`src/interaction/`) — mainhand/offhand tracking (snapshotted from `GlobalState::inventory` each frame, not held as raw pointers into it — see its own comment on why), attack-cooldown bookkeeping, `PrimaryAction`/`SecondaryAction` mouse-button input actions (added mouse-button support to `InputHandler` itself, which had none before — see `MOUSE_BUTTON_LEFT`/`RIGHT`). `RayTraceSelection()` is a deliberate stub — that's the next task below — so `PrimaryTrigger`/`SecondaryTrigger` currently only manage the cooldown gate, nothing dispatches an attack/break/use/place yet.
+[x] Build the ray tracer: a block/entity raycast that resolves the camera's look ray against `state->world`/`state->entities` out to `InteractionManager::blockReachDistance`/`reachDistance`. Wire it into `InteractionManager::RayTraceSelection()` (for `PrimaryTrigger`/`SecondaryTrigger` to dispatch against, and the selection-outline renderer to draw) and into `GlobalState::lookingAtEntity` so the crosshair's attack-indicator variant actually swaps in on target.
+[ ] Once the ray tracer exists: wire `InteractionManager::PrimaryTrigger`/`SecondaryTrigger` to actually attack the targeted entity / start breaking the targeted block, and use the held item / place a block against the targeted face, respectively.
+[ ] Fix chunk-boundary faces for real: give `renderList`/`nonCubicRenderList` a find-and-replace path (not just append) and `SlabBuffer` a way to free/reuse a chunk's old allocation, then have `MeshingThread` remesh a chunk's already-loaded neighbors whenever a new chunk lands next to them.
+[x] Fix the humanoid face-texture rotation (was a UV-corner-pairing bug, not a corrupted skin file — see Fixed).
+[x] Verify live that a remote player/zombie's face now points the same way they're walking (the 180°-facing fix in the same change above couldn't be checked without a live entity).
+[x] Verify the dimension-change reset (`GlobalState::ResetWorldState` on `PlayS2C::Respawn`) against a real respawn/dimension change — confirm the old world's geometry is actually gone and the new one streams in cleanly.

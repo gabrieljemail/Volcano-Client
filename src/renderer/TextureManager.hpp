@@ -34,6 +34,13 @@ public:
 
     uint16_t GetLayerIndex(const std::string& textureName) const;
 
+    // Same lookup as GetLayerIndex, without its "not found" log line — for
+    // callers (e.g. ItemRegistry, resolving ~1000+ item names at startup)
+    // that expect a real miss rate and want to know whether to draw
+    // anything at all, rather than treating GetLayerIndex's fallback-to-0
+    // as if it were a real match.
+    bool HasLayer(const std::string& textureName) const;
+
     TextureArray array;
 private:
     std::unordered_map<std::string, uint16_t> layerLookup;

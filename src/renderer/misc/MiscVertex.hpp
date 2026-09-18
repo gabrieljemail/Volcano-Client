@@ -18,10 +18,15 @@ namespace Volcano {
 struct MiscVertex {
     glm::vec3 position; // Chunk-local block-space position; the model matrix places the chunk in the world, same as terrain vertices.
     glm::vec2 uv;        // 0..1 per face — non-cube quads are never greedy-merged, so no tiling repeat is needed.
-    uint32_t packed;     // textureLayer (bits 0-15), skyLight (bits 20-23), biomeTinted (bit 24).
+    // textureLayer (bits 0-15), blockLight (bits 16-19), skyLight (bits
+    // 20-23), biomeTinted (bit 24) — same split and same reason as
+    // PackedVertex's word1 (see terrain.frag's own comment on why the two
+    // channels stay separate all the way to the shader).
+    uint32_t packed;
 
-    static uint32_t Pack(uint16_t textureLayer, uint8_t skyLight, bool biomeTinted) {
+    static uint32_t Pack(uint16_t textureLayer, uint8_t skyLight, uint8_t blockLight, bool biomeTinted) {
         return (static_cast<uint32_t>(textureLayer) & 0xFFFFu)
+            | ((static_cast<uint32_t>(blockLight) & 0xFu) << 16)
             | ((static_cast<uint32_t>(skyLight) & 0xFu) << 20)
             | ((biomeTinted ? 1u : 0u) << 24);
     }

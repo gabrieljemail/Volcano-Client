@@ -42,8 +42,8 @@ const std::string& GetFaceTextureName(uint16_t visualId, int faceIndex);
 // offline debug world generator).
 uint16_t VisualIdForName(const std::string& blockName);
 
-// How a NonCubeVisual should be drawn/collided with by NonCubicMesher and
-// Block::hasCollision() respectively.
+// How a NonCubeVisual should be drawn by NonCubicMesher. (Collision no longer
+// comes from these visuals — see MapStateIdCollisionShape.)
 enum class NonCubeShape : uint8_t {
     Cross,           // Two (or more) intersecting billboard planes: grass, flowers, saplings, ...
     Partial,         // One or more axis-aligned boxes smaller than a full block: slabs, carpets, snow layers, ...
@@ -70,7 +70,6 @@ struct NonCubeElement {
 
 struct NonCubeVisual {
     NonCubeShape shape = NonCubeShape::Partial;
-    bool collidable = false;
     std::vector<NonCubeElement> elements; // Populated for Partial/TransparentCube; empty for Cross.
     std::string crossTexture;             // Populated for Cross only.
 };
@@ -83,40 +82,47 @@ struct NonCubeVisual {
 uint16_t MapStateIdNonCube(int32_t stateId);
 
 // Looks up a previously-resolved non-cube visual by id. Returns a
-// default-constructed (Partial, not collidable, no elements) NonCubeVisual
+// default-constructed (Partial, no elements) NonCubeVisual
 // for id 0 or any id outside the interned table.
 const NonCubeVisual& GetNonCubeVisual(uint16_t nonCubeVisualId);
 
-// One axis-aligned collision box in LOCAL block-space, 0..1 per axis
-// (already divided by 16, unlike NonCubeElement::from/to which stay in the
-// model JSON's native 0..16 units) — add directly to a block's integer
-// world origin to place it.
+// One axis-aligned collision box in LOCAL block-space, 0..1 per axis — add
+// directly to a block's integer world origin to place it. May extend past 1
+// on Y: fences, walls and fence gates collide up to 1.5 (see TickLoop's scan
+// ranges, which look one cell below the player's AABB for exactly this).
 struct AABB {
     glm::vec3 min{0.0f};
     glm::vec3 max{0.0f};
 };
 
-// Small fixed-capacity box list, sized for the shapes this client actually
-// resolves (a full cube or slab is 1 box, a straight stair 2, an inner/outer
-// stair corner 3) — returned by value with no heap allocation, since this
-// runs on TickLoop's physics hot path every tick for every block cell a
-// player's AABB might touch. Any element beyond MAX_BOXES is silently
-// dropped (shouldn't happen for any real vanilla shape).
+// Small fixed-capacity box list, returned by value with no heap allocation,
+// since this runs on TickLoop's physics hot path every tick for every block
+// cell a player's AABB might touch. Sized for the largest shape in 26.1's
+// blockCollisionShapes.json (15 boxes); anything beyond MAX_BOXES is dropped
+// with a one-time log at load.
 struct CollisionBoxes {
-    static constexpr int MAX_BOXES = 4;
+    static constexpr int MAX_BOXES = 16;
     std::array<AABB, MAX_BOXES> boxes{};
     int count = 0;
 };
 
-// Real per-shape collision geometry for one block, replacing the old "whole
-// voxel is solid or it isn't" test — an opaque full cube still collides as a
-// single [0,1]^3 box, but a non-cube block (stairs, slabs, end rods, ...)
-// collides only where its actual model elements are, using the exact same
-// boxes NonCubicMesher renders (NonCubeVisual::elements), so e.g. standing
-// on the far corner of an end rod's thin post no longer works. Empty for
-// true air, an unresolved block, and non-collidable shapes (cross-shaped
-// plants). Shared by TickLoop's physics collision and (later) block-
-// selection raycasting so both agree on the exact same shape.
+// Maps a protocol block-state id to its collision-shape id in minecraft-data's
+// blockCollisionShapes.json — the same per-state shapes the server collides
+// against. 0 means no collision. Returns Block::UNKNOWN_COLLISION_SHAPE for
+// an out-of-range id, or if that file failed to load.
+uint16_t MapStateIdCollisionShape(int32_t stateId);
+
+// Real collision geometry for one block, from its collisionShapeId — NOT from
+// its render model. Deriving it from the model (as this used to) left every
+// block without drawable model elements with no collision: shulker boxes,
+// chests, beds, signs, skulls, and anything else a block-entity renderer
+// draws, plus fences/walls (multipart blockstates this registry doesn't
+// resolve visuals for). The server still treats all of those as solid, so
+// standing on one meant sinking into it client-side and being teleported
+// back every tick. Blocks with UNKNOWN_COLLISION_SHAPE (the offline debug
+// world, or collision data that failed to load) fall back to "opaque full
+// cube or nothing". Shared by TickLoop's physics collision and (later)
+// block-selection raycasting so both agree on the exact same shape.
 CollisionBoxes GetCollisionBoxes(const Block& block);
 
 } // namespace Volcano::BlockRegistry

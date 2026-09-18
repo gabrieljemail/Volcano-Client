@@ -1,7 +1,9 @@
 lib/
 build/
+build-release/
 CMakeFiles/
 node_modules/
+*.log
 
 # Copyrighted Mojang material — decompiled source (resources/minecraft-code),
 # extracted assets/resource pack (resources/minecraft), and anything else

@@ -58,15 +58,16 @@ static Block GetBlockAcrossChunks(const Chunk& chunk, const World& world, int lx
 }
 
 // Same cross-chunk fallback as GetBlockAcrossChunks, for the light sample at
-// the solid block contributing a face.
-static uint8_t GetLightAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
+// the solid block contributing a face. Returns both channels from one lookup
+// — see LightSample's own comment.
+static LightSample GetLightAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
     if (lx >= 0 && lx < CHUNK_SIZE_X && lz >= 0 && lz < CHUNK_SIZE_Z) {
-        return chunk.getLight(lx, ly, lz);
+        return chunk.getLightSample(lx, ly, lz);
     }
 
     int worldX = chunk.getX() * CHUNK_SIZE_X + lx;
     int worldZ = chunk.getZ() * CHUNK_SIZE_Z + lz;
-    return world.GetLight(worldX, ly + WORLD_MIN_Y, worldZ);
+    return world.GetLightSample(worldX, ly + WORLD_MIN_Y, worldZ);
 }
 
 // One cell of the 2D mask swept across a chunk during greedy meshing: which
@@ -74,19 +75,22 @@ static uint8_t GetLightAcrossChunks(const Chunk& chunk, const World& world, int 
 // sits on (+1 = solid block is on the negative side of the boundary and its
 // face points in the positive axis direction, -1 = the opposite). A `normal`
 // of 0 means no face is exposed here (both sides agree — solid/solid or
-// air/air) and the cell is skipped. `light` is the real per-block light at
-// the solid block contributing this face; it's part of the mask comparison
-// so the greedy sweep never merges two faces with different light levels
-// into one quad (light isn't interpolated across a merged quad, so quads
-// simply stop growing at a light boundary instead).
+// air/air) and the cell is skipped. `skyLight`/`blockLight` are the real
+// per-block light at the solid block contributing this face, kept apart
+// (see LightSample's own comment) — both are part of the mask comparison so
+// the greedy sweep never merges two faces with a different light level on
+// either channel into one quad (light isn't interpolated across a merged
+// quad, so quads simply stop growing at a light boundary instead).
 struct MaskCell {
     uint16_t type = 0;
     int8_t normal = 0;
-    uint8_t light = 0;
+    uint8_t skyLight = 0;
+    uint8_t blockLight = 0;
 
     bool IsEmpty() const { return normal == 0; }
     bool operator==(const MaskCell& other) const {
-        return type == other.type && normal == other.normal && light == other.light;
+        return type == other.type && normal == other.normal
+            && skyLight == other.skyLight && blockLight == other.blockLight;
     }
     bool operator!=(const MaskCell& other) const { return !(*this == other); }
 };
@@ -178,11 +182,11 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, con
                     // there — a solid block's own stored light is always 0
                     // (light doesn't propagate into solid blocks), which is
                     // what made every face render pitch black.
-                    uint8_t light = GetLightAcrossChunks(chunk, world, x[0] + q[0], x[1] + q[1], x[2] + q[2]);
-                    mask[n] = { a.visualId, 1, light };
+                    LightSample light = GetLightAcrossChunks(chunk, world, x[0] + q[0], x[1] + q[1], x[2] + q[2]);
+                    mask[n] = { a.visualId, 1, light.sky, light.block };
                 } else {
-                    uint8_t light = GetLightAcrossChunks(chunk, world, x[0], x[1], x[2]);
-                    mask[n] = { b.visualId, -1, light };
+                    LightSample light = GetLightAcrossChunks(chunk, world, x[0], x[1], x[2]);
+                    mask[n] = { b.visualId, -1, light.sky, light.block };
                 }
             }
         }
@@ -214,8 +218,6 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, con
                 int faceIndex = FaceIndexFor(axis, cell.normal);
                 FaceTexture faceTexture = GetFaceTexture(cell.type, faceIndex, textureManager);
 
-                uint8_t skyLight = cell.light;
-
                 // Quad corners as (u, v) offsets from (x[u], x[v]); the winding
                 // order differs by normal sign so the merged quad still faces
                 // outward correctly (matches the per-face winding the old
@@ -239,6 +241,17 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, con
                     localPos[u] = x[u] + uOff;
                     localPos[v] = x[v] + vOff;
 
+                    // Texture V runs DOWN the image (V=0 is its top row), but
+                    // vOff runs UP the world on the two side axes — v is Y
+                    // there (see the u/v assignment above). Feeding vOff
+                    // straight through therefore put the BOTTOM of a wall at
+                    // the TOP of its texture, which is exactly why
+                    // grass_block_side (and every other side texture) rendered
+                    // upside down. Flipping it lands V=0 on the top edge of
+                    // the quad. Y-axis faces (floor/ceiling, where v is X) have
+                    // no up/down to get wrong, so they pass through unchanged.
+                    int texV = (v == 1) ? (h - vOff) : vOff;
+
                     // UV is packed as raw block-space tile counts (not normalized
                     // 0-1) so a merged quad tiles its texture `w` x `h` times via
                     // the texture sampler's REPEAT wrap mode, rather than
@@ -247,10 +260,10 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, con
                         glm::uvec3(localPos[0], localPos[1], localPos[2]),
                         static_cast<uint8_t>(faceIndex), // normalIndex, 0-5 fits in 3 bits
                         0,                     // AO — not computed yet
-                        static_cast<uint8_t>(uOff), static_cast<uint8_t>(vOff),
+                        static_cast<uint8_t>(uOff), static_cast<uint8_t>(texV),
                         faceTexture.layer,
-                        0,                     // blockLight — combined into skyLight instead, see Chunk::getLight
-                        skyLight,
+                        cell.blockLight,
+                        cell.skyLight,
                         faceTexture.biomeTinted
                     ));
                 }

@@ -7,6 +7,29 @@ namespace Volcano {
 
 namespace {
 
+// Vanilla's own MAX_PACKET_SIZE, applied to both the wire frame length and a
+// compressed packet's declared uncompressed size. Both numbers come straight
+// off the socket before a single byte of them has been validated, and both
+// are fed directly to a vector's sizing constructor — so without this, one
+// desynced byte anywhere in the stream (exactly what the Set Container Slot
+// VarInt-vs-i16 misread produced before it was fixed) turns the next "length"
+// into garbage and asks for an allocation of up to 2 GiB. That's a hard
+// crash or a swap-storm instead of a clean, catchable "malformed packet".
+constexpr int32_t MAX_PACKET_SIZE = 2097152;
+
+// Validates a length field read off the wire before it's used to size a
+// buffer. Negative is always malformed (a 5-byte VarInt can encode one, and
+// static_cast<size_t> of it is SIZE_MAX).
+int32_t CheckedLength(int32_t length, const char* what)
+{
+    if (length < 0 || length > MAX_PACKET_SIZE)
+    {
+        throw std::runtime_error(std::string("Malformed ") + what + " (" + std::to_string(length)
+            + ") — stream is desynced or the server is not speaking this protocol");
+    }
+    return length;
+}
+
 std::vector<uint8_t> ZlibCompress(const std::vector<uint8_t>& data)
 {
     uLongf destLen = compressBound(static_cast<uLong>(data.size()));
@@ -19,6 +42,7 @@ std::vector<uint8_t> ZlibCompress(const std::vector<uint8_t>& data)
 
 std::vector<uint8_t> ZlibDecompress(const uint8_t* data, size_t size, int32_t uncompressedSize)
 {
+    CheckedLength(uncompressedSize, "compressed packet's declared uncompressed size");
     std::vector<uint8_t> dest(static_cast<size_t>(uncompressedSize));
     uLongf destLen = static_cast<uLongf>(uncompressedSize);
     int result = uncompress(dest.data(), &destLen, data, static_cast<uLong>(size));
@@ -31,9 +55,32 @@ std::vector<uint8_t> ZlibDecompress(const uint8_t* data, size_t size, int32_t un
 
 void Connection::SendPacket(int32_t packetId, const std::vector<uint8_t>& payload)
 {
-    std::lock_guard<std::mutex> lock(writeMutex);
     if (threshold < 0) SendUncompressed(packetId, payload);
     else SendCompressed(packetId, payload);
+}
+
+void Connection::QueuePacket(int32_t packetId, std::vector<uint8_t> payload)
+{
+    std::lock_guard<std::mutex> lock(outboundMutex);
+    outbound.emplace_back(packetId, std::move(payload));
+}
+
+void Connection::FlushOutbound()
+{
+    // Swap the queue out under the lock and write outside it, so a
+    // cross-thread QueuePacket() never blocks behind a socket write — and so
+    // a throw from SendPacket below can't leave the lock held.
+    std::vector<std::pair<int32_t, std::vector<uint8_t>>> pending;
+    {
+        std::lock_guard<std::mutex> lock(outboundMutex);
+        if (outbound.empty()) return;
+        pending.swap(outbound);
+    }
+
+    for (const auto& [packetId, payload] : pending)
+    {
+        SendPacket(packetId, payload);
+    }
 }
 
 void Connection::SendUncompressed(int32_t packetId, const std::vector<uint8_t>& payload)
@@ -88,6 +135,43 @@ int32_t Connection::ReadPacket(std::vector<uint8_t>& outPayload)
     return threshold < 0 ? ReadPacketRaw(outPayload) : ReadPacketCompressed(outPayload);
 }
 
+bool Connection::WaitForReadable(std::chrono::milliseconds timeout)
+{
+    auto& ctx = static_cast<asio::io_context&>(socket.get_executor().context());
+    asio::steady_timer timer(ctx);
+    timer.expires_after(timeout);
+
+    bool dataReady = false;
+    // Both handlers below are guaranteed to fire exactly once each (asio
+    // completes every async op, successfully or with operation_aborted) —
+    // waiting for both before returning means neither is left posted to
+    // this io_context with a dangling reference into this stack frame,
+    // which a later WaitForReadable() call's ctx.run_one() could otherwise
+    // service after these locals no longer exist.
+    int pending = 2;
+
+    socket.async_wait(asio::socket_base::wait_read, [&](const asio::error_code& ec) {
+        if (!ec) dataReady = true;
+        timer.cancel();
+        --pending;
+    });
+    timer.async_wait([&](const asio::error_code&) {
+        socket.cancel();
+        --pending;
+    });
+
+    // This io_context is otherwise never run (see the class comment) —
+    // only this thread ever touches this socket, so driving it with
+    // run_one() here just to service the two handlers above is safe.
+    ctx.restart();
+    while (pending > 0)
+    {
+        ctx.run_one();
+    }
+
+    return dataReady;
+}
+
 int32_t Connection::ReadPacketRaw(std::vector<uint8_t>& outPayload)
 {
     // The length-prefix VarInt precedes everything else in the frame, so it
@@ -103,7 +187,7 @@ int32_t Connection::ReadPacketRaw(std::vector<uint8_t>& outPayload)
         if (shift >= 35) throw std::runtime_error("VarInt is too big reading packet length");
     }
 
-    std::vector<uint8_t> body(static_cast<size_t>(length));
+    std::vector<uint8_t> body(static_cast<size_t>(CheckedLength(length, "packet length")));
     asio::read(socket, asio::buffer(body));
 
     PacketReader reader(body.data(), body.size());
@@ -124,7 +208,7 @@ int32_t Connection::ReadPacketCompressed(std::vector<uint8_t>& outPayload)
         if (shift >= 35) throw std::runtime_error("VarInt is too big reading packet length");
     }
 
-    std::vector<uint8_t> body(static_cast<size_t>(packetLength));
+    std::vector<uint8_t> body(static_cast<size_t>(CheckedLength(packetLength, "packet length")));
     asio::read(socket, asio::buffer(body));
 
     PacketReader outer(body.data(), body.size());

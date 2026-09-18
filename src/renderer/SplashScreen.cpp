@@ -347,7 +347,7 @@ void Show()
         renderPassInfo.renderArea.extent = swapchainExtent;
 
         std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // Black letterbox bars.
+        clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // Only visible on an exact aspect-ratio match; the quad otherwise covers the whole window.
         clearValues[1].depthStencil = {1.0f, 0};
         renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
         renderPassInfo.pClearValues = clearValues.data();
@@ -368,15 +368,17 @@ void Show()
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
 
-        // "Contain" letterboxing: shrink whichever axis would otherwise
-        // overflow the window, so the image's own aspect ratio is preserved
-        // instead of stretching it to fill an arbitrarily-shaped window.
+        // "Cover" cropping: the quad always covers the full window; crop
+        // whichever image axis would otherwise need letterbox bars to
+        // preserve the image's aspect ratio, so the window fills edge-to-
+        // edge at the cost of cutting off some of the longer axis, instead
+        // of shrinking the image to fit inside the window with bars.
         float windowAspect = static_cast<float>(swapchainExtent.width) / static_cast<float>(swapchainExtent.height);
         float imageAspect = static_cast<float>(imageWidth) / static_cast<float>(imageHeight);
-        glm::vec2 scale = (imageAspect > windowAspect)
-            ? glm::vec2(1.0f, windowAspect / imageAspect)
-            : glm::vec2(imageAspect / windowAspect, 1.0f);
-        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(scale), &scale);
+        glm::vec2 uvScale = (imageAspect > windowAspect)
+            ? glm::vec2(windowAspect / imageAspect, 1.0f)
+            : glm::vec2(1.0f, imageAspect / windowAspect);
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(uvScale), &uvScale);
 
         vkCmdDraw(cmd, 4, 1, 0, 0);
         vkCmdEndRenderPass(cmd);
