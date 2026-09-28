@@ -23,7 +23,7 @@ class VisibleChunkController {
 public:
     // Returns pointers into `meshes` for every mesh whose chunk-column AABB
     // intersects the frustum described by `viewProj` (camera view * proj,
-    // the same matrices RecordAndSubmitFrame uploads into CameraUBO).
+    // the same matrices the render engine uploads into CameraUBO — see FrameContext::viewProj).
     // `meshes` must outlive the returned vector.
     static std::vector<const Mesh*> GetVisibleMeshes(const std::vector<Mesh>& meshes, const glm::mat4& viewProj);
 

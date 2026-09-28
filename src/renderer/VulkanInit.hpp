@@ -3,12 +3,14 @@
 #define VULKAN_INIT_H
 
 #include <cstdint>
+#include <string>
 #include <vector>
 #include <vulkan/vulkan.hpp>
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
 #include "GlobalState.hpp"
 #include "models/AllocatedBuffer.hpp"
+#include "engine/ShaderLibrary.hpp"
 
 using namespace Volcano;
 
@@ -95,9 +97,27 @@ inline void GetInFlightFences(VkFence*& outVar) { outVar = inFlightFences; }
 inline VkDescriptorSet GetTextureSet() { return textureSet; }
 
 // Functions:
-void CreateGraphicsPipeline();
+
+// World pipelines — terrain (plus its wireframe twin) and non-cubic. Owned
+// by the engine's TerrainPass/NonCubicPass (see engine/passes/), which
+// call these from their Create()/Destroy(), and again on a shader reload;
+// both Destroy functions are idempotent. Shaders come from the
+// ShaderLibrary, so a shader pack can replace terrain.*/misc.*.
+void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders);
+void DestroyGraphicsPipeline();
 // Must run after CreateGraphicsPipeline() — reuses its pipelineLayout.
-void CreateNonCubicPipeline();
+void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders);
+void DestroyNonCubicPipeline();
+
+// Builds a VkShaderModule from shaders.Load(shaderName) ("terrain.vert",
+// ...). Throws if the shader can't be found or the driver rejects it —
+// which is what lets RenderEngine fall back to the built-in shaders when a
+// shader pack's replacement is broken.
+VkShaderModule CreateShaderModule(const Volcano::Engine::ShaderLibrary& shaders, const std::string& shaderName);
+// Same, from SPIR-V already in hand (e.g. ShaderLibrary::LoadFromPack()).
+// debugName only appears in the exception message.
+VkShaderModule CreateShaderModule(const std::vector<char>& code, const std::string& debugName);
+
 AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA = false);
 void Init(GlobalState* state);
 void Cleanup();
