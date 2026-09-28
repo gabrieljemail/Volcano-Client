@@ -9,7 +9,7 @@
 #include "InputHandler.hpp"
 #include "Logger.hpp"
 #include "renderer/RenderThread.hpp"
-#include "renderer/VulkanInit.hpp"
+#include "renderer/engine/vulkan/VulkanRenderEngine.hpp"
 #include "renderer/SplashScreen.hpp"
 #include "renderer/TextureManager.hpp"
 #include "renderer/terrain/models/Chunk.hpp"
@@ -129,9 +129,15 @@ int main()
     // wants it available from the very first frame.
     state.systemInfo.DetectCPU();
 
-    // Create the render thread.
+    // The rendering engine — everything below reaches the renderer through
+    // this (GlobalState::renderEngine), never through Vulkan directly. Init()
+    // creates the window/device/swapchain and every built-in render pass.
+    Volcano::Engine::Vulkan::VulkanRenderEngine renderEngine(&state);
+    state.renderEngine = &renderEngine;
+    renderEngine.Init();
+
+    // Create the render thread (frame loop — see RunFrame below).
     Volcano::RenderThread renderer(&state);
-    Init(&state);
 
     // Shows resources/splash-screen.jpeg for one frame before the slow,
     // synchronous startup work below (block/entity registries, texture
@@ -182,6 +188,7 @@ int main()
     input.RegisterAction("ToggleInventory", InputActionTriggerType::PRESS, {GLFW_KEY_E});
     input.RegisterAction("ToggleWireframe", InputActionTriggerType::PRESS, {GLFW_KEY_F3});
     input.RegisterAction("ToggleLighting", InputActionTriggerType::PRESS, {GLFW_KEY_G});
+    input.RegisterAction("ReloadShaders", InputActionTriggerType::PRESS, {GLFW_KEY_F9});
 
     // Hotbar slot selection — vanilla's number-row bindings, key "1" for
     // slot 0 through "9" for slot 8. One PRESS action per key rather than a
@@ -231,23 +238,10 @@ int main()
     // not the texture array).
     Volcano::ItemRegistry::Init(textureManager);
 
-    // Update texture descriptor set with the texture array
-    VkDescriptorImageInfo imageInfo{};
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo.imageView = textureManager.array.view;
-    imageInfo.sampler = textureManager.array.sampler;
-
-    VkWriteDescriptorSet textureWrite{};
-    textureWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    textureWrite.dstSet = GetTextureSet();
-    textureWrite.dstBinding = 0;
-    textureWrite.descriptorCount = 1;
-    textureWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    textureWrite.pImageInfo = &imageInfo;
-    vkUpdateDescriptorSets(GetDevice(), 1, &textureWrite, 0, nullptr);
-
-    // Initialize GUI controller framework with ImGui
-    Volcano::GUIController::Init(state.window, GetRenderPass(), 2, &state, &textureManager); // 2 is the swapchain image count
+    // Point the world passes at the texture array, and start the ImGui
+    // backend against the engine's render pass.
+    renderEngine.AttachTextures(textureManager);
+    renderEngine.AttachGUI(&textureManager);
 
     // World (placeholder — see the tick-loop plan) and attributes must exist
     // before GenerateChunks/TickLoop touch them.
@@ -370,8 +364,8 @@ int main()
         renderer.RunFrame();
     }
 
-    // Tear down the GUI/ImGui Vulkan resources (waits for the GPU to finish
-    // with them first) before VulkanInit::Cleanup() below destroys the
+    // Tear down the GUI and every render pass (waits for the GPU to finish
+    // with them first) before renderEngine.Shutdown() below destroys the
     // device/window out from under them. No thread hand-off needed for this
     // anymore — RunFrame() above already stopped being called the moment
     // state.shouldClose went true, so nothing is still touching Vulkan/GLFW
@@ -385,12 +379,12 @@ int main()
     // instead of working around it.
     renderer.Shutdown();
 
-    // MeshingThread must be fully joined before Cleanup() below — it calls
-    // ChunkMesher::Shutdown(), which destroys the slab buffers MeshingThread
-    // writes into.
+    // MeshingThread must be fully joined before renderEngine.Shutdown()
+    // below — it calls ChunkMesher::Shutdown(), which destroys the slab
+    // buffers MeshingThread writes into.
     meshingThread.Stop();
 
-    Cleanup();
+    renderEngine.Shutdown();
 
     return 0;
 }

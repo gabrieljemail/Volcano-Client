@@ -123,34 +123,31 @@ void UploadMesh()
     vmaDestroyBuffer(vmaAllocator, staging.buffer, staging.allocation);
 }
 
-VkShaderModule CreateShaderModuleFromFile(const std::string& path)
-{
-    std::vector<char> code = ReadFile(path);
-    if (code.empty())
-    {
-        throw std::runtime_error("[ERROR] Failed to read shader file: " + path);
-    }
-
-    VkShaderModuleCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    createInfo.codeSize = code.size();
-    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-
-    VkShaderModule module;
-    if (vkCreateShaderModule(GetDevice(), &createInfo, nullptr, &module) != VK_SUCCESS)
-    {
-        throw std::runtime_error("[ERROR] Failed to create shader module: " + path);
-    }
-    return module;
-}
-
 // One shared pipeline layout (camera set + a push constant), and two
 // pipelines off the same shaders/fixed-function state differing only in
 // topology — LINE_LIST for the outline, TRIANGLE_LIST for the fill.
-void CreatePipelines()
+void CreatePipelines(const Engine::ShaderLibrary& shaders)
 {
-    VkShaderModule vertModule = CreateShaderModuleFromFile("resources/shaders/selection.vert.spv");
-    VkShaderModule fragModule = CreateShaderModuleFromFile("resources/shaders/selection.frag.spv");
+    VkShaderModule vertModule = CreateShaderModule(shaders, "selection.vert");
+    VkShaderModule fragModule = VK_NULL_HANDLE;
+    try
+    {
+        fragModule = CreateShaderModule(shaders, "selection.frag");
+    }
+    catch (...)
+    {
+        vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
+        throw;
+    }
+
+    // Modules are only needed until the pipelines exist — released on every
+    // exit path, since a shader pack's replacement failing here is a
+    // recoverable outcome (RenderEngine falls back to built-ins).
+    auto destroyModules = [&]()
+    {
+        vkDestroyShaderModule(GetDevice(), fragModule, nullptr);
+        vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
+    };
 
     VkPipelineShaderStageCreateInfo vertStage{};
     vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -247,6 +244,7 @@ void CreatePipelines()
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
     if (vkCreatePipelineLayout(GetDevice(), &pipelineLayoutInfo, nullptr, &g_pipelineLayout) != VK_SUCCESS)
     {
+        destroyModules();
         throw std::runtime_error("[ERROR] Failed to create selection pipeline layout.");
     }
 
@@ -271,6 +269,8 @@ void CreatePipelines()
     pipelineInfo.subpass = 0;
     if (vkCreateGraphicsPipelines(GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &g_fillPipeline) != VK_SUCCESS)
     {
+        g_fillPipeline = VK_NULL_HANDLE;
+        destroyModules();
         throw std::runtime_error("[ERROR] Failed to create selection fill pipeline.");
     }
 
@@ -280,23 +280,15 @@ void CreatePipelines()
     linePipelineInfo.pInputAssemblyState = &lineAssembly;
     if (vkCreateGraphicsPipelines(GetDevice(), VK_NULL_HANDLE, 1, &linePipelineInfo, nullptr, &g_linePipeline) != VK_SUCCESS)
     {
+        g_linePipeline = VK_NULL_HANDLE;
+        destroyModules();
         throw std::runtime_error("[ERROR] Failed to create selection line pipeline.");
     }
 
-    vkDestroyShaderModule(GetDevice(), fragModule, nullptr);
-    vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
+    destroyModules();
 }
 
-} // namespace
-
-void SelectionRenderer::Init()
-{
-    UploadMesh();
-    CreatePipelines();
-    Log::Info("[INFO] Selection renderer initialized.");
-}
-
-void SelectionRenderer::Shutdown()
+void DestroyPipelines()
 {
     if (g_fillPipeline != VK_NULL_HANDLE)
     {
@@ -313,10 +305,35 @@ void SelectionRenderer::Shutdown()
         vkDestroyPipelineLayout(GetDevice(), g_pipelineLayout, nullptr);
         g_pipelineLayout = VK_NULL_HANDLE;
     }
+}
 
+} // namespace
+
+void SelectionRenderer::Init(const Engine::ShaderLibrary& shaders)
+{
+    UploadMesh();
+    CreatePipelines(shaders);
+    Log::Info("[INFO] Selection renderer initialized.");
+}
+
+void SelectionRenderer::ReloadPipelines(const Engine::ShaderLibrary& shaders)
+{
+    DestroyPipelines();
+    CreatePipelines(shaders);
+}
+
+void SelectionRenderer::Shutdown()
+{
+    DestroyPipelines();
+
+    // VMA treats a null buffer/allocation as a no-op, so resetting the
+    // handles is all it takes to make a second Shutdown() harmless.
     vmaDestroyBuffer(vmaAllocator, g_vertexBuffer.buffer, g_vertexBuffer.allocation);
     vmaDestroyBuffer(vmaAllocator, g_fillIndexBuffer.buffer, g_fillIndexBuffer.allocation);
     vmaDestroyBuffer(vmaAllocator, g_lineIndexBuffer.buffer, g_lineIndexBuffer.allocation);
+    g_vertexBuffer = AllocatedBuffer{};
+    g_fillIndexBuffer = AllocatedBuffer{};
+    g_lineIndexBuffer = AllocatedBuffer{};
 }
 
 void SelectionRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state)

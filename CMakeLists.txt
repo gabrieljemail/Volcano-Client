@@ -31,7 +31,10 @@ endif()
 # =============================================================================
 # 2. Gather Sources & Define Target
 # =============================================================================
-file(GLOB_RECURSE SOURCES "src/*.cpp")
+# CONFIGURE_DEPENDS re-checks the glob on every build, so adding a new .cpp
+# (e.g. a render pass under src/renderer/engine/passes/) is picked up by a
+# plain `ninja` run instead of needing a manual CMake re-configure first.
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 list(APPEND SOURCES
     "C:/Apps/Libraries/vk-bootstrap/src/VkBootstrap.cpp"
     "C:/Apps/Libraries/ImGui/imgui.cpp"

@@ -13,7 +13,7 @@ namespace Volcano {
 // Meshes every block in a chunk whose shape isn't a fully opaque cube —
 // transparent full cubes (glass, slime, ice, ...), partial-volume blocks
 // (slabs, carpets, snow layers, ...), and cross-shaped plants (grass,
-// flowers, saplings, ...) — into one Mesh for RenderThread's non-cubic
+// flowers, saplings, ...) — into one Mesh for the engine's NonCubicPass
 // render pass (see VulkanInit's nonCubicPipeline: no backface culling,
 // alpha blended, no depth write). Counterpart to ChunkMesher, which only
 // handles fully opaque full-cube blocks; see BlockRegistry::NonCubeVisual

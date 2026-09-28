@@ -54,6 +54,13 @@ class Connection;
 // forward-declaration reason as TickLoop above.
 class InteractionManager;
 
+// Defined in renderer/engine/RenderEngine.hpp — the abstraction layer every
+// non-renderer system talks to instead of Vulkan. Forward-declared for the
+// same reason as TickLoop above.
+namespace Engine {
+class RenderEngine;
+}
+
 struct Resolution {
     uint16_t x;
     uint16_t y;
@@ -121,6 +128,12 @@ struct GlobalState {
     TickLoop* tickLoop;
     InteractionManager* interaction;
 
+    // The rendering engine (VulkanRenderEngine today). Owned by main();
+    // set before its Init() runs. Use it to add/remove render passes, switch
+    // shader packs (SetShaderPack) or reload shaders — render thread only,
+    // except RequestShaderReload(), which is safe from anywhere.
+    Engine::RenderEngine* renderEngine{nullptr};
+
     // CPU/GPU/driver/API info for the debug overlay — see SystemInfo's own
     // comment for the detection story and why there's no GPU compute-unit
     // count. DetectCPU() runs first thing in main(); DetectGPU() runs once
@@ -176,8 +189,8 @@ struct GlobalState {
     std::mutex renderListMutex;
 
     // Non-cubic meshes (transparent full cubes, partial-volume shapes, and
-    // cross-shaped plants — see NonCubicMesher) for RenderThread's separate
-    // non-cubic pass. One entry per chunk, same as renderList, populated
+    // cross-shaped plants — see NonCubicMesher) for the engine's separate
+    // NonCubicPass. One entry per chunk, same as renderList, populated
     // alongside it by MeshingThread and guarded the same way; kept as a
     // separate vector (rather than folded into renderList) because it's
     // drawn with a different pipeline (nonCubicPipeline).

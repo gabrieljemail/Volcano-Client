@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.hpp>
 #include <glm/glm.hpp>
 #include "../../GlobalState.hpp"
+#include "../engine/ShaderLibrary.hpp"
 
 namespace Volcano {
 
@@ -23,14 +24,20 @@ public:
     // depth-tested pipeline/attachment).
     static constexpr uint32_t MAX_VISIBLE_ENTITIES = 256;
 
-    // Creates the entity pipeline, static cube mesh, and per-frame-in-flight
-    // SSBO/indirect buffers. Must run after VulkanInit's render pass and
-    // camera descriptor set layout exist (i.e. after CreateGraphicsPipeline()
-    // in VulkanInit::Init()).
-    static void Init();
+    // Creates the entity pipelines (entity.* and entity_textured.*,
+    // resolved through shaders so a shader pack can replace them), static
+    // meshes, skins, and per-frame-in-flight SSBO/indirect buffers. Must
+    // run after VulkanInit::Init() (render pass, camera descriptor set
+    // layout, command pool) — EntityPass::Create() calls it.
+    static void Init(const Engine::ShaderLibrary& shaders);
+
+    // Rebuilds just the two pipelines — for a shader reload. Meshes, skins
+    // and buffers are left alone. The GPU must be idle.
+    static void ReloadPipelines(const Engine::ShaderLibrary& shaders);
 
     // Destroys everything Init() created. Must run before the VMA allocator
-    // is destroyed (i.e. from VulkanInit::Cleanup()).
+    // is destroyed — EntityPass::Destroy() calls it from
+    // RenderEngine::StopRendering().
     static void Shutdown();
 
     // Culls state->entities (frustum + distance limit), uploads the
