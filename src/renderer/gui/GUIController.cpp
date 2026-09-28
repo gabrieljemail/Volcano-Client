@@ -584,7 +584,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     // frame), not the launch-time Window.Width/Height config — otherwise a
     // resize or F11 fullscreen leaves this covering only the old size.
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
-    // No window background — RecordAndSubmitFrame draws the Vulkan 3D scene
+    // No window background — the engine's world passes draw the 3D scene
     // into this same render pass before GUIController::Render runs, so the
     // world shows through behind the screen's own components.
     ImGui::Begin("##screen", nullptr,
