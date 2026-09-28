@@ -7,6 +7,7 @@ Completion: **10% Complete.** (Estimate.)
 #### Implemented
 * GUI framework (ImGui-based, themed)
 * Basic renderer (Vulkan; terrain + entity + misc passes; texture atlas from minecraft-data)
+* Render engine abstraction layer (`Engine::RenderEngine`, ordered `RenderPass` list, optional runtime shader packs with F9 reload) — see `docs/RenderingEngineRework.md`. **Not yet built/run on Windows.**
 * Movement (fixed-tick simulation, AABB collision with auto step-up, sprint/sneak as client-side speed multipliers)
 * Network client (login/configuration/play, compression, chunk streaming, chat/commands, death/respawn)
 * Entity spawning/tracking (placeholder box + a real humanoid model; no other players' skins yet)

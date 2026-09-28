@@ -14,8 +14,6 @@
 #include "models/CameraUBO.hpp"
 #include "models/PackedVertex.hpp"
 #include "terrain/ChunkMesher.hpp"
-#include "entity/EntityRenderer.hpp"
-#include "misc/SelectionRenderer.hpp"
 #include "misc/MiscVertex.hpp"
 #include "misc/NonCubicMesher.hpp"
 
@@ -111,35 +109,47 @@ void NotifyFramePresented()
 #endif
 }
 
-// Helper to create a ShaderModule from raw SPIR-V bytecode
-VkShaderModule CreateShaderModule(VkDevice dev, const std::vector<char>& code)
+VkShaderModule CreateShaderModule(const Volcano::Engine::ShaderLibrary& shaders, const std::string& shaderName)
 {
+    return CreateShaderModule(shaders.Load(shaderName), shaderName);
+}
+
+VkShaderModule CreateShaderModule(const std::vector<char>& code, const std::string& debugName)
+{
+    if (code.empty())
+    {
+        throw std::runtime_error("[ERROR] Failed to load shader: " + debugName);
+    }
+
     VkShaderModuleCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     createInfo.codeSize = code.size();
     createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
 
     VkShaderModule shaderModule;
-    if (vkCreateShaderModule(dev, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create shader module!");
+    if (vkCreateShaderModule(GetDevice(), &createInfo, nullptr, &shaderModule) != VK_SUCCESS)
+    {
+        throw std::runtime_error("[ERROR] Failed to create shader module: " + debugName);
     }
     return shaderModule;
 }
 
-void CreateGraphicsPipeline()
+void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
 {
     VkDevice dev = GetDevice();
 
-    // 1. LOAD COMPILED SPIR-V BINARIES
-    std::vector<char> vertShaderCode = ReadFile("resources/shaders/terrain.vert.spv");
-    std::vector<char> fragShaderCode = ReadFile("resources/shaders/terrain.frag.spv");
-
-    if (vertShaderCode.empty() || fragShaderCode.empty()) {
-        throw std::runtime_error("[ERROR] Failed to read shader files: resources/shaders/terrain.vert.spv or resources/shaders/terrain.frag.spv");
+    // 1. LOAD COMPILED SPIR-V BINARIES (shader pack override, else built-in)
+    VkShaderModule vertShaderModule = CreateShaderModule(shaders, "terrain.vert");
+    VkShaderModule fragShaderModule = VK_NULL_HANDLE;
+    try
+    {
+        fragShaderModule = CreateShaderModule(shaders, "terrain.frag");
     }
-
-    VkShaderModule vertShaderModule = CreateShaderModule(dev, vertShaderCode);
-    VkShaderModule fragShaderModule = CreateShaderModule(dev, fragShaderCode);
+    catch (...)
+    {
+        vkDestroyShaderModule(dev, vertShaderModule, nullptr);
+        throw;
+    }
 
     // 2. SET UP SHADER STAGES
     VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
@@ -266,7 +276,17 @@ void CreateGraphicsPipeline()
     VkDescriptorSetLayout setLayouts[] = { cameraSetLayout, textureSetLayout };
     pipelineLayoutInfo.pSetLayouts = setLayouts;
 
+    // Shader modules are only needed until the pipelines below exist —
+    // release them on every exit path, since a shader pack's replacement
+    // failing pipeline creation is an expected (recoverable) outcome now.
+    auto destroyModules = [&]()
+    {
+        vkDestroyShaderModule(dev, fragShaderModule, nullptr);
+        vkDestroyShaderModule(dev, vertShaderModule, nullptr);
+    };
+
     if (vkCreatePipelineLayout(dev, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+        destroyModules();
         throw std::runtime_error("[ERROR] Failed to create pipeline layout.");
     }
 
@@ -291,6 +311,8 @@ void CreateGraphicsPipeline()
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
     if (vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+        graphicsPipeline = VK_NULL_HANDLE;
+        destroyModules();
         throw std::runtime_error("Failed to create graphics pipeline!");
     }
 
@@ -311,14 +333,26 @@ void CreateGraphicsPipeline()
     wireframePipelineInfo.pRasterizationState = &wireframeRasterizer;
 
     if (vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &wireframePipelineInfo, nullptr, &wireframePipeline) != VK_SUCCESS) {
+        wireframePipeline = VK_NULL_HANDLE;
+        destroyModules();
         throw std::runtime_error("Failed to create wireframe graphics pipeline!");
     }
 
     // 11. CLEANUP TEMPORARY SHADER MODULES
-    vkDestroyShaderModule(dev, fragShaderModule, nullptr);
-    vkDestroyShaderModule(dev, vertShaderModule, nullptr);
+    destroyModules();
 
     Volcano::Log::Info("[INFO] Graphics pipeline successfully initialized.");
+}
+
+void DestroyGraphicsPipeline()
+{
+    VkDevice dev = GetDevice();
+    if (graphicsPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, graphicsPipeline, nullptr);
+    if (wireframePipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, wireframePipeline, nullptr);
+    if (pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, pipelineLayout, nullptr);
+    graphicsPipeline = VK_NULL_HANDLE;
+    wireframePipeline = VK_NULL_HANDLE;
+    pipelineLayout = VK_NULL_HANDLE;
 }
 
 // Second pass for everything that isn't a fully opaque cube: transparent
@@ -354,19 +388,21 @@ void CreateGraphicsPipeline()
 // truly translucent surfaces after this one with writes off — worth doing
 // when stained glass/water actually render, but strictly better than every
 // opaque partial shape in the world being drawn inside-out.
-void CreateNonCubicPipeline()
+void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
 {
     VkDevice dev = GetDevice();
 
-    std::vector<char> vertShaderCode = ReadFile("resources/shaders/misc.vert.spv");
-    std::vector<char> fragShaderCode = ReadFile("resources/shaders/misc.frag.spv");
-
-    if (vertShaderCode.empty() || fragShaderCode.empty()) {
-        throw std::runtime_error("[ERROR] Failed to read shader files: resources/shaders/misc.vert.spv or resources/shaders/misc.frag.spv");
+    VkShaderModule vertShaderModule = CreateShaderModule(shaders, "misc.vert");
+    VkShaderModule fragShaderModule = VK_NULL_HANDLE;
+    try
+    {
+        fragShaderModule = CreateShaderModule(shaders, "misc.frag");
     }
-
-    VkShaderModule vertShaderModule = CreateShaderModule(dev, vertShaderCode);
-    VkShaderModule fragShaderModule = CreateShaderModule(dev, fragShaderCode);
+    catch (...)
+    {
+        vkDestroyShaderModule(dev, vertShaderModule, nullptr);
+        throw;
+    }
 
     VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
     vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -471,14 +507,23 @@ void CreateNonCubicPipeline()
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
-    if (vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &nonCubicPipeline) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create non-cubic graphics pipeline!");
-    }
+    VkResult pipelineResult = vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &nonCubicPipeline);
 
     vkDestroyShaderModule(dev, fragShaderModule, nullptr);
     vkDestroyShaderModule(dev, vertShaderModule, nullptr);
 
+    if (pipelineResult != VK_SUCCESS) {
+        nonCubicPipeline = VK_NULL_HANDLE;
+        throw std::runtime_error("Failed to create non-cubic graphics pipeline!");
+    }
+
     Volcano::Log::Info("[INFO] Non-cubic graphics pipeline successfully initialized.");
+}
+
+void DestroyNonCubicPipeline()
+{
+    if (nonCubicPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), nonCubicPipeline, nullptr);
+    nonCubicPipeline = VK_NULL_HANDLE;
 }
 
 // Create a buffer with VMA.
@@ -986,15 +1031,13 @@ void Init(GlobalState* state)
     textureAllocInfo.pSetLayouts = &textureSetLayout;
     vkAllocateDescriptorSets(GetDevice(), &textureAllocInfo, &textureSet);
 
-    // Create the graphics pipeline.
-    CreateGraphicsPipeline();
-
-    // Non-cubic (transparent/cross/partial-shape) pass — needs
-    // pipelineLayout above, since it reuses it.
-    CreateNonCubicPipeline();
+    // Pipelines (terrain, non-cubic, entities, selection, ...) are no longer
+    // built here — each belongs to a RenderPass the engine creates right
+    // after this returns (see VulkanRenderEngine::Init), so a shader reload
+    // can rebuild them without touching the device/swapchain set up here.
 
     // Create command pool and command buffers. Must happen before
-    // EntityRenderer::Init() below: its UploadCubeMesh() uses
+    // EntityRenderer::Init() (EntityPass::Create): its UploadCubeMesh() uses
     // BeginOneShotCommands()/EndOneShotCommands(), which allocate from the
     // global `commandPool` — with no error checking on either the pool or
     // the command-buffer allocation, running it against a not-yet-created
@@ -1018,13 +1061,6 @@ void Init(GlobalState* state)
     if (vkAllocateCommandBuffers(device.device, &bufferAllocInfo, commandBuffers)) {
         throw std::runtime_error("Failed to allocate command buffers!");
     }
-
-    // Entity render pass — needs the render pass and camera descriptor set
-    // layout above, plus commandPool just above (see its own comment).
-    EntityRenderer::Init();
-
-    // Block selection outline/fill — same prerequisites as EntityRenderer.
-    SelectionRenderer::Init();
 
     // Create semaphores and fences.
     VkSemaphoreCreateInfo semaphoreInfo{};
@@ -1177,10 +1213,11 @@ void Cleanup()
         vkDestroyImageView(device.device, view, nullptr);
     }
 
-    vkDestroyPipeline(device.device, graphicsPipeline, nullptr);
-    vkDestroyPipeline(device.device, wireframePipeline, nullptr);
-    vkDestroyPipeline(device.device, nonCubicPipeline, nullptr);
-    vkDestroyPipelineLayout(device.device, pipelineLayout, nullptr);
+    // Pass-owned pipelines are normally gone already (RenderEngine::
+    // StopRendering destroys every pass) — these are idempotent, and only
+    // matter if startup failed before the passes could be torn down.
+    DestroyNonCubicPipeline();
+    DestroyGraphicsPipeline();
     vkDestroyCommandPool(device.device, commandPool, nullptr);
     vkDestroyRenderPass(device.device, renderPass, nullptr);
 
@@ -1206,10 +1243,10 @@ void Cleanup()
     }
     allocatedBuffers.clear();
 
+    // EntityRenderer/SelectionRenderer are shut down by their passes
+    // (EntityPass/SelectionPass::Destroy), not here.
     ChunkMesher::Shutdown();
     NonCubicMesher::Shutdown();
-    EntityRenderer::Shutdown();
-    SelectionRenderer::Shutdown();
 
     if (vmaAllocator != VK_NULL_HANDLE) {
         vmaDestroyAllocator(vmaAllocator);

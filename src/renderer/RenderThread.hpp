@@ -2,10 +2,11 @@
 #ifndef RENDER_THREAD_H
 #define RENDER_THREAD_H
 
-#include <vulkan/vulkan.hpp>
 #include <chrono>
+#include <glm/glm.hpp>
 #include "../GlobalState.hpp"
-#include "gui/GUIController.hpp"
+#include "engine/RenderEngine.hpp"
+#include "engine/SceneView.hpp"
 
 using namespace std;
 
@@ -18,6 +19,13 @@ namespace Volcano {
 // loop runs directly in main(), RunFrame() below calls glfwPollEvents()
 // itself (see PollInputs()) and there's no cross-thread input buffering or
 // shutdown hand-off left to manage.
+//
+// This is the client side of the renderer boundary: it owns frame pacing,
+// input, and deciding what the frame should look like (camera, FOV easing,
+// sky color, debug toggles), packs that into an Engine::SceneView, and
+// hands it to GlobalState::renderEngine. It never records GPU commands or
+// touches swapchain/sync objects itself — that's all behind RenderEngine
+// (see engine/RenderEngine.hpp and docs/RenderingEngineRework.md).
 class RenderThread {
 public:
     explicit RenderThread(Volcano::GlobalState* globalState);
@@ -30,12 +38,10 @@ public:
     // iteration.
     void RunFrame();
 
-    // Tears down the GUI/ImGui Vulkan resources and waits for the GPU to
-    // finish with them first — call once after main()'s loop exits, before
-    // VulkanInit::Cleanup() destroys the device/window out from under
-    // them. Previously done at the tail of the render thread's own
-    // ThreadEntry once its loop exited; there's no separate thread to do
-    // that hand-off through anymore, so main() just calls this directly.
+    // Stops the engine rendering (waits for the GPU, tears down the GUI and
+    // every render pass) — call once after main()'s loop exits, before
+    // RenderEngine::Shutdown() destroys the device/window out from under
+    // them.
     void Shutdown();
 
 private:
@@ -46,10 +52,10 @@ private:
     chrono::steady_clock::time_point nextFrameTarget;
     double targetFrameTime = 1000.0 / 60.0;
     double averageWorkTime = 0.5;
-    uint32_t currentFrame = 0;
-    uint32_t imageIndex = 0;
-    uint32_t maxFramesInFlight = 2;
-    
+
+    // SceneView::time is measured from here.
+    chrono::steady_clock::time_point startTime;
+
     // FPS tracking
     chrono::steady_clock::time_point lastFrameTime;
 
@@ -69,7 +75,7 @@ private:
 
     // Current FOV boost in degrees, eased toward its target (Graphics.
     // FOVEffects while sprinting/flying, 0 otherwise — see
-    // RecordAndSubmitFrame) every frame rather than snapping, so the zoom-out
+    // BuildProjection) every frame rather than snapping, so the zoom-out
     // on starting/stopping a sprint is a smooth widen/narrow instead of a
     // jump cut. RenderThread-owned for the same reason wireframeMode is:
     // only this thread's own frame loop ever touches it.
@@ -79,10 +85,10 @@ private:
     void UpdateDeltaTime();
     void PollInputs();
     void DrawFrame();
-    bool AcquireImage();
-    void RecordAndSubmitFrame();
-    void PresentFrame();
-    void Cleanup();
+
+    // Everything the engine needs to know about this frame — see SceneView.
+    Engine::SceneView BuildSceneView();
+    glm::mat4 BuildProjection(const Engine::RenderExtent& extent);
 };
 
 }; // namespace Volcano

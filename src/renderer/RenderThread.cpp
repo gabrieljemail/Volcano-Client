@@ -1,19 +1,13 @@
 #include <iostream>
 #include <chrono>
-#include <array>
-#include <algorithm>
 #include <cmath>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <GLFW/glfw3.h>
 #include "RenderThread.hpp"
-#include "VulkanInit.hpp"
-#include "models/CameraUBO.hpp"
-#include "models/Mesh.hpp"
-#include "terrain/VisibleChunkController.hpp"
-#include "entity/EntityRenderer.hpp"
-#include "misc/SelectionRenderer.hpp"
 #include "gui/GUIController.hpp"
 #include "../TickLoop.hpp"
 #include "../interaction/InteractionManager.hpp"
@@ -43,6 +37,7 @@ RenderThread::RenderThread(Volcano::GlobalState* globalState) : state(globalStat
 
     lastFrameTime = chrono::steady_clock::now();
     frameStartTime = lastFrameTime;
+    startTime = lastFrameTime;
     nextFrameTarget = frameStartTime + chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
 }
 
@@ -64,15 +59,8 @@ void RenderThread::RunFrame()
 
 void RenderThread::Shutdown()
 {
-    // The last submitted frame's command buffer may still be executing on
-    // the GPU (fences are only waited on at the *start* of the next frame,
-    // which never comes once main()'s loop has exited) and it references
-    // ImGui's descriptor pool/pipeline. GUIController::Shutdown() destroys
-    // those Vulkan objects outright, so without this wait it tears down
-    // resources the GPU is still using.
-    vkDeviceWaitIdle(GetDevice());
-
-    GUIController::Shutdown();
+    // Waits for the GPU before destroying anything — see StopRendering.
+    state->renderEngine->StopRendering();
 }
 
 void RenderThread::WaitForTargetFrame()
@@ -150,7 +138,7 @@ void RenderThread::PollInputs()
     // as it would in most games.
     if (state->input->IsKeyPressed(GLFW_KEY_F11))
     {
-        ToggleWindowMode();
+        state->renderEngine->ToggleWindowMode();
     }
 
     if (state->input->WasActivated("ToggleWireframe"))
@@ -158,8 +146,16 @@ void RenderThread::PollInputs()
         wireframeMode = !wireframeMode;
     }
 
-    // "G" toggles Graphics.Lighting — see CameraUBO::lightingEnabled, read
-    // fresh from config every frame in RecordAndSubmitFrame, so flipping it
+    // F9 rebuilds every render pass's pipelines from disk — picks up edited
+    // shader pack (or built-in) .spv files without restarting. Applied at
+    // the start of the next frame, between frames, by the engine itself.
+    if (state->input->WasActivated("ReloadShaders"))
+    {
+        state->renderEngine->RequestShaderReload();
+    }
+
+    // "G" toggles Graphics.Lighting — see SceneView::lightingEnabled, read
+    // fresh from config every frame in BuildSceneView, so flipping it
     // here just needs to persist the new value. Gated on chat/screen being
     // closed so typing "g" into the chat box or a text field doesn't also
     // toggle it.
@@ -243,24 +239,18 @@ void RenderThread::DrawFrame()
     // Time the current frame.
     auto workStart = chrono::steady_clock::now();
 
-    // Resize requests land here (set by VulkanInit's GLFW framebuffer-size
-    // callback, running on the main thread) — this is the only thread
-    // allowed to touch the swapchain, so recreation happens here, between
-    // frames, rather than in the callback itself.
-    if (state->framebufferResized.exchange(false))
-    {
-        RecreateSwapchain(state->pendingFramebufferWidth.load(), state->pendingFramebufferHeight.load());
-    }
-
     // Update GUI with new frame
     GUIController::NewFrame();
     GUIController::Update(frameDeltaTime);
 
-    if (AcquireImage())
+    // BeginFrame handles any pending resize/shader reload and acquires an
+    // output image; false means this frame is skipped (stale or minimized
+    // swapchain). The SceneView is only built after it, since a resize there
+    // changes the aspect ratio the projection needs.
+    Engine::RenderEngine* engine = state->renderEngine;
+    if (engine->BeginFrame())
     {
-        RecordAndSubmitFrame();
-        PresentFrame();
-        NotifyFramePresented();
+        engine->SubmitFrame(BuildSceneView());
     }
 
     auto workEnd = chrono::steady_clock::now();
@@ -269,44 +259,6 @@ void RenderThread::DrawFrame()
     double frameWorkTime = std::chrono::duration<double, std::milli>(workEnd - workStart).count();
     averageWorkTime = (averageWorkTime * 0.9) + (frameWorkTime * 0.1);
     nextFrameTarget += std::chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
-}
-
-bool RenderThread::AcquireImage()
-{
-    // Have the CPU wait for fences.
-    vkWaitForFences(GetDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
-
-    // Acquire the next image's index.
-    VkResult result = vkAcquireNextImageKHR(
-        GetDevice(),
-        GetSwapchain(),
-        UINT64_MAX,
-        imageAvailableSemaphores[currentFrame],
-        VK_NULL_HANDLE,
-        &imageIndex
-    );
-
-    // The swapchain is stale (surface no longer matches — a resize/fullscreen
-    // toggle that outran the framebuffer-size callback, or a minimized
-    // window). Skip this frame; RecreateSwapchain runs at the top of the
-    // next DrawFrame once a resize is flagged (see below for the case where
-    // no callback fired at all).
-    if (result == VK_ERROR_OUT_OF_DATE_KHR)
-    {
-        state->framebufferResized = true;
-        return false;
-    }
-
-    // Suboptimal still yields a presentable image; only VK_SUCCESS and
-    // VK_SUBOPTIMAL_KHR are non-fatal per the Vulkan spec.
-    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
-    {
-        throw runtime_error("[ERROR] Failed to acquire swapchain image!");
-    }
-
-    // Reset the fence.
-    vkResetFences(GetDevice(), 1, &inFlightFences[currentFrame]);
-    return true;
 }
 
 namespace {
@@ -332,248 +284,56 @@ constexpr glm::vec3 SKY_COLOR_DAY(0.52941f, 0.80784f, 0.92157f);
 
 } // namespace
 
-void RenderThread::RecordAndSubmitFrame()
+Engine::SceneView RenderThread::BuildSceneView()
 {
-    VkCommandBuffer cmd = commandBuffers[currentFrame];
+    Engine::SceneView scene;
 
-    // Recording.
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    glm::vec3 renderPosition = state->tickLoop->GetRenderPosition();
+    scene.view = state->player->camera.GetViewMatrix(renderPosition);
+    scene.proj = BuildProjection(state->renderEngine->GetExtent());
+    scene.cameraPosition = state->player->camera.GetEyePosition(renderPosition);
 
-    // Clear the screen.
-    VkRenderPassBeginInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = renderPass;
-    renderPassInfo.framebuffer = framebuffers[imageIndex];
-    renderPassInfo.renderArea.extent = swapchainExtent;
+    scene.dayBrightness = DayBrightness(state->dayTimeTicks.load());
+    scene.skyColor = glm::mix(SKY_COLOR_NIGHT, SKY_COLOR_DAY, scene.dayBrightness);
 
-    glm::vec3 skyColor = glm::mix(SKY_COLOR_NIGHT, SKY_COLOR_DAY, DayBrightness(state->dayTimeTicks.load()));
+    scene.time = chrono::duration<float>(chrono::steady_clock::now() - startTime).count();
+    scene.deltaTime = frameDeltaTime;
 
-    std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{skyColor.r, skyColor.g, skyColor.b, 1.00000f}};
-    clearValues[1].depthStencil = {1.0f, 0};
-
-    renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-    renderPassInfo.pClearValues = clearValues.data();
-
-    vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, wireframeMode ? wireframePipeline : graphicsPipeline);
-
-    // Set the dynamic viewport.
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(swapchainExtent.width);
-    viewport.height = static_cast<float>(swapchainExtent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.offset = {0, 0};
-    scissor.extent = swapchainExtent;
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-    // Set up camera UBOs.
-    // We do this before mesh binding to support culling in the future.
-    CameraUBO ubo{
-        state->player->camera.GetViewMatrix(state->tickLoop->GetRenderPosition()),
-        [&] {
-            float aspect = static_cast<float>(swapchainExtent.width) / swapchainExtent.height;
-            float baseFov = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOV", uint32_t{100})));
-
-            // Flying doesn't exist yet (no fly toggle — same placeholder
-            // GUIController's movement-state panel uses) so only sprinting
-            // drives this for now; whoever adds flight just needs to flip
-            // isFlying here, the easing below already handles either.
-            constexpr bool isFlying = false;
-            bool boosted = isFlying || state->tickLoop->GetMovementSnapshot().sprinting;
-            float targetFovOffset = boosted
-                ? static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOVEffects", uint32_t{5})))
-                : 0.0f;
-
-            // Framerate-independent exponential ease toward the target
-            // offset every frame instead of snapping the instant a sprint
-            // starts/stops — see currentFovOffset's own comment. Also where
-            // a future FOV *decrease* (aiming down sights, etc. — see the
-            // task's own "and later also decreases by" note) would plug in:
-            // just another signed target fed into the same easing.
-            constexpr float FOV_EASE_RATE = 8.0f; // higher = snappier
-            currentFovOffset = glm::mix(currentFovOffset, targetFovOffset,
-                1.0f - std::exp(-FOV_EASE_RATE * frameDeltaTime));
-
-            glm::mat4 p = glm::perspective(glm::radians(baseFov + currentFovOffset), aspect, 0.05f, 1000.0f);
-            p[1][1] *= -1.0f;
-            return p;
-        }(),
-        std::get<bool>(state->config->Get("Graphics.Lighting", true)) ? 1.0f : 0.0f
-    };
-    memcpy(cameraUBOsMapped[currentFrame], &ubo, sizeof(ubo));
-
-    // Bind texture descriptor set.
-    VkDescriptorSet sets[] = { cameraSets[currentFrame], textureSet };
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
-
-    // Bind each visible mesh. Locked against the main thread's
-    // DrainNetworkInbox, which appends to renderList as chunks stream in —
-    // see the mutex's comment in GlobalState.hpp. Frustum culling runs
-    // inside the lock (cheap: a handful of dot products per chunk) so the
-    // filtered list doesn't outlive renderList's own Mesh storage.
-    glm::mat4 viewProj = ubo.proj * ubo.view;
-    {
-        std::lock_guard<std::mutex> lock(state->renderListMutex);
-        for (const Mesh* meshPtr : VisibleChunkController::GetVisibleMeshes(state->renderList, viewProj))
-        {
-            const Mesh& mesh = *meshPtr;
-            VkDeviceSize offsets[] = {mesh.vertexOffset};
-            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer, offsets);
-
-            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mesh.modelMatrix);
-
-            if (mesh.indexCount > 0)
-            {
-                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-            } else
-            {
-                vkCmdDraw(cmd, mesh.vertexCount, 1, 0, 0);
-            }
-        }
-    }
-
-    // Entities are a separate batched pass sharing this same subpass/depth
-    // attachment — see EntityRenderer's header for why draw order relative
-    // to the chunk pass above doesn't affect depth-test correctness.
-    glm::vec3 cameraWorldPosition = state->player->camera.GetEyePosition(state->tickLoop->GetRenderPosition());
-    EntityRenderer::RecordDraw(cmd, currentFrame, state, ubo.view, ubo.proj, cameraWorldPosition);
-
-    // Non-cubic pass: transparent full cubes (glass, slime, ice, ...),
-    // partial-volume shapes (slabs, carpets, ...), and cross-shaped plants
-    // (grass, flowers, ...) — see NonCubicMesher/VulkanInit's
-    // nonCubicPipeline. Drawn last (after opaque terrain and entities) with
-    // alpha blending, and with depth writes ON — see that pipeline's own
-    // comment for why this is really a cutout pass rather than a translucent
-    // one, and what the old writes-off behavior did to stairs and slabs.
-    //
-    // Still sorted back-to-front by chunk distance from the camera before
-    // drawing, so two overlapping translucent chunks (e.g. looking through
-    // one pane of glass at another) blend in the right order — without this,
-    // the chunk that happened to be emitted later always "won" regardless of
-    // which was actually nearer, and which chunk that was could silently
-    // change from frame to frame (e.g. crossing a chunk boundary), reading
-    // as random flicker rather than a consistent-but-wrong order. Depth
-    // writes make this ordering irrelevant for the opaque/cutout majority of
-    // the pass (the depth test resolves those per-fragment now), but it
-    // still matters for whatever genuinely blends, and it's per-CHUNK only:
-    // two overlapping translucent surfaces WITHIN one chunk mesh still draw
-    // in mesher-emission order.
-    {
-        std::lock_guard<std::mutex> lock(state->nonCubicRenderListMutex);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, nonCubicPipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
-
-        std::vector<const Mesh*> nonCubicMeshes = VisibleChunkController::GetVisibleMeshes(state->nonCubicRenderList, viewProj);
-        std::sort(nonCubicMeshes.begin(), nonCubicMeshes.end(), [&cameraWorldPosition](const Mesh* a, const Mesh* b) {
-            glm::vec3 posA(a->modelMatrix[3]);
-            glm::vec3 posB(b->modelMatrix[3]);
-            float distA = glm::dot(posA - cameraWorldPosition, posA - cameraWorldPosition);
-            float distB = glm::dot(posB - cameraWorldPosition, posB - cameraWorldPosition);
-            return distA > distB; // Farthest first.
-        });
-
-        for (const Mesh* meshPtr : nonCubicMeshes)
-        {
-            const Mesh& mesh = *meshPtr;
-            if (mesh.vertexCount == 0) continue;
-
-            VkDeviceSize offsets[] = {mesh.vertexOffset};
-            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer, offsets);
-            vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mesh.modelMatrix);
-
-            if (mesh.indexCount > 0)
-            {
-                vkCmdBindIndexBuffer(cmd, mesh.indexBuffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
-            } else
-            {
-                vkCmdDraw(cmd, mesh.vertexCount, 1, 0, 0);
-            }
-        }
-    }
-
-    // Block selection outline/fill — after opaque/entity/non-cubic so it
-    // blends against whatever's actually there (including translucent
-    // surfaces like glass), and depth-tests against a wall correctly hiding
-    // it — see SelectionRenderer's own comment.
-    SelectionRenderer::RecordDraw(cmd, currentFrame, state);
-
-    // Render ImGui GUI
-    GUIController::Render(cmd);
-
-    vkCmdEndRenderPass(cmd);
-    vkEndCommandBuffer(cmd);
-
-    // Submit the frame.
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-
-    // Wait for the swapchain to begin rendering.
-    VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
-    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = waitSemaphores;
-    submitInfo.pWaitDstStageMask = waitStages;
-
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
-
-    // When rendering is complete, have the GPU signal this semaphore.
-    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = signalSemaphores;
-
-    // Set up a GPU signal to the semaphore when done.
-    VkResult queueResult = vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
-    if (queueResult != VK_SUCCESS)
-    {
-        throw runtime_error("[ERROR] Failed to submit semaphore to graphics queue.");
-    }
+    scene.lightingEnabled = std::get<bool>(state->config->Get("Graphics.Lighting", true));
+    scene.wireframe = wireframeMode;
+    return scene;
 }
 
-void RenderThread::PresentFrame()
+glm::mat4 RenderThread::BuildProjection(const Engine::RenderExtent& extent)
 {
-    VkPresentInfoKHR presentInfo{};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    // A minimized window can report a zero-height extent for a frame.
+    float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height > 0 ? extent.height : 1);
+    float baseFov = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOV", uint32_t{100})));
 
-    VkSemaphore waitSemaphores[] = {renderFinishedSemaphores[currentFrame]};
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = waitSemaphores;
+    // Flying doesn't exist yet (no fly toggle — same placeholder
+    // GUIController's movement-state panel uses) so only sprinting drives
+    // this for now; whoever adds flight just needs to flip isFlying here,
+    // the easing below already handles either.
+    constexpr bool isFlying = false;
+    bool boosted = isFlying || state->tickLoop->GetMovementSnapshot().sprinting;
+    float targetFovOffset = boosted
+        ? static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOVEffects", uint32_t{5})))
+        : 0.0f;
 
-    VkSwapchainKHR swapchains[] = {GetSwapchain()};
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = swapchains;
-    presentInfo.pImageIndices = &imageIndex;
+    // Framerate-independent exponential ease toward the target offset every
+    // frame instead of snapping the instant a sprint starts/stops — see
+    // currentFovOffset's own comment. Also where a future FOV *decrease*
+    // (aiming down sights, etc.) would plug in: just another signed target
+    // fed into the same easing.
+    constexpr float FOV_EASE_RATE = 8.0f; // higher = snappier
+    currentFovOffset = glm::mix(currentFovOffset, targetFovOffset,
+        1.0f - std::exp(-FOV_EASE_RATE * frameDeltaTime));
 
-    // Flip the buffer to the display.
-    VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
-    {
-        state->framebufferResized = true;
-    }
-    else if (result != VK_SUCCESS)
-    {
-        throw runtime_error("[ERROR] Failed to present swapchain image!");
-    }
-
-    // Move to the next frame slot.
-    currentFrame = (currentFrame + 1) % maxFramesInFlight;
-}
-
-void RenderThread::Cleanup()
-{
-    // Render thread cleanup - currently no specific resources to clean up
-    // The main Vulkan resources are cleaned up in VulkanInit::Cleanup()
+    // Vulkan's clip space has Y pointing down — flip it so the image lands
+    // right-side-up.
+    glm::mat4 p = glm::perspective(glm::radians(baseFov + currentFovOffset), aspect, 0.05f, 1000.0f);
+    p[1][1] *= -1.0f;
+    return p;
 }
 
 }
