@@ -65,6 +65,35 @@ struct Entity {
     float hurtAmount = 0.0f; // 0-1 red hit-flash intensity (tick invulnerability).
     bool visible = true;
 
+    // When this entity last took damage (PlayS2C::DamageEvent/HurtAnimation,
+    // or a legacy EntityEvent status 2) — drives HurtFlash below. Default
+    // (epoch) means "never", which is always far outside the flash window.
+    std::chrono::steady_clock::time_point lastHurtTime{};
+
+    // Set once the server reports this entity died (EntityEvent status 3).
+    // It lingers until Remove Entities arrives, tinted red the whole time,
+    // the same way vanilla keeps a dying mob/player tinted through its death
+    // animation.
+    bool dead = false;
+
+    // When this entity last swung an arm, and when a critical hit last
+    // landed on it (PlayS2C::Animate) — recorded for an arm-swing animation
+    // and crit particles, neither of which is drawn yet.
+    std::chrono::steady_clock::time_point lastSwingTime{};
+    std::chrono::steady_clock::time_point lastCritTime{};
+
+    // The red overlay intensity to render right now: a fixed tint for
+    // vanilla's 10-tick hurtTime after a hit, or for as long as the entity
+    // is dead, otherwise whatever hurtAmount holds.
+    float HurtFlash(std::chrono::steady_clock::time_point now) const
+    {
+        constexpr float HURT_FLASH_SECONDS = 10.0f / 20.0f; // vanilla's hurtDuration, 10 ticks.
+        constexpr float HURT_FLASH_INTENSITY = 0.45f;
+        if (dead) return HURT_FLASH_INTENSITY;
+        float sinceHurt = std::chrono::duration<float>(now - lastHurtTime).count();
+        return (sinceHurt >= 0.0f && sinceHurt < HURT_FLASH_SECONDS) ? HURT_FLASH_INTENSITY : hurtAmount;
+    }
+
     // Render-time position, blending previousPosition -> position over
     // ENTITY_INTERP_SECONDS starting at lastUpdateTime. Clamped to
     // position once that window has elapsed (the common case: entities

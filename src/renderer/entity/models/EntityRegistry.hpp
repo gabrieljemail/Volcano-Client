@@ -15,6 +15,18 @@ struct EntityTypeInfo {
     float width = 0.0f;
     float height = 0.0f;
     std::string category;    // e.g. "Passive mobs".
+    std::string type;        // e.g. "player", "hostile", "animal", "projectile", "other".
+
+    // Whether this is one of vanilla's LivingEntity subclasses (players,
+    // mobs, armor stands) rather than an object (item, boat, arrow, ...) —
+    // derived from `type`, which minecraft-data only ever sets to one of the
+    // living categories below for LivingEntity subclasses. A critical hit
+    // needs a living target (vanilla's Player.canCriticalAttack).
+    bool IsLiving() const
+    {
+        return type == "player" || type == "mob" || type == "animal" || type == "hostile"
+            || type == "water_creature" || type == "passive" || type == "ambient" || type == "living";
+    }
 };
 
 // Parses minecraft-data's entities.json once at startup, keyed by its "id"

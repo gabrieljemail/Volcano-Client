@@ -1,4 +1,7 @@
 #include "InteractionManager.hpp"
+#include "../Logger.hpp"
+#include "../inventory/ItemRegistry.hpp"
+#include "../renderer/entity/models/EntityRegistry.hpp"
 #include "../renderer/terrain/models/BlockRegistry.hpp"
 #include <algorithm>
 #include <chrono>
@@ -7,6 +10,11 @@
 #include <string>
 
 namespace Volcano {
+
+// Declared here rather than including network/NetworkClient.hpp, for the
+// same asio/<windows.h> reason GUIController.cpp and RenderThread.cpp give.
+void SendAttack(GlobalState* state, uint32_t targetEntityId);
+void SendSwing(GlobalState* state, int32_t hand);
 
 namespace {
 
@@ -173,7 +181,10 @@ struct EntityHit { uint32_t entityId; float distance; };
 // Linear scan, but with a cheap bounding-sphere reject before the real
 // ray/AABB test — entities within reach are normally few, so this costs
 // one subtraction and one dot product for everything the ray has no chance
-// of touching, rather than a full slab test for each.
+// of touching, rather than a full slab test for each. Covers other players
+// too (GlobalState::playerEntities), minus spectators, which vanilla never
+// lets the crosshair pick. Dead entities are skipped as well — they're only
+// still around for their death animation.
 std::optional<EntityHit> RaycastEntities(GlobalState* state, const glm::vec3& origin,
                                           const glm::vec3& direction, float maxDistance,
                                           std::chrono::steady_clock::time_point now)
@@ -181,18 +192,21 @@ std::optional<EntityHit> RaycastEntities(GlobalState* state, const glm::vec3& or
     std::optional<EntityHit> best;
 
     std::lock_guard<std::mutex> lock(state->entitiesMutex);
-    for (const auto& [id, entity] : state->entities)
+    state->ForEachEntity([&](uint32_t id, const Entity& entity)
     {
+        if (entity.dead) return;
+        if (const PlayerEntity* player = state->FindPlayerEntity(id); player && player->IsSpectator()) return;
+
         glm::vec3 halfExtents(entity.boundingBox.x * 0.5f, entity.boundingBox.y * 0.5f, entity.boundingBox.x * 0.5f);
         glm::vec3 center = entity.InterpolatedPosition(now) + glm::vec3(0.0f, halfExtents.y, 0.0f);
 
         float boundingRadius = glm::length(halfExtents);
         float rejectDist = maxDistance + boundingRadius;
-        if (glm::dot(center - origin, center - origin) > rejectDist * rejectDist) continue;
+        if (glm::dot(center - origin, center - origin) > rejectDist * rejectDist) return;
 
         std::optional<RayHit> hit = RayIntersectsAABB(origin, direction, center - halfExtents, center + halfExtents, maxDistance);
         if (hit && (!best || hit->distance < best->distance)) best = EntityHit{id, hit->distance};
-    }
+    });
 
     return best;
 }
@@ -239,9 +253,13 @@ void InteractionManager::Update(bool inputAllowed)
     // ImGui owns the mouse while a Screen/chat box is focused.
     if (!inputAllowed) return;
 
+    if (state->input->WasActivated("PrimaryActionPress"))
+    {
+        PrimaryTriggerStart();
+    }
     if (state->input->IsActive("PrimaryAction"))
     {
-        PrimaryTrigger();
+        PrimaryTriggerHold();
     }
 
     // Not mutually exclusive on the press frame — Hold is already true then
@@ -263,14 +281,14 @@ void InteractionManager::Update(bool inputAllowed)
     }
 }
 
-float InteractionManager::GetAttackStrengthScale() const
+float InteractionManager::GetAttackStrengthScale(float partialTicks) const
 {
     double attackSpeed = state->attributes->GetDouble("generic.attack_speed", 4.0);
     if (attackSpeed <= 0.0) return 1.0f;
 
     // TODO: This is an expensive operation. Look into reducing this.
     double ticksToFullCharge = 20.0 / attackSpeed; // Vanilla's own getCurrentItemAttackStrengthDelay().
-    float ticks = static_cast<float>(state->attackStrengthTicker.load(std::memory_order_relaxed));
+    float ticks = static_cast<float>(state->attackStrengthTicker.load(std::memory_order_relaxed)) + partialTicks;
     return std::clamp(ticks / static_cast<float>(ticksToFullCharge), 0.0f, 1.0f);
 }
 
@@ -287,20 +305,126 @@ void InteractionManager::RefreshHeldItems()
 
 void InteractionManager::RefreshReach()
 {
-    reachDistance = static_cast<float>(state->attributes->GetDouble("generic.attack_range", 3.0));
-    blockReachDistance = static_cast<float>(state->attributes->GetDouble("generic.block_interaction_range", 4.5));
+    // Named the way the server's Update Attributes packet names them (see
+    // NetworkClient's ATTRIBUTE_NAMES).
+    reachDistance = static_cast<float>(state->attributes->GetDouble("player.entity_interaction_range", 3.0));
+    blockReachDistance = static_cast<float>(state->attributes->GetDouble("player.block_interaction_range", 4.5));
 }
 
-void InteractionManager::PrimaryTrigger()
+void InteractionManager::PrimaryTriggerStart()
 {
-    // Vanilla never refuses a swing — attackStrengthTicker only scales the
-    // damage a landed hit deals (GetAttackStrengthScale), it doesn't gate
-    // whether one happens. Resets unconditionally, same as an air-swing
-    // does in vanilla.
-    state->attackStrengthTicker.store(0, std::memory_order_relaxed);
+    if (targetedEntityId.has_value())
+    {
+        AttackEntity(*targetedEntityId);
+    }
+    else
+    {
+        // Air or a block (block breaking isn't implemented, so a block is
+        // just swung at).
+        lastAttackType = AttackType::Miss;
+    }
 
-    // Nothing to dispatch to yet — targetedEntityId/targetedBlock now hold
-    // a real target, but this client has no outbound attack/dig packet.
+    // Vanilla swings on every click, hit or not (after the Attack packet
+    // when there is one — AttackEntity above), and never refuses one:
+    // attackStrengthTicker only scales the damage a landed hit deals
+    // (GetAttackStrengthScale), it doesn't gate whether a swing happens.
+    // Resets unconditionally, same as an air-swing does in vanilla.
+    constexpr int32_t MAIN_HAND = 0;
+    SendSwing(state, MAIN_HAND);
+    state->attackStrengthTicker.store(0, std::memory_order_relaxed);
+}
+
+void InteractionManager::PrimaryTriggerHold()
+{
+    // Where continuing to break the targeted block will go — nothing to do
+    // until block breaking exists. Deliberately NOT an attack: holding the
+    // button doesn't keep attacking in vanilla (see PrimaryTriggerStart).
+}
+
+void InteractionManager::AttackEntity(uint32_t entityId)
+{
+    // Snapshot what the classification needs about the target. The ray
+    // cast that picked it ran this same frame, but the network thread may
+    // have removed it since.
+    bool targetIsPlayer = false;
+    bool targetIsLiving = false;
+    {
+        std::lock_guard<std::mutex> lock(state->entitiesMutex);
+        if (const PlayerEntity* player = state->FindPlayerEntity(entityId))
+        {
+            if (player->IsSpectator()) return;
+            targetIsPlayer = true;
+            targetIsLiving = true;
+        }
+        else if (const Entity* entity = state->FindEntity(entityId))
+        {
+            const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity->type);
+            targetIsLiving = info != nullptr && info->IsLiving();
+        }
+        else
+        {
+            return;
+        }
+    }
+
+    // Classified before the swing resets attackStrengthTicker (see
+    // PrimaryTriggerStart), with vanilla's half-tick lookahead.
+    TickLoop::MovementSnapshot movement = state->tickLoop->GetMovementSnapshot();
+    lastAttackType = ClassifyAttack(GetAttackStrengthScale(0.5f), movement, targetIsLiving);
+
+    SendAttack(state, entityId);
+
+    // The part of a hit vanilla applies to the attacker on the client
+    // (Player.causeExtraKnockback): any knockback — the sprint hit's extra
+    // 0.5, plus the attack_knockback attribute — slows us to 0.6x
+    // horizontally and ends the sprint. Vanilla only gets there when the
+    // client-side hurt check passes, which on the client is only true for
+    // other players (RemotePlayer.hurtClient), so a sprint hit on a mob
+    // keeps our momentum. TickLoop applies it on its next tick; the
+    // resulting stop_sprinting goes out after the Attack packet above (see
+    // NetworkClient::ReportMovementState), so the server still counts this
+    // hit as a sprint hit.
+    float knockback = static_cast<float>(state->attributes->GetDouble("generic.attack_knockback", 0.0))
+        + (lastAttackType == AttackType::Knockback ? 0.5f : 0.0f);
+    if (targetIsPlayer && knockback > 0.0f)
+    {
+        constexpr float ATTACKER_SLOWDOWN = 0.6f;
+        state->localMotion.Push({ LocalMotionEvent::Kind::AttackSlowdown, glm::vec3(ATTACKER_SLOWDOWN) });
+    }
+
+    static constexpr const char* ATTACK_TYPE_NAMES[] = { "miss", "normal", "knockback", "critical", "sweep" };
+    Log::Debug(std::string("[COMBAT] Attacked entity ") + std::to_string(entityId) + " ("
+        + ATTACK_TYPE_NAMES[static_cast<size_t>(lastAttackType)] + " hit).");
+}
+
+AttackType InteractionManager::ClassifyAttack(float strength, const TickLoop::MovementSnapshot& movement,
+                                               bool targetIsLiving) const
+{
+    bool fullStrength = strength > 0.9f;
+
+    // Critical: falling (not rising, not standing) at full strength, not
+    // sprinting, against something alive. Climbing/water/blindness/riding
+    // would also rule it out in vanilla; none of those are modeled here.
+    bool critical = fullStrength && movement.fallDistance > 0.0f && !movement.grounded
+        && !movement.sprinting && targetIsLiving;
+    if (critical) return AttackType::Critical;
+
+    bool knockback = fullStrength && movement.sprinting;
+    if (knockback) return AttackType::Knockback;
+
+    // Sweep: a sword swung at full strength while on the ground and moving
+    // slower than 2.5x the movement_speed attribute (per tick) — i.e.
+    // standing still or walking, not running around.
+    if (fullStrength && movement.grounded)
+    {
+        float speedLimit = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1)) * 2.5f;
+        const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(mainhand.itemId);
+        bool holdingSword = item != nullptr && item->name.size() > 6
+            && item->name.compare(item->name.size() - 6, 6, "_sword") == 0;
+        if (holdingSword && movement.horizontalSpeed < speedLimit) return AttackType::Sweep;
+    }
+
+    return AttackType::Normal;
 }
 
 void InteractionManager::SecondaryTriggerStart()

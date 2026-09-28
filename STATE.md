@@ -10,6 +10,9 @@ Completion: **10% Complete.** (Estimate.)
 * Movement (fixed-tick simulation, AABB collision with auto step-up, sprint/sneak as client-side speed multipliers)
 * Network client (login/configuration/play, compression, chunk streaming, chat/commands, death/respawn)
 * Entity spawning/tracking (placeholder box + a real humanoid model; no other players' skins yet)
+* Other players as full `PlayerEntity`s (uuid, name, game mode, equipment from Set Equipment, health/sneak/sprint/invisible from Set Entity Data), rendered like other humanoids with a red hurt/death flash
+* PvP / melee combat: click-to-attack (Attack + Swing packets), vanilla's four hit types (normal, sprint-knockback, critical, sweep) predicted client-side, sprint-hit self-slowdown, and incoming knockback (Set Entity Motion / Explosion) applied to the local player
+* Movement-state reporting: real sprint state (Player Command), held keys incl. sneak (Player Input), rotation in every position report, local attributes from Update Attributes
 * Player-status HUD (health/hunger/saturation bars, hotbar + armor slot placeholders, selected-slot indicator, chat)
 * Config system (settings.json, dot-path keys, self-defaulting)
 * Interaction manager skeleton (mainhand/offhand tracking, attack cooldown bookkeeping, primary/secondary mouse actions wired — no ray tracer yet, so nothing actually dispatches an attack/block-break/use/place)
@@ -29,7 +32,8 @@ Completion: **10% Complete.** (Estimate.)
 * Settings GUI
 * Resource pack reloading (server-pushed packs are currently ignored entirely)
 * Mod loading (LATE)
-* Combat / attacking or interacting with entities
+* Right-click interaction with entities (Interact packet), blocking with shields, bows/tridents
+* Combat visuals: arm-swing animation, crit/sweep particles, hurt camera tilt, hit sounds (the events are tracked — `Entity::lastSwingTime`/`lastCritTime`/`lastHurtTime` — just not drawn)
 * Block breaking/placing (no Player Digging / Block Place packet handling)
 * Riding entities
 * Chunk fading
@@ -66,6 +70,20 @@ Completion: **10% Complete.** (Estimate.)
 * **Step-up applied while airborne, not just on the ground.** `MoveAxis` tried `TryStepUp` on any blocked horizontal move regardless of `grounded`, so jumping/falling into a solid face let the player climb it a `STEP_HEIGHT` (0.6-block) hop at a time instead of colliding with it like a wall. Now gated on `grounded`. -- *`TickLoop.cpp`*
 * **Ghost chunk geometry after a dimension change** (e.g. dying and respawning back at the world spawn) — the old dimension's chunks, entities, and both render lists just kept rendering forever, since nothing ever cleared them. The server's `Respawn` packet (sent on every dimension change, not only death) was previously unhandled entirely. The disconnect-screen reset (world/render-list/entity clear, already existed, only ever ran when returning to the connect screen) is now a shared `GlobalState::ResetWorldState()`, called on `Respawn` too — same reset, but without reopening the connect screen, so the session stays connected while the new dimension's chunks stream in. **Not yet verified against a live respawn/dimension change** — only that it builds and the reset is a safe no-op mid-connect-screen-return (its original call site). -- *`GlobalState.hpp`, `VolcanoClient.cpp`, `NetworkClient.cpp`, `PacketIds.hpp`*
 
+## Fixed since last update (2026-09-28)
+* **Remote entities faced mirrored east/west.** Minecraft's yaw turns the opposite way from this engine's (vanilla faces `(-sin, cos)`, the entity shaders/camera face `(sin, cos)`); `AngleByteToRadians` passed it through unnegated, so an entity facing east rendered facing west. North/south looked right, which is likely why the earlier live check passed. Now negated. **Needs a live check** with a player/zombie walking east or west. -- *`NetworkClient.cpp`*
+* **Spawn Entity velocity decoding** replaced the "try 1 or 6 bytes" width heuristic with an exact port of vanilla's `LpVec3.read` (round-trip tested against a port of `LpVec3.write`). The heuristic couldn't handle velocities above ~1 block/tick (7+ bytes, continuation varint) and skipped those entities. -- *`NetworkClient.cpp`*
+* **Holding left mouse reset the attack cooldown every frame**, so it could never charge. Attacks now happen on click only (`PrimaryActionPress`), like vanilla. -- *`InteractionManager.cpp`, `VolcanoClient.cpp`*
+* `PlayerAttributes` is now mutex-guarded, since the network thread writes server attribute values into it while the render thread reads it. -- *`PlayerAttributes.hpp/.cpp`*
+
+## PvP notes (2026-09-28)
+Built against vanilla 26.2's own code in `resources/26.2.zip` (`Player.attack`, `MultiPlayerGameMode.attack`, `ClientPacketListener`, `LpVec3`). **None of it has been tested against a live server yet.** Things to check first:
+* Sprint-hitting another player knocks them back further than a standing hit, and slows you down (you have to re-press sprint/W-tap for the next sprint hit to count).
+* Being hit knocks you back. The first tick of knockback now moves at full strength: `TickLoop::FixedStep` applies friction after the move instead of before, as vanilla does. Walking speed is mathematically unchanged, but check that walk/sprint/jump still feel the same.
+* Jump-and-fall hits land as crits (the server decides from our reported position/onGround, so this also exercises position reporting).
+* Sword hits while standing still sweep.
+* The server's own sprint modifier is filtered out of `generic.movement_speed` in Update Attributes because TickLoop applies the sprint multiplier itself. If sprinting feels too fast or slow, check this first.
+
 ## Tasks
 [x] Contemplate my life choices.
 [x] Add key actions for switching hotbar slots.
@@ -87,7 +105,9 @@ Completion: **10% Complete.** (Estimate.)
 [ ] Commit `STATE.md` to git — it's currently untracked, so there's no history of it and it's one `git clean` away from gone.
 [x] Create `InteractionManager` (`src/interaction/`) — mainhand/offhand tracking (snapshotted from `GlobalState::inventory` each frame, not held as raw pointers into it — see its own comment on why), attack-cooldown bookkeeping, `PrimaryAction`/`SecondaryAction` mouse-button input actions (added mouse-button support to `InputHandler` itself, which had none before — see `MOUSE_BUTTON_LEFT`/`RIGHT`). `RayTraceSelection()` is a deliberate stub — that's the next task below — so `PrimaryTrigger`/`SecondaryTrigger` currently only manage the cooldown gate, nothing dispatches an attack/break/use/place yet.
 [x] Build the ray tracer: a block/entity raycast that resolves the camera's look ray against `state->world`/`state->entities` out to `InteractionManager::blockReachDistance`/`reachDistance`. Wire it into `InteractionManager::RayTraceSelection()` (for `PrimaryTrigger`/`SecondaryTrigger` to dispatch against, and the selection-outline renderer to draw) and into `GlobalState::lookingAtEntity` so the crosshair's attack-indicator variant actually swaps in on target.
-[ ] Once the ray tracer exists: wire `InteractionManager::PrimaryTrigger`/`SecondaryTrigger` to actually attack the targeted entity / start breaking the targeted block, and use the held item / place a block against the targeted face, respectively.
+[~] Once the ray tracer exists: wire `InteractionManager::PrimaryTrigger`/`SecondaryTrigger` to actually attack the targeted entity / start breaking the targeted block, and use the held item / place a block against the targeted face, respectively. **Attacking is done** (`PrimaryTriggerStart` → `AttackEntity`); block breaking and secondary use/place are still stubs.
+[ ] Verify PvP live against the dev server — see "PvP notes" above.
+[ ] Verify the east/west entity-facing fix live (see Fixed, 2026-09-28).
 [ ] Fix chunk-boundary faces for real: give `renderList`/`nonCubicRenderList` a find-and-replace path (not just append) and `SlabBuffer` a way to free/reuse a chunk's old allocation, then have `MeshingThread` remesh a chunk's already-loaded neighbors whenever a new chunk lands next to them.
 [x] Fix the humanoid face-texture rotation (was a UV-corner-pairing bug, not a corrupted skin file — see Fixed).
 [x] Verify live that a remote player/zombie's face now points the same way they're walking (the 180°-facing fix in the same change above couldn't be checked without a live entity).

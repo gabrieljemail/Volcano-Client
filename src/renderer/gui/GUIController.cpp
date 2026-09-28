@@ -15,6 +15,7 @@
 #include "gui/models/Button.hpp"
 #include "gui/models/Chat.hpp"
 #include "inventory/ItemRegistry.hpp"
+#include "TickLoop.hpp"
 
 namespace Volcano {
 // Declared here rather than including network/NetworkClient.hpp: that
@@ -1066,7 +1067,10 @@ void GUIController::RenderMovementStatePanel()
     constexpr bool isFlying = false;
     constexpr bool isSwimming = false;
     bool sneaking = state->input->IsActive("Sneak");
-    bool sprinting = state->input->IsActive("Sprint");
+    // TickLoop's real sprint state, not the key: a sprint keeps going after
+    // the key is released, and ends on a sprint hit/wall/low food with it
+    // still held.
+    bool sprinting = state->tickLoop->GetMovementSnapshot().sprinting;
     bool hasMoveInput =
         std::fabs(state->input->GetAxis("Move.Forward")) > 0.01f ||
         std::fabs(state->input->GetAxis("Move.Right")) > 0.01f;

@@ -10,11 +10,13 @@
 #include <queue>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <atomic>
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include "renderer/models/Mesh.hpp"
 #include "renderer/entity/models/Entity.hpp"
+#include "renderer/entity/models/PlayerEntity.hpp"
 #include "renderer/gui/models/GUIWindow.hpp"
 #include "renderer/terrain/models/Chunk.hpp"
 #include "renderer/terrain/models/World.hpp"
@@ -69,6 +71,38 @@ struct NetworkInbox {
     // (Player Position, 0x48). Latest wins if two land before MeshingThread
     // drains it — an outdated correction isn't worth applying.
     std::optional<glm::vec3> spawnPosition;
+};
+
+// Handoff point for changes to the local player's own velocity that don't
+// originate in TickLoop itself: server knockback (PlayS2C::SetEntityMotion
+// for our own entity id), explosion pushes (PlayS2C::Explosion), and the
+// sprint-hit slowdown InteractionManager applies to us when we land a
+// knockback hit on another player. TickLoop owns velocity/sprinting on
+// NetworkThread, while these arrive on NetworkThread (packets) and the
+// render thread (attacks) — so they're queued here instead, and TickLoop::
+// Tick drains them in arrival order before its next fixed step. Order
+// matters: vanilla applies each one immediately as it happens, so a
+// knockback packet landing right after our own attack must overwrite the
+// attack's 0.6x slowdown, not be scaled by it.
+struct LocalMotionEvent {
+    enum class Kind : uint8_t {
+        SetVelocity,     // Replace velocity outright (vanilla's lerpMotion/setDeltaMovement).
+        AddVelocity,     // Add onto current velocity (vanilla's addDeltaMovement).
+        AttackSlowdown,  // Scale horizontal velocity by `vector.x` and stop sprinting.
+    };
+    Kind kind;
+    glm::vec3 vector{0.0f};
+};
+
+struct LocalMotionInbox {
+    std::mutex mutex;
+    std::vector<LocalMotionEvent> events;
+
+    void Push(LocalMotionEvent event)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        events.push_back(event);
+    }
 };
 
 struct GlobalState {
@@ -160,6 +194,53 @@ struct GlobalState {
     std::unordered_map<uint32_t, Entity> entities = {};
     std::mutex entitiesMutex;
 
+    // Other players, keyed by network entity ID like `entities` above but
+    // kept in their own map so their player-only fields (uuid, username,
+    // equipment, health, pose flags — see PlayerEntity) survive; `entities`
+    // holds plain Entity values, which would slice those off. Written by
+    // NetworkClient (Spawn Entity for type "player", Set Equipment, Set
+    // Entity Data, ...), read by EntityRenderer and InteractionManager's
+    // raycast. Guarded by entitiesMutex too, not a mutex of its own — an
+    // entity id lives in exactly one of the two maps, and every movement/
+    // removal packet has to look in both under one lock anyway (see
+    // FindEntity/ForEachEntity below).
+    std::unordered_map<uint32_t, PlayerEntity> playerEntities = {};
+
+    // Looks an entity id up in both entities and playerEntities. Caller must
+    // hold entitiesMutex. The returned pointer is only valid while it does.
+    Entity* FindEntity(uint32_t id)
+    {
+        if (auto it = entities.find(id); it != entities.end()) return &it->second;
+        if (auto it = playerEntities.find(id); it != playerEntities.end()) return &it->second;
+        return nullptr;
+    }
+
+    PlayerEntity* FindPlayerEntity(uint32_t id)
+    {
+        auto it = playerEntities.find(id);
+        return it != playerEntities.end() ? &it->second : nullptr;
+    }
+
+    // Calls fn(id, const Entity&) for every tracked entity, players
+    // included, for code that only needs the common Entity fields. Caller
+    // must hold entitiesMutex.
+    template <typename Fn>
+    void ForEachEntity(Fn&& fn) const
+    {
+        for (const auto& [id, entity] : entities) fn(id, entity);
+        for (const auto& [id, player] : playerEntities) fn(id, static_cast<const Entity&>(player));
+    }
+
+    // Our own network entity id, from PlayS2C::LoginPlay — what the server
+    // addresses packets about the local player with (knockback velocity,
+    // attribute updates, ...) and what PlayC2S::PlayerCommand has to name.
+    // -1 until LoginPlay arrives. Written by NetworkThread, read from the
+    // render thread too (InteractionManager), hence atomic.
+    std::atomic<int32_t> localEntityId{-1};
+
+    // See LocalMotionInbox's own comment.
+    LocalMotionInbox localMotion;
+
     // Whether the crosshair is currently over an attackable entity — the
     // tracking field GUIController::RenderCrosshair reads to pick
     // crosshair-entity.png over the plain crosshair.png (vanilla's own
@@ -179,6 +260,14 @@ struct GlobalState {
     // Remove packets in NetworkClient::RunPlayLoop.
     std::unordered_map<std::string, std::string> playerList = {};
     std::mutex playerListMutex;
+
+    // Each tab-list player's game mode (Player Info Update's
+    // UPDATE_GAME_MODE), keyed the same way as playerList and guarded by the
+    // same mutex. Kept apart from the PlayerEntity itself because the info
+    // update usually arrives before that player's Spawn Entity does —
+    // NetworkClient copies it onto the PlayerEntity at spawn, and onto an
+    // already-spawned one when it changes.
+    std::unordered_map<std::string, GameMode> playerGameModes = {};
 
     // Last values reported by the server's Set Health packet (see
     // NetworkClient's PlayS2C::SetHealth handler) — read every frame by
@@ -348,6 +437,11 @@ struct GlobalState {
         {
             std::lock_guard<std::mutex> lock(entitiesMutex);
             entities.clear();
+            playerEntities.clear();
+        }
+        {
+            std::lock_guard<std::mutex> lock(localMotion.mutex);
+            localMotion.events.clear();
         }
         {
             std::lock_guard<std::mutex> lock(networkInbox.mutex);
