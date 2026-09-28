@@ -4,6 +4,7 @@
 
 #include <vulkan/vulkan.hpp>
 #include "../../GlobalState.hpp"
+#include "../engine/ShaderLibrary.hpp"
 
 namespace Volcano {
 
@@ -16,13 +17,20 @@ namespace Volcano {
 // every per-draw value (the box, the color) goes through a push constant.
 class SelectionRenderer {
 public:
-    // Creates the outline/fill pipelines and the shared unit-cube mesh.
-    // Must run after VulkanInit's render pass and camera descriptor set
-    // layout exist (i.e. after CreateGraphicsPipeline() in VulkanInit::Init()).
-    static void Init();
+    // Creates the outline/fill pipelines (selection.vert/.frag, resolved
+    // through shaders so a shader pack can replace them) and the shared
+    // unit-cube mesh. Must run after VulkanInit's render pass and camera
+    // descriptor set layout exist — SelectionPass::Create() calls it once
+    // VulkanInit::Init() has returned.
+    static void Init(const Engine::ShaderLibrary& shaders);
 
-    // Destroys everything Init() created. Must run before the VMA allocator
-    // is destroyed (i.e. from VulkanInit::Cleanup()).
+    // Rebuilds just the pipelines (mesh untouched) — for a shader reload.
+    // The GPU must be idle.
+    static void ReloadPipelines(const Engine::ShaderLibrary& shaders);
+
+    // Destroys everything Init() created; safe to call twice. Must run
+    // before the VMA allocator is destroyed — SelectionPass::Destroy() calls
+    // it from RenderEngine::StopRendering().
     static void Shutdown();
 
     // No-op if nothing is targeted. Must be called inside an active render

@@ -482,31 +482,35 @@ void CreatePerFrameBuffers()
     }
 }
 
-VkShaderModule CreateShaderModuleFromFile(const std::string& path)
+// Loads a vertex/fragment pair through the ShaderLibrary (shader pack
+// override, else built-in), releasing the first module if the second fails.
+void CreateShaderPair(const Engine::ShaderLibrary& shaders, const std::string& baseName,
+    VkShaderModule& vertModule, VkShaderModule& fragModule)
 {
-    std::vector<char> code = ReadFile(path);
-    if (code.empty())
+    vertModule = CreateShaderModule(shaders, baseName + ".vert");
+    try
     {
-        throw std::runtime_error("[ERROR] Failed to read shader file: " + path);
+        fragModule = CreateShaderModule(shaders, baseName + ".frag");
     }
-
-    VkShaderModuleCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    createInfo.codeSize = code.size();
-    createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-
-    VkShaderModule module;
-    if (vkCreateShaderModule(GetDevice(), &createInfo, nullptr, &module) != VK_SUCCESS)
+    catch (...)
     {
-        throw std::runtime_error("[ERROR] Failed to create shader module: " + path);
+        vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
+        vertModule = VK_NULL_HANDLE;
+        throw;
     }
-    return module;
 }
 
-void CreatePipeline()
+void DestroyShaderPair(VkShaderModule vertModule, VkShaderModule fragModule)
 {
-    VkShaderModule vertModule = CreateShaderModuleFromFile("resources/shaders/entity.vert.spv");
-    VkShaderModule fragModule = CreateShaderModuleFromFile("resources/shaders/entity.frag.spv");
+    vkDestroyShaderModule(GetDevice(), fragModule, nullptr);
+    vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
+}
+
+void CreatePipeline(const Engine::ShaderLibrary& shaders)
+{
+    VkShaderModule vertModule = VK_NULL_HANDLE;
+    VkShaderModule fragModule = VK_NULL_HANDLE;
+    CreateShaderPair(shaders, "entity", vertModule, fragModule);
 
     VkPipelineShaderStageCreateInfo vertStage{};
     vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -599,6 +603,7 @@ void CreatePipeline()
     pipelineLayoutInfo.pSetLayouts = setLayouts;
     if (vkCreatePipelineLayout(GetDevice(), &pipelineLayoutInfo, nullptr, &g_pipelineLayout) != VK_SUCCESS)
     {
+        DestroyShaderPair(vertModule, fragModule);
         throw std::runtime_error("[ERROR] Failed to create entity pipeline layout.");
     }
 
@@ -619,11 +624,12 @@ void CreatePipeline()
     pipelineInfo.subpass = 0;
     if (vkCreateGraphicsPipelines(GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &g_pipeline) != VK_SUCCESS)
     {
+        g_pipeline = VK_NULL_HANDLE;
+        DestroyShaderPair(vertModule, fragModule);
         throw std::runtime_error("[ERROR] Failed to create entity graphics pipeline.");
     }
 
-    vkDestroyShaderModule(GetDevice(), fragModule, nullptr);
-    vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
+    DestroyShaderPair(vertModule, fragModule);
 }
 
 // Same fixed-function state as CreatePipeline() above (same render pass/
@@ -633,10 +639,11 @@ void CreatePipeline()
 // vertex layout (+UV, no per-instance SSBO), shaders, and descriptor set 1
 // (a skin texture instead of the instance buffer) plus a push constant
 // range (this path draws one entity per call, not instanced).
-void CreateHumanoidPipeline()
+void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
 {
-    VkShaderModule vertModule = CreateShaderModuleFromFile("resources/shaders/entity_textured.vert.spv");
-    VkShaderModule fragModule = CreateShaderModuleFromFile("resources/shaders/entity_textured.frag.spv");
+    VkShaderModule vertModule = VK_NULL_HANDLE;
+    VkShaderModule fragModule = VK_NULL_HANDLE;
+    CreateShaderPair(shaders, "entity_textured", vertModule, fragModule);
 
     VkPipelineShaderStageCreateInfo vertStage{};
     vertStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -734,6 +741,7 @@ void CreateHumanoidPipeline()
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
     if (vkCreatePipelineLayout(GetDevice(), &pipelineLayoutInfo, nullptr, &g_humanoidPipelineLayout) != VK_SUCCESS)
     {
+        DestroyShaderPair(vertModule, fragModule);
         throw std::runtime_error("[ERROR] Failed to create humanoid entity pipeline layout.");
     }
 
@@ -754,11 +762,12 @@ void CreateHumanoidPipeline()
     pipelineInfo.subpass = 0;
     if (vkCreateGraphicsPipelines(GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &g_humanoidPipeline) != VK_SUCCESS)
     {
+        g_humanoidPipeline = VK_NULL_HANDLE;
+        DestroyShaderPair(vertModule, fragModule);
         throw std::runtime_error("[ERROR] Failed to create humanoid entity graphics pipeline.");
     }
 
-    vkDestroyShaderModule(GetDevice(), fragModule, nullptr);
-    vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
+    DestroyShaderPair(vertModule, fragModule);
 }
 
 // Left/Right/Bottom/Top frustum planes (Gribb/Hartmann) extracted from a
@@ -792,14 +801,29 @@ bool SphereInFrustum(const std::array<glm::vec4, 4>& planes, const glm::vec3& ce
     return true;
 }
 
+// Both pipelines and their layouts — everything shader-dependent, and
+// nothing else (meshes, skins, per-frame buffers stay put).
+void DestroyPipelines()
+{
+    VkDevice dev = GetDevice();
+    if (g_pipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, g_pipeline, nullptr);
+    if (g_pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, g_pipelineLayout, nullptr);
+    if (g_humanoidPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, g_humanoidPipeline, nullptr);
+    if (g_humanoidPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, g_humanoidPipelineLayout, nullptr);
+    g_pipeline = VK_NULL_HANDLE;
+    g_pipelineLayout = VK_NULL_HANDLE;
+    g_humanoidPipeline = VK_NULL_HANDLE;
+    g_humanoidPipelineLayout = VK_NULL_HANDLE;
+}
+
 } // namespace
 
-void EntityRenderer::Init()
+void EntityRenderer::Init(const Engine::ShaderLibrary& shaders)
 {
     UploadCubeMesh();
     CreateDescriptorLayoutAndPool();
     CreatePerFrameBuffers();
-    CreatePipeline();
+    CreatePipeline(shaders);
 
     // Humanoid path — CreateDescriptorLayoutAndPool() above must run first
     // (LoadSkins() allocates each skin's descriptor set from
@@ -807,9 +831,16 @@ void EntityRenderer::Init()
     // there).
     UploadHumanoidMesh();
     LoadSkins();
-    CreateHumanoidPipeline();
+    CreateHumanoidPipeline(shaders);
 
     Log::Info("[INFO] Entity renderer initialized.");
+}
+
+void EntityRenderer::ReloadPipelines(const Engine::ShaderLibrary& shaders)
+{
+    DestroyPipelines();
+    CreatePipeline(shaders);
+    CreateHumanoidPipeline(shaders);
 }
 
 void EntityRenderer::Shutdown()
