@@ -970,22 +970,26 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
     uint32_t cubeInstanceCount = 0;
     {
         std::lock_guard<std::mutex> lock(state->entitiesMutex);
-        visible.reserve(state->entities.size());
+        visible.reserve(state->entities.size() + state->playerEntities.size());
 
-        for (const auto& [id, entity] : state->entities)
+        // Other players (playerEntities) render exactly like every other
+        // humanoid — the invisibility status effect's flag aside, which
+        // hides them the way it does in vanilla.
+        state->ForEachEntity([&](uint32_t id, const Entity& entity)
         {
-            if (!entity.visible) continue;
+            if (!entity.visible) return;
+            if (const PlayerEntity* player = state->FindPlayerEntity(id); player && player->invisible) return;
 
             float halfWidth = entity.boundingBox.x * 0.5f;
             float halfHeight = entity.boundingBox.y * 0.5f;
             glm::vec3 center = entity.InterpolatedPosition(now) + glm::vec3(0.0f, halfHeight, 0.0f);
             float radius = glm::length(glm::vec3(halfWidth, halfHeight, halfWidth));
 
-            if (!SphereInFrustum(frustumPlanes, center, radius)) continue;
+            if (!SphereInFrustum(frustumPlanes, center, radius)) return;
 
             float distanceSq = glm::dot(center - cameraPosition, center - cameraPosition);
             visible.emplace_back(distanceSq, &entity);
-        }
+        });
 
         if (visible.size() > MAX_VISIBLE_ENTITIES)
         {
@@ -996,7 +1000,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
 
         // Build the GPU instance buffer while still holding the lock, since
         // `visible` (and humanoidVisible, built alongside it here) holds raw
-        // pointers into state->entities.
+        // pointers into state->entities/playerEntities.
         std::vector<GPUEntityInstance> instances;
         instances.reserve(visible.size());
         for (const auto& [distanceSq, entity] : visible)
@@ -1006,7 +1010,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             if (skin != nullptr)
             {
                 humanoidVisible.push_back(HumanoidDraw{
-                    entity->InterpolatedPosition(now), entity->InterpolatedYaw(now), entity->hurtAmount, skin });
+                    entity->InterpolatedPosition(now), entity->InterpolatedYaw(now), entity->HurtFlash(now), skin });
                 continue;
             }
 
@@ -1014,7 +1018,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             gpu.positionYaw = glm::vec4(entity->InterpolatedPosition(now), entity->InterpolatedYaw(now));
             gpu.halfExtentsHurt = glm::vec4(
                 entity->boundingBox.x * 0.5f, entity->boundingBox.y * 0.5f, entity->boundingBox.x * 0.5f,
-                entity->hurtAmount);
+                entity->HurtFlash(now));
             gpu.color = glm::vec4(entity->color, 1.0f);
             instances.push_back(gpu);
         }

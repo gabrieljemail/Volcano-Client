@@ -26,10 +26,18 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
     auto client = std::make_shared<NetworkClient>(ioContext);
     // Drives TickLoop::Tick() from RunPlayLoop's own loop (see the
     // tick-loop plan) without NetworkClient needing to know TickLoop
-    // exists at all — see SetTickCallback's own comment. The returned
-    // IsGrounded() reflects the state Tick() (called first, this same
-    // line) just computed.
-    client->SetTickCallback([this] { state->tickLoop->Tick(); return state->tickLoop->IsGrounded(); });
+    // exists at all — see SetTickCallback's own comment. Everything in the
+    // returned report reflects the state Tick() (called first) just computed.
+    client->SetTickCallback([this] {
+        TickLoop* tickLoop = state->tickLoop;
+        tickLoop->Tick();
+        TickReport report;
+        report.grounded = tickLoop->IsGrounded();
+        report.horizontalCollision = tickLoop->HadHorizontalCollision();
+        report.sprinting = tickLoop->IsSprinting();
+        report.inputFlags = tickLoop->GetMovementInputFlags();
+        return report;
+    });
     if (client->ConnectAndLogin(host, port, username)) {
         // Published only once Configuration is behind us and the Play loop
         // is about to start — see GlobalState::activeConnection's own

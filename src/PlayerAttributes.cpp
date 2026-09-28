@@ -20,6 +20,7 @@ PlayerAttributes PlayerAttributes::Defaults()
 
 double PlayerAttributes::GetDouble(const std::string& name, double fallback) const
 {
+    std::lock_guard<std::mutex> lock(mutex);
     auto it = attributes.find(name);
     if (it == attributes.end() || it->second.type != NBT::TagType::Double) return fallback;
     return std::get<double>(it->second.value);
@@ -27,6 +28,7 @@ double PlayerAttributes::GetDouble(const std::string& name, double fallback) con
 
 void PlayerAttributes::SetDouble(const std::string& name, double value)
 {
+    std::lock_guard<std::mutex> lock(mutex);
     attributes[name] = NBT::Tag{NBT::TagType::Double, value};
 }
 
