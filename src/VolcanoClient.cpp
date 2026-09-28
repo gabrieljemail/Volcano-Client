@@ -196,8 +196,11 @@ int main()
     }
 
     // Mainhand/offhand interaction — read by InteractionManager::Update.
-    // PrimaryAction is HOLD (vanilla lets holding the mouse down keep
-    // attacking, rate-limited by its own cooldown).
+    // Primary gets a PRESS and a HOLD action on the same button, like
+    // Jump/JumpHold: attacking only ever happens on the click itself
+    // (vanilla doesn't keep attacking while the button is held), while
+    // holding is what block breaking will need once it exists.
+    input.RegisterAction("PrimaryActionPress", InputActionTriggerType::PRESS, {MOUSE_BUTTON_LEFT});
     input.RegisterAction("PrimaryAction", InputActionTriggerType::HOLD, {MOUSE_BUTTON_LEFT});
 
     // Secondary gets three actions on the same button — same pattern as

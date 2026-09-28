@@ -33,11 +33,19 @@ namespace Volcano {
 // per render frame (PublishInput/RequestJump) instead of being read
 // straight from InputHandler — see their own comments.
 //
-// Not vanilla-exact in every respect: sprint/sneak are client-side speed
-// multipliers only (no sneak edge-detection, no server-side attribute
-// modifiers), no non-solid block special-casing (water, ladders, etc.), and
-// ground friction/acceleration use default block slipperiness rather than
-// reading it per-block — see the plan's scope note.
+// Not vanilla-exact in every respect: sprint/sneak speed is a client-side
+// multiplier rather than a server-synced attribute modifier, there's no
+// non-solid block special-casing (water, ladders, etc.), and ground
+// friction/acceleration use default block slipperiness rather than reading
+// it per-block — see the plan's scope note. Sprinting itself is a real
+// state now (see UpdateSprinting), since the server has to be told about it
+// for sprint-knockback hits to work — NetworkClient reports it every time it
+// changes (see IsSprinting).
+//
+// Velocity changes that come from outside the simulation — knockback from
+// the server, explosion pushes, the slowdown from landing a sprint hit —
+// arrive through GlobalState::localMotion and are applied at the top of
+// Tick(); see DrainLocalMotion.
 class TickLoop {
 public:
     static constexpr float FIXED_DT = 1.0f / 20.0f;
@@ -73,6 +81,31 @@ public:
     // reasoning previousPosition/currentPosition/velocity's own comments
     // give.
     bool IsGrounded() const { return grounded; }
+
+    // The rest of what NetworkClient reports to the server after each
+    // Tick(), same same-thread contract as IsGrounded above: whether the
+    // player is sprinting (PlayC2S::PlayerCommand start/stop — the server's
+    // sprint flag is what turns a full-strength hit into a knockback hit),
+    // whether the last step ran into a wall (MovementFlags bit 1), and
+    // which movement keys are held (PlayC2S::PlayerInput's bitflags —
+    // forward, backward, left, right, jump, shift, sprint from bit 0 up;
+    // shift is how the server learns we're sneaking).
+    bool IsSprinting() const { return sprinting; }
+    bool HadHorizontalCollision() const { return horizontalCollisionAxes != 0; }
+    uint8_t GetMovementInputFlags() const;
+
+    // Cross-thread snapshot of the movement state vanilla's attack logic
+    // reads to decide what kind of hit a swing is (see InteractionManager::
+    // ClassifyAttack): sprinting, on the ground, how far the current fall
+    // has gone, and horizontal distance covered last tick. Written at the
+    // end of every Tick() on NetworkThread, read from the render thread.
+    struct MovementSnapshot {
+        bool sprinting = false;
+        bool grounded = false;
+        float fallDistance = 0.0f;       // Blocks fallen since last leaving the ground.
+        float horizontalSpeed = 0.0f;    // Blocks moved horizontally in the last fixed step.
+    };
+    MovementSnapshot GetMovementSnapshot() const;
 
     // Edge-triggered jump request — call once from PollInputs when
     // WasActivated("Jump") is true. Latches until the next Tick() consumes
@@ -149,6 +182,33 @@ private:
     glm::vec3 currentPosition;
     glm::vec3 velocity{0.0f};
     bool grounded = false;
+
+    // Sprint state (see UpdateSprinting), fall distance (for crits — see
+    // MovementSnapshot), and which horizontal axes (bit 0 = X, bit 2 = Z)
+    // were blocked by a wall in the last fixed step. All NetworkThread-only,
+    // same as the fields above.
+    bool sprinting = false;
+    float fallDistance = 0.0f;
+    uint8_t horizontalCollisionAxes = 0;
+    // Whether the last wall hit blocked a meaningful part of the intended
+    // movement, as opposed to grazing a wall at a shallow angle — only the
+    // former stops a sprint (vanilla's "minor horizontal collision").
+    bool majorHorizontalCollision = false;
+    glm::vec3 lastHorizontalDir{0.0f};
+
+    mutable std::mutex movementSnapshotMutex;
+    MovementSnapshot movementSnapshot;
+
+    // Applies everything queued on GlobalState::localMotion since the last
+    // call, in order — see LocalMotionInbox's own comment.
+    void DrainLocalMotion();
+
+    // Vanilla's sprint rules (LocalPlayer.aiStep): start while the sprint
+    // key is held, moving forward, not sneaking, with more than 6 food;
+    // once started, keep going even after the key is let go, until forward
+    // movement stops, sneaking starts, food runs low, or the player runs
+    // head-on into a wall.
+    void UpdateSprinting(bool inputAllowedNow, float forwardInput, bool sneaking);
 
     // One fixed 1/20s simulation step — the per-tick body Tick() calls zero
     // or more times per invocation. Named separately from the public,

@@ -25,6 +25,17 @@ namespace {
     // Exponential ease rate applied per-tick below — higher = snappier. Framerate
     // (tick-rate) independent the same way RenderThread's FOV easing is.
     constexpr float EYE_HEIGHT_EASE_RATE = 10.0f;
+
+    // Vanilla's sprint gates: food must be above this to start or keep
+    // sprinting (FoodData's own threshold), and sprint-jumping adds this
+    // much forward velocity on top of the jump (LivingEntity.jumpFromGround).
+    constexpr int32_t SPRINT_MIN_FOOD = 6;
+    constexpr float SPRINT_JUMP_BOOST = 0.2f;
+
+    // A wall hit only stops a sprint if it blocked more than a sliver of the
+    // intended movement — sin(8 degrees), vanilla LocalPlayer's own "minor
+    // horizontal collision" angle.
+    constexpr float MINOR_COLLISION_SIN = 0.1392f;
 } // namespace
 
 TickLoop::TickLoop(GlobalState* stateIn) : state(stateIn)
@@ -100,6 +111,8 @@ void TickLoop::Tick()
         }
     }
 
+    DrainLocalMotion();
+
     bool inputAllowedNow = inputAllowed.load();
 
     // The jumpRequested edge case: a tap that lands in a call which runs
@@ -134,6 +147,87 @@ void TickLoop::Tick()
         std::lock_guard<std::mutex> lock(renderPositionMutex);
         renderPositionSnapshot = glm::mix(previousPosition, currentPosition, accumulator / FIXED_DT);
     }
+
+    {
+        std::lock_guard<std::mutex> lock(movementSnapshotMutex);
+        movementSnapshot.sprinting = sprinting;
+        movementSnapshot.grounded = grounded;
+        movementSnapshot.fallDistance = fallDistance;
+        movementSnapshot.horizontalSpeed = glm::length(glm::vec2(
+            currentPosition.x - previousPosition.x, currentPosition.z - previousPosition.z));
+    }
+}
+
+TickLoop::MovementSnapshot TickLoop::GetMovementSnapshot() const
+{
+    std::lock_guard<std::mutex> lock(movementSnapshotMutex);
+    return movementSnapshot;
+}
+
+uint8_t TickLoop::GetMovementInputFlags() const
+{
+    if (!inputAllowed.load()) return 0;
+
+    constexpr uint8_t FORWARD = 0x01, BACKWARD = 0x02, LEFT = 0x04, RIGHT = 0x08,
+                      JUMP = 0x10, SHIFT = 0x20, SPRINT = 0x40;
+    float forward = moveForwardInput.load();
+    float rightInput = moveRightInput.load();
+
+    uint8_t flags = 0;
+    if (forward > 0.0f) flags |= FORWARD;
+    if (forward < 0.0f) flags |= BACKWARD;
+    if (rightInput < 0.0f) flags |= LEFT;
+    if (rightInput > 0.0f) flags |= RIGHT;
+    if (jumpHeldActive.load()) flags |= JUMP;
+    if (sneakActive.load()) flags |= SHIFT;
+    if (sprintActive.load()) flags |= SPRINT;
+    return flags;
+}
+
+void TickLoop::DrainLocalMotion()
+{
+    std::vector<LocalMotionEvent> events;
+    {
+        std::lock_guard<std::mutex> lock(state->localMotion.mutex);
+        events.swap(state->localMotion.events);
+    }
+
+    for (const LocalMotionEvent& event : events)
+    {
+        switch (event.kind)
+        {
+        case LocalMotionEvent::Kind::SetVelocity:
+            velocity = event.vector;
+            break;
+        case LocalMotionEvent::Kind::AddVelocity:
+            velocity += event.vector;
+            break;
+        case LocalMotionEvent::Kind::AttackSlowdown:
+            velocity.x *= event.vector.x;
+            velocity.z *= event.vector.x;
+            sprinting = false;
+            break;
+        }
+    }
+}
+
+void TickLoop::UpdateSprinting(bool inputAllowedNow, float forwardInput, bool sneaking)
+{
+    int32_t food;
+    {
+        std::lock_guard<std::mutex> lock(state->healthMutex);
+        food = state->food;
+    }
+
+    bool canKeepSprinting = forwardInput > 0.0f && !sneaking && food > SPRINT_MIN_FOOD && !majorHorizontalCollision;
+    if (sprinting)
+    {
+        if (!canKeepSprinting) sprinting = false;
+    }
+    else if (canKeepSprinting && inputAllowedNow && sprintActive.load())
+    {
+        sprinting = true;
+    }
 }
 
 glm::vec3 TickLoop::GetRenderPosition() const
@@ -147,6 +241,10 @@ void TickLoop::SyncToPlayerPosition()
     previousPosition = currentPosition = state->player->GetPosition();
     velocity = glm::vec3(0.0f);
     grounded = false;
+    sprinting = false;
+    fallDistance = 0.0f;
+    horizontalCollisionAxes = 0;
+    majorHorizontalCollision = false;
     accumulator = 0.0f;
     lastTickTime = std::chrono::steady_clock::now();
     {
@@ -198,12 +296,12 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     constexpr float AIR_FRICTION = 0.91f;
     constexpr float AIR_ACCELERATION = 0.02f; // flat, unlike ground accel below — not attribute-scaled in vanilla either
 
-    // Client-side-only sprint/sneak: vanilla applies these as attribute
-    // modifiers server-side, but here it's simplest to just scale the speed
-    // used below directly. Sneak wins if both are held, matching vanilla
-    // (can't sprint while sneaking).
+    // Sprint/sneak speed: vanilla applies these as attribute modifiers, but
+    // here it's simplest to just scale the speed used below directly.
+    // Sprinting itself is real state, not just "the key is held" — see
+    // UpdateSprinting — and it already excludes sneaking.
     bool sneaking = sneakActive.load();
-    bool sprinting = !sneaking && sprintActive.load();
+    UpdateSprinting(inputAllowedNow, forwardInput, sneaking);
     float speedMultiplier = sneaking ? 0.3f : (sprinting ? 1.3f : 1.0f);
 
     float movementSpeed = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1)) * speedMultiplier;
@@ -212,8 +310,16 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     // blocks/tick) from the default 0.1 attribute value.
     float acceleration = grounded ? (movementSpeed * 0.98f) : AIR_ACCELERATION;
 
-    velocity.x = velocity.x * friction + horizontalDir.x * acceleration;
-    velocity.z = velocity.z * friction + horizontalDir.z * acceleration;
+    // Vanilla's own order (LivingEntity.travel): accelerate, move, THEN
+    // apply friction. For input-driven walking this gives exactly the same
+    // per-tick displacement as friction-first would; what it changes is
+    // velocity injected from outside (DrainLocalMotion — knockback,
+    // explosions), which now moves the player by its full amount on the
+    // first tick instead of being cut by friction before it ever displaces
+    // anything, the same way vanilla handles a Set Entity Motion packet.
+    velocity.x += horizontalDir.x * acceleration;
+    velocity.z += horizontalDir.z * acceleration;
+    lastHorizontalDir = horizontalDir;
 
     // Jump is an instant velocity set, exactly like vanilla's
     // jumpFromGround(). It has to land before this tick's move below, not
@@ -226,6 +332,13 @@ void TickLoop::FixedStep(bool inputAllowedNow)
         {
             float jumpVelocity = static_cast<float>(state->attributes->GetDouble("generic.jump_strength", 0.42));
             velocity.y = jumpVelocity;
+            // Sprint-jumping adds a forward push on top — what makes it
+            // faster than sprinting on foot.
+            if (sprinting)
+            {
+                velocity.x += forward.x * SPRINT_JUMP_BOOST;
+                velocity.z += forward.z * SPRINT_JUMP_BOOST;
+            }
             grounded = false;
         }
         jumpQueued = false;
@@ -235,12 +348,23 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     // one Minecraft tick, so each component IS this tick's displacement —
     // no further dt scaling needed.
     glm::vec3 pos = currentPosition;
+    horizontalCollisionAxes = 0;
+    majorHorizontalCollision = false;
     MoveAxis(pos, velocity, 1, velocity.y); // Y first: settles grounded state before horizontal collision.
     MoveAxis(pos, velocity, 0, velocity.x);
     MoveAxis(pos, velocity, 2, velocity.z);
 
     currentPosition = pos;
     state->player->SetPosition(currentPosition);
+
+    velocity.x *= friction;
+    velocity.z *= friction;
+
+    // Fall distance, as vanilla's Entity.checkFallDamage tracks it: every
+    // block moved downward while airborne adds up, landing resets it. A
+    // critical hit needs this above 0 (see MovementSnapshot).
+    if (grounded) fallDistance = 0.0f;
+    else if (currentPosition.y < previousPosition.y) fallDistance += previousPosition.y - currentPosition.y;
 
     // Scope-limited sneak: just lower the camera, don't touch the collision
     // AABB. Eased toward the target height each tick (see SNEAK_EYE_HEIGHT's
@@ -326,11 +450,16 @@ void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float del
         // speed, so the gap stays far smaller.
         position[axis] = FindWallContactCoordinate(axis, position, tentative[axis]);
         vel[axis] = 0.0f;
+        horizontalCollisionAxes |= static_cast<uint8_t>(1u << axis);
+        if (std::fabs(lastHorizontalDir[axis]) >= MINOR_COLLISION_SIN) majorHorizontalCollision = true;
         return;
     }
 
     position = tentative;
-    if (axis == 1 && delta < 0.0f) grounded = false; // still falling
+    // Any real vertical move leaves the ground — falling, but also being
+    // launched upward by knockback/an explosion (a jump already clears
+    // grounded itself).
+    if (axis == 1 && delta != 0.0f) grounded = false;
 }
 
 std::optional<float> TickLoop::TryStepUp(glm::vec3 position, glm::vec3 tentative) const
