@@ -90,6 +90,35 @@ namespace PlayC2S { // Play state, serverbound (client -> server)
     // PlayS2C::SetHeldItem (0x69), the clientbound counterpart the server
     // sends when it forces a slot change — same field, opposite direction.
     constexpr int32_t SetHeldItem = 0x35;
+
+    // Combat and movement-state reporting — IDs from resources/maps/
+    // protocol.json's play.toServer.types.packet mapper, layouts from the
+    // matching packet_* entries, and the send order each one needs from
+    // vanilla's own client (MultiPlayerGameMode.attack / LocalPlayer.
+    // sendPosition in resources/26.2.zip) — see SendAttack/SendSwing and
+    // RunPlayLoop's movement report.
+    //
+    // 26.1 split attacking out of Interact (packet_use_entity, 0x1A, now
+    // right-click-only) into its own packet: just the target's varint
+    // entity id, nothing else — the server works out crit/sprint/sweep from
+    // its own copy of the attacker's state, not from anything sent here.
+    constexpr int32_t Attack = 0x01;
+    // varint hand (0 = main, 1 = off). Vanilla sends this right after every
+    // Attack, and on its own for a swing at air/a block.
+    constexpr int32_t SwingArm = 0x3F;
+    // varint entityId (always our own); varint action (1 = start_sprinting,
+    // 2 = stop_sprinting, ...); varint jumpBoost (horse jumps only, 0 here).
+    // The server's sprint flag — what makes a full-strength hit a knockback
+    // hit, and a crit impossible — only ever changes through this packet.
+    constexpr int32_t PlayerCommand = 0x2A;
+    // u8 bitflags: forward, backward, left, right, jump, shift, sprint (bit
+    // 0 upward). Shift is how the server learns we're sneaking now; sent
+    // whenever the set of held movement keys changes.
+    constexpr int32_t PlayerInput = 0x2B;
+    // f64 x/y/z, f32 yaw, f32 pitch, u8 MovementFlags — SetPlayerPosition
+    // plus rotation. The server aims our knockback hits along our reported
+    // yaw (Player.causeExtraKnockback), so it has to be kept current.
+    constexpr int32_t SetPlayerPositionAndRotation = 0x1F;
 }
 
 namespace PlayS2C { // Play state, clientbound (server -> client)
@@ -183,6 +212,43 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     // clocks that actually changed. See NetworkClient::RunPlayLoop for how
     // this client picks a clock out of that array.
     constexpr int32_t UpdateTime = 0x71;
+
+    // Combat/entity-state packets — IDs read the same way as the entity IDs
+    // above (protocol.json's play.toClient.types.packet mapper), handler
+    // behavior cross-checked against vanilla's ClientPacketListener in
+    // resources/26.2.zip.
+    //
+    // varint entityId; lpVec3 velocity (blocks/tick — see ReadLpVec3). For
+    // our own entity id this IS knockback: the server sends it whenever
+    // we're hit (ServerPlayer.hurtMarked) and the client replaces its own
+    // velocity with it outright.
+    constexpr int32_t SetEntityMotion = 0x65;     // SET_ENTITY_MOTION
+    // varint entityId; topBitSetTerminatedArray of (i8 slot, Slot item) —
+    // another entity's held items and worn armor (slots 0-7 are
+    // EquipmentSlot's ordinals: mainhand, offhand, feet, legs, chest, head,
+    // body, saddle).
+    constexpr int32_t SetEquipment = 0x66;        // SET_EQUIPMENT
+    // varint entityId; u8 action (0 swing main hand, 2 wake up, 3 swing
+    // offhand, 4 critical hit, 5 magic critical hit).
+    constexpr int32_t Animate = 0x02;             // ANIMATE
+    // varint entityId; varint sourceTypeId/causeId/directId; option<vec3f64>
+    // sourcePosition. Sent for every entity that takes damage — vanilla
+    // starts its red hurt flash off this.
+    constexpr int32_t DamageEvent = 0x19;         // DAMAGE_EVENT
+    // varint entityId; f32 yaw — the direction a hit came from.
+    constexpr int32_t HurtAnimation = 0x2A;       // HURT_ANIMATION
+    // i32 entityId (NOT a varint); i8 status — 2 hurt (legacy), 3 death, 29
+    // shield block, 30 shield break, 35 totem of undying, ...
+    constexpr int32_t EntityEvent = 0x22;         // ENTITY_EVENT
+    // varint entityId; entityMetadata (key/type/value entries, 0xFF-terminated).
+    constexpr int32_t SetEntityData = 0x63;       // SET_ENTITY_DATA
+    // varint entityId; array of (varint attribute, f64 base, modifiers) —
+    // only applied for our own entity (see its handler).
+    constexpr int32_t UpdateAttributes = 0x83;    // UPDATE_ATTRIBUTES
+    // vec3f64 center; f32 radius; i32 blockCount; option<vec3f64>
+    // playerKnockback; ... — only read up to playerKnockback (added
+    // straight onto our velocity, vanilla's own handleExplosion).
+    constexpr int32_t Explosion = 0x24;           // EXPLODE
 }
 
 } // namespace Volcano

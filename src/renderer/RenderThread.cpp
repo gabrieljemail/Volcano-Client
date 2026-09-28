@@ -315,7 +315,7 @@ glm::mat4 RenderThread::BuildProjection(const Engine::RenderExtent& extent)
     // this for now; whoever adds flight just needs to flip isFlying here,
     // the easing below already handles either.
     constexpr bool isFlying = false;
-    bool boosted = isFlying || state->input->IsActive("Sprint");
+    bool boosted = isFlying || state->tickLoop->GetMovementSnapshot().sprinting;
     float targetFovOffset = boosted
         ? static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOVEffects", uint32_t{5})))
         : 0.0f;

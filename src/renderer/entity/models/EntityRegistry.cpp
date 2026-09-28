@@ -51,6 +51,7 @@ void InitImpl() {
             info.width = e.value("width", 0.0f);
             info.height = e.value("height", 0.0f);
             info.category = e.value("category", std::string());
+            info.type = e.value("type", std::string());
 
             g_entitiesById.emplace(e["id"].get<uint32_t>(), std::move(info));
         } catch (const std::exception& e2) {
