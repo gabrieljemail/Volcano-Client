@@ -161,6 +161,7 @@ add_executable(NetDiag
     tools/netdiag_main.cpp
     src/Logger.cpp
     src/Config.cpp
+    src/PlayerAttributes.cpp
     src/network/Connection.cpp
     src/network/NBT.cpp
     src/network/NetworkClient.cpp

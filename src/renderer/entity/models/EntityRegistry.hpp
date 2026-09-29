@@ -32,6 +32,17 @@ struct EntityTypeInfo {
                               // the one field that reliably says whether a type is alive at all (see
                               // ClassifyShape), so kept here too for anything else that needs the same check.
     ShapeKind shape = ShapeKind::Cube; // See ShapeKind above.
+
+    // Whether this is one of vanilla's LivingEntity subclasses (players,
+    // mobs, armor stands) rather than an object (item, boat, arrow, ...) —
+    // derived from entityKind. A critical hit needs a living target
+    // (vanilla's Player.canCriticalAttack).
+    bool IsLiving() const
+    {
+        return entityKind == "player" || entityKind == "mob" || entityKind == "animal" || entityKind == "hostile"
+            || entityKind == "water_creature" || entityKind == "passive" || entityKind == "ambient"
+            || entityKind == "living";
+    }
 };
 
 // Parses minecraft-data's entities.json once at startup, keyed by its "id"

@@ -10,6 +10,7 @@
 #include "../Helpers.hpp"
 #include "../InputHandler.hpp"
 #include "../inventory/ItemStack.hpp"
+#include "../TickLoop.hpp"
 
 namespace Volcano {
 
@@ -45,6 +46,21 @@ struct TargetedBlock {
     glm::ivec3 relativeDirection;
 };
 
+// What kind of hit the last attack was, by vanilla's own rules (Player.
+// attack in resources/26.2.zip) — the four hit types, plus a swing that
+// didn't target an entity at all. The server makes the same call from its
+// own copy of our state and is the one that actually applies damage and
+// knockback; this is the client's prediction, used for the parts of a hit
+// vanilla handles client-side (the sprint-hit slowdown — see
+// InteractionManager::AttackEntity) and exposed for HUD/feedback use.
+enum class AttackType : uint8_t {
+    Miss,      // Swung at air or a block.
+    Normal,    // A plain hit, at whatever the attack cooldown allowed.
+    Knockback, // Sprinting + full strength: extra knockback, ends the sprint.
+    Critical,  // Falling + full strength, not sprinting, living target: 1.5x damage.
+    Sweep,     // Sword, full strength, standing (nearly) still on the ground: hits nearby entities too.
+};
+
 // Owns mainhand/offhand interaction (attacking, and eventually block
 // breaking/placing) plus the crosshair's block/entity selection. Runs on
 // the Main/Render thread, driven once per frame from
@@ -53,10 +69,9 @@ struct TargetedBlock {
 // RaycastSelection() walks the camera's look ray against state->world
 // (block-by-block, via a DDA voxel walk — not a bounding-box scan) and
 // state->entities (a cheap distance reject before a real ray/AABB test),
-// keeping whichever of the two the ray reaches first. PrimaryTrigger/
-// SecondaryTrigger read targetedBlock/targetedEntityId, but nothing
-// dispatches an actual attack/break/use/place yet — this client has no
-// outbound packet for any of those.
+// keeping whichever of the two the ray reaches first. A primary click on a
+// targeted entity attacks it (PrimaryTriggerStart/AttackEntity); block
+// breaking and the secondary use/place actions don't dispatch anything yet.
 class InteractionManager {
 public:
     explicit InteractionManager(GlobalState* globalState);
@@ -73,7 +88,13 @@ public:
     // (see GlobalState::attackStrengthTicker's own comment), not cached.
     // Public since a future HUD attack-cooldown indicator (vanilla has one)
     // would read this too.
-    float GetAttackStrengthScale() const;
+    //
+    // `partialTicks` is vanilla's own parameter: an attack reads the scale
+    // half a tick ahead (0.5), the same way Player.attack does.
+    float GetAttackStrengthScale(float partialTicks = 0.0f) const;
+
+    // What the most recent primary click did — see AttackType.
+    AttackType GetLastAttackType() const { return lastAttackType; }
 
     // Current block selection target, if any — read by SelectionRenderer
     // once per frame to draw the outline/fill. See RaycastSelection.
@@ -134,6 +155,8 @@ private:
     // Synced with server NBT attributes.
     float blockReachDistance = 4.5f;
 
+    AttackType lastAttackType = AttackType::Miss;
+
     // Color of the block selection outline.
     Color4i selectionOutline{255, 255, 255, 0.8f};
     // Fill of the block selection outline.
@@ -148,12 +171,25 @@ private:
     // every other PlayerAttributes-backed value (see TickLoop's own reads).
     void RefreshReach();
 
-    // Primary trigger handler: attack (edge-gated, one dispatch per click),
-    // or drive the mining state machine below — called every frame
-    // PrimaryAction is held, not just the press edge, since mining needs to
-    // keep running across frames. Update() handles the release-edge cancel
-    // this doesn't see, since it's simply not called once the button is up.
-    void PrimaryTrigger();
+    // Primary trigger, split like secondary below: Start fires once per
+    // click (PrimaryActionPress) and is where attacks happen — vanilla only
+    // attacks on a click, never on a held button, which is what makes the
+    // attack cooldown something you time yourself. Hold (PrimaryAction) is
+    // where the mining state machine below keeps running across frames,
+    // since mining needs to keep going for as long as the button stays
+    // down. Update() handles the release-edge cancel neither of these sees,
+    // since Hold simply isn't called once the button is up.
+    void PrimaryTriggerStart();
+    void PrimaryTriggerHold();
+
+    // Sends the attack and swing for one click on `entityId`, classifies
+    // the hit (see AttackType), and applies what vanilla applies to the
+    // attacker client-side.
+    void AttackEntity(uint32_t entityId);
+
+    // Vanilla's hit-type rules, given the attack strength, our movement
+    // state, and whether the target is a living entity (crits need one).
+    AttackType ClassifyAttack(float strength, const TickLoop::MovementSnapshot& movement, bool targetIsLiving) const;
 
     // Starts mining `target`. canInstabuild or a hardness-0 block (flowers,
     // torches, ...) dispatches an instant BreakBlockEvent. An unbreakable

@@ -67,10 +67,23 @@ struct Entity {
     std::chrono::steady_clock::time_point lastHurtTime{};
     bool visible = true;
 
+    // Set once the server reports this entity died (EntityEvent status 3).
+    // It lingers until Remove Entities arrives, tinted red the whole time,
+    // the same way vanilla keeps a dying mob/player tinted through its death
+    // animation.
+    bool dead = false;
+
+    // When this entity last swung an arm, and when a critical hit last
+    // landed on it (PlayS2C::Animate) — recorded for an arm-swing animation
+    // and crit particles, neither of which is drawn yet.
+    std::chrono::steady_clock::time_point lastSwingTime{};
+    std::chrono::steady_clock::time_point lastCritTime{};
+
     bool IsHurt(std::chrono::steady_clock::time_point now) const
     {
-        return lastHurtTime != std::chrono::steady_clock::time_point{}
-            && now - lastHurtTime < std::chrono::milliseconds(500);
+        return dead
+            || (lastHurtTime != std::chrono::steady_clock::time_point{}
+                && now - lastHurtTime < std::chrono::milliseconds(500));
     }
 
     // Render-time position, blending previousPosition -> position over

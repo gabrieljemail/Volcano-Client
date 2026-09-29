@@ -764,6 +764,18 @@ build CMakeFiles/NetDiag.dir/src/Config.cpp.obj: CXX_COMPILER__NetDiag_unscanned
   TARGET_PDB = NetDiag.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\NetDiag.dir
 
+build CMakeFiles/NetDiag.dir/src/PlayerAttributes.cpp.obj: CXX_COMPILER__NetDiag_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/PlayerAttributes.cpp || cmake_object_order_depends_target_NetDiag
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\NetDiag.dir\src\PlayerAttributes.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\NetDiag.dir
+  OBJECT_FILE_DIR = CMakeFiles\NetDiag.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\NetDiag.dir\
+  TARGET_PDB = NetDiag.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\NetDiag.dir
+
 build CMakeFiles/NetDiag.dir/src/network/Connection.cpp.obj: CXX_COMPILER__NetDiag_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/network/Connection.cpp || cmake_object_order_depends_target_NetDiag
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
@@ -868,7 +880,7 @@ build CMakeFiles/NetDiag.dir/src/renderer/gui/models/Chat.cpp.obj: CXX_COMPILER_
 #############################################
 # Link the executable NetDiag.exe
 
-build NetDiag.exe: CXX_EXECUTABLE_LINKER__NetDiag_Debug CMakeFiles/NetDiag.dir/tools/netdiag_main.cpp.obj CMakeFiles/NetDiag.dir/src/Logger.cpp.obj CMakeFiles/NetDiag.dir/src/Config.cpp.obj CMakeFiles/NetDiag.dir/src/network/Connection.cpp.obj CMakeFiles/NetDiag.dir/src/network/NBT.cpp.obj CMakeFiles/NetDiag.dir/src/network/NetworkClient.cpp.obj CMakeFiles/NetDiag.dir/src/network/TextComponent.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/terrain/ChunkParser.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/terrain/models/BlockRegistry.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/entity/models/EntityRegistry.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/gui/models/Chat.cpp.obj | C$:/Apps/VulkanSDK/Lib/vulkan-1.lib C$:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib C$:/Apps/Libraries/ZLIB/zlib.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libcrypto.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libssl.lib
+build NetDiag.exe: CXX_EXECUTABLE_LINKER__NetDiag_Debug CMakeFiles/NetDiag.dir/tools/netdiag_main.cpp.obj CMakeFiles/NetDiag.dir/src/Logger.cpp.obj CMakeFiles/NetDiag.dir/src/Config.cpp.obj CMakeFiles/NetDiag.dir/src/PlayerAttributes.cpp.obj CMakeFiles/NetDiag.dir/src/network/Connection.cpp.obj CMakeFiles/NetDiag.dir/src/network/NBT.cpp.obj CMakeFiles/NetDiag.dir/src/network/NetworkClient.cpp.obj CMakeFiles/NetDiag.dir/src/network/TextComponent.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/terrain/ChunkParser.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/terrain/models/BlockRegistry.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/entity/models/EntityRegistry.cpp.obj CMakeFiles/NetDiag.dir/src/renderer/gui/models/Chat.cpp.obj | C$:/Apps/VulkanSDK/Lib/vulkan-1.lib C$:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib C$:/Apps/Libraries/ZLIB/zlib.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libcrypto.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libssl.lib
   CONFIG = Debug
   FLAGS = -O0 -g -Xclang -gcodeview -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
   LINK_FLAGS = -fuse-ld=lld -Xlinker /subsystem:console -fuse-ld=lld

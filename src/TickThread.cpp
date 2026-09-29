@@ -59,6 +59,15 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
     bool lastOnGround = false;
     bool lastHorizontalCollision = false;
 
+    // What the server was last told about sprinting and held movement keys
+    // — only sent when these change, like vanilla's LocalPlayer.
+    // sendIsSprintingIfNeeded/sendInput. The server's sprint flag is what
+    // turns a full-strength hit into a knockback hit (see
+    // InteractionManager::ClassifyAttack), so this has to stay current for
+    // combat to work.
+    bool reportedSprinting = false;
+    uint8_t reportedInputFlags = 0;
+
     auto nextTick = std::chrono::steady_clock::now();
 
     while (!stopToken.stop_requested() && !state->shouldClose)
@@ -178,6 +187,33 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
                 }
                 lastOnGround = onGround;
                 lastHorizontalCollision = horizontalCollision;
+
+                // Sprint/input state, queued (not written directly, like the
+                // movement packet above) so it stays ordered after any
+                // Attack packet the render thread already queued this tick —
+                // a sprint hit has to reach the server before the
+                // stop_sprinting it causes, or the server sees a plain hit.
+                TickLoop::MovementSnapshot movement = state->tickLoop->GetMovementSnapshot();
+                int32_t localEntityId = state->localEntityId.load();
+                if (movement.sprinting != reportedSprinting && localEntityId >= 0)
+                {
+                    constexpr int32_t START_SPRINTING = 1, STOP_SPRINTING = 2;
+                    PacketWriter writer;
+                    writer.WriteVarInt(localEntityId);
+                    writer.WriteVarInt(movement.sprinting ? START_SPRINTING : STOP_SPRINTING);
+                    writer.WriteVarInt(0); // jumpBoost — horse jumps only.
+                    connection->QueuePacket(PlayC2S::PlayerCommand, writer.Data());
+                    reportedSprinting = movement.sprinting;
+                }
+
+                uint8_t inputFlags = state->tickLoop->GetMovementInputFlags();
+                if (inputFlags != reportedInputFlags)
+                {
+                    PacketWriter writer;
+                    writer.WriteBytes(&inputFlags, 1);
+                    connection->QueuePacket(PlayC2S::PlayerInput, writer.Data());
+                    reportedInputFlags = inputFlags;
+                }
             }
 
             // Always last, and always sent — see PlayC2S::ClientTickEnd.

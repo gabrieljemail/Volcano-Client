@@ -107,7 +107,11 @@ void SendHeldItemSlot(GlobalState* state, uint8_t slot);
 // call-from-any-thread contract as SendChatMessage above; in practice these
 // are all called from InteractionManager on the render thread.
 
-// PlayC2S::Attack — melee-attacking an entity.
+// PlayC2S::Attack — melee-attacking an entity. The server decides for
+// itself whether this lands as a plain, critical, sprint-knockback or sweep
+// hit, from its own copy of our state (sprinting, falling, held weapon,
+// attack cooldown) — which is why TickThread keeps it current. In practice
+// called by InteractionManager, followed by SendSwing.
 void SendAttack(GlobalState* state, uint32_t entityId);
 
 // PlayC2S::UseEntity — right-clicking an entity. See its own PacketIds.hpp
@@ -133,6 +137,13 @@ void SendBlockPlace(GlobalState* state, Hand hand, glm::ivec3 position, glm::ive
 // bow, ...). `yaw`/`pitch` are the player's own current look rotation
 // (degrees) — the packet's `rotation` field.
 void SendUseItem(GlobalState* state, Hand hand, float yaw, float pitch);
+
+// Swings an arm (PlayC2S::SwingArm — an alias of ArmAnimation, see
+// PacketIds.hpp) — the animation other players see. hand: 0 = main hand,
+// 1 = offhand. Same wire packet as SendArmAnimation above; kept as its own
+// function since AttackEntity's callers pass a raw hand index rather than
+// the Hand enum.
+void SendSwing(GlobalState* state, int32_t hand);
 
 } // namespace Volcano
 
