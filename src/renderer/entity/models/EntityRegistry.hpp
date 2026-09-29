@@ -7,6 +7,19 @@
 
 namespace Volcano::EntityRegistry {
 
+// Which procedural mesh/pipeline EntityRenderer draws a type with — chosen
+// by ClassifyShape (EntityRegistry.cpp) since minecraft-data itself carries
+// no shape/model hint. Cube is the fallback for anything not covered by a
+// more specific shape.
+enum class ShapeKind {
+    Cube,      // Flat-tinted placeholder box — EntityRenderer::BuildCubeMesh.
+    Humanoid,  // Head/body/arms/legs skeleton — data-driven, see resources/volcano/models/entity/*.json + EntityJsonModel.hpp.
+    Quadruped, // Body + head + 4 legs, generic proportions — QuadrupedModel.hpp.
+    Golem,     // Iron golem's own blocky proportions — GolemModel.hpp.
+    Pig,       // Real vanilla-derived pig proportions — PigModel.hpp.
+    Cow,       // Real vanilla-derived cow proportions — CowModel.hpp.
+};
+
 // One entity type's static metadata, straight from minecraft-data's
 // entities.json (see EntityRegistry.cpp for the version pinned).
 struct EntityTypeInfo {
@@ -14,7 +27,11 @@ struct EntityTypeInfo {
     std::string displayName; // e.g. "Cow".
     float width = 0.0f;
     float height = 0.0f;
-    std::string category;    // e.g. "Passive mobs".
+    std::string category;    // e.g. "Passive mobs" — broad UI-facing bucket, too coarse for shape choice.
+    std::string entityKind;  // minecraft-data's "type" field — "animal"/"hostile"/"player"/"projectile"/...;
+                              // the one field that reliably says whether a type is alive at all (see
+                              // ClassifyShape), so kept here too for anything else that needs the same check.
+    ShapeKind shape = ShapeKind::Cube; // See ShapeKind above.
 };
 
 // Parses minecraft-data's entities.json once at startup, keyed by its "id"

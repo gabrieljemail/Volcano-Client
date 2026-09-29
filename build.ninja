@@ -18,7 +18,7 @@
 #############################################
 # Minimal version of Ninja required by this file
 
-ninja_required_version = 1.5
+ninja_required_version = 1.8
 
 
 #############################################
@@ -109,6 +109,18 @@ build CMakeFiles/VolcanoClient.dir/src/TickLoop.cpp.obj: CXX_COMPILER__VolcanoCl
   TARGET_PDB = VolcanoClient.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
 
+build CMakeFiles/VolcanoClient.dir/src/TickThread.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/TickThread.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\TickThread.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
 build CMakeFiles/VolcanoClient.dir/src/VolcanoClient.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/VolcanoClient.cpp || cmake_object_order_depends_target_VolcanoClient
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
@@ -149,6 +161,18 @@ build CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.obj: CXX_COMPILER_
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
   DEP_FILE = CMakeFiles\VolcanoClient.dir\src\network\Connection.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\network
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/network/LocalServer.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/network/LocalServer.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\network\LocalServer.cpp.obj.d
   FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
@@ -265,6 +289,90 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/VulkanInit.cpp.obj: CXX_COMPILER
   TARGET_PDB = VolcanoClient.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
 
+build CMakeFiles/VolcanoClient.dir/src/renderer/engine/RenderEngine.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/engine/RenderEngine.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\engine\RenderEngine.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\engine
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/engine/ShaderLibrary.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/engine/ShaderLibrary.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\engine\ShaderLibrary.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\engine
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/engine/passes/NonCubicPass.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/engine/passes/NonCubicPass.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\engine\passes\NonCubicPass.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\engine\passes
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/engine/passes/ShaderPackPass.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/engine/passes/ShaderPackPass.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\engine\passes\ShaderPackPass.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\engine\passes
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/engine/passes/SkyboxPass.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/engine/passes/SkyboxPass.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\engine\passes\SkyboxPass.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\engine\passes
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/engine/passes/TerrainPass.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/engine/passes/TerrainPass.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\engine\passes\TerrainPass.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\engine\passes
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/engine/vulkan/VulkanRenderEngine.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/engine/vulkan/VulkanRenderEngine.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\engine\vulkan\VulkanRenderEngine.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\engine\vulkan
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
 build CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/entity/EntityRenderer.cpp || cmake_object_order_depends_target_VolcanoClient
   CONFIG = Debug
   DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
@@ -345,6 +453,54 @@ build CMakeFiles/VolcanoClient.dir/src/renderer/gui/models/Chat.cpp.obj: CXX_COM
   INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
   OBJECT_DIR = CMakeFiles\VolcanoClient.dir
   OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui\models
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/gui/screens/LoadingScreen.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/gui/screens/LoadingScreen.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\gui\screens\LoadingScreen.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui\screens
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/gui/screens/MainMenuScreen.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/gui/screens/MainMenuScreen.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\gui\screens\MainMenuScreen.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui\screens
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/gui/screens/PauseScreen.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/gui/screens/PauseScreen.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\gui\screens\PauseScreen.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui\screens
+  TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
+  TARGET_PDB = VolcanoClient.pdb
+  TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
+
+build CMakeFiles/VolcanoClient.dir/src/renderer/gui/screens/SettingsScreen.cpp.obj: CXX_COMPILER__VolcanoClient_unscanned_Debug C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/src/renderer/gui/screens/SettingsScreen.cpp || cmake_object_order_depends_target_VolcanoClient
+  CONFIG = Debug
+  DEFINES = -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH -D_ENABLE_EXTENDED_ALIGNED_STORAGE -D_HAS_VERBOSE_TRAP=0
+  DEP_FILE = CMakeFiles\VolcanoClient.dir\src\renderer\gui\screens\SettingsScreen.cpp.obj.d
+  FLAGS = -O0 -g -Xclang -gcodeview -std=gnu++20 -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -g -gcodeview -O0
+  INCLUDES = -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/network" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/terrain" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/entity" -I"C:/Users/Gabriel Jemail/Projects/Volcano Client/src/renderer/gui" -isystem C:/Apps/Libraries/GLFW/include -isystem C:/Apps/Libraries/ZLIB -isystem C:/Apps/Libraries/OpenSSL/include -isystem C:/Apps/Libraries/Asio/include -isystem C:/Apps/Libraries/STB -isystem C:/Apps/Libraries/ImGui -isystem C:/Apps/Libraries/ImGui/backends -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" -isystem "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" -isystem C:/Apps/VulkanSDK/include
+  OBJECT_DIR = CMakeFiles\VolcanoClient.dir
+  OBJECT_FILE_DIR = CMakeFiles\VolcanoClient.dir\src\renderer\gui\screens
   TARGET_COMPILE_PDB = CMakeFiles\VolcanoClient.dir\
   TARGET_PDB = VolcanoClient.pdb
   TARGET_SUPPORT_DIR = CMakeFiles\VolcanoClient.dir
@@ -549,7 +705,7 @@ build CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_v
 #############################################
 # Link the executable VolcanoClient.exe
 
-build VolcanoClient.exe: CXX_EXECUTABLE_LINKER__VolcanoClient_Debug CMakeFiles/VolcanoClient.dir/src/Config.cpp.obj CMakeFiles/VolcanoClient.dir/src/Logger.cpp.obj CMakeFiles/VolcanoClient.dir/src/PlayerAttributes.cpp.obj CMakeFiles/VolcanoClient.dir/src/SystemInfo.cpp.obj CMakeFiles/VolcanoClient.dir/src/TickLoop.cpp.obj CMakeFiles/VolcanoClient.dir/src/VolcanoClient.cpp.obj CMakeFiles/VolcanoClient.dir/src/interaction/InteractionManager.cpp.obj CMakeFiles/VolcanoClient.dir/src/inventory/ItemRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/MSAuth.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NBT.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NetworkClient.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NetworkThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/TextComponent.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/RenderThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/SplashScreen.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/TextureManager.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/VulkanInit.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/entity/models/EntityRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/ControlRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/GUIController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/ImGuiVulkan.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/OverlayController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/models/Chat.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/misc/NonCubicMesher.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/misc/SelectionRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/models/SlabBuffer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkMesher.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkParser.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/MeshingThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/VisibleChunkController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/models/BlockRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/vk-bootstrap/src/VkBootstrap.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_demo.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_draw.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_tables.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_widgets.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_glfw.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_vulkan.cpp.obj | C$:/Apps/VulkanSDK/Lib/vulkan-1.lib C$:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib C$:/Apps/Libraries/ZLIB/zlib.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libcrypto.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libssl.lib
+build VolcanoClient.exe: CXX_EXECUTABLE_LINKER__VolcanoClient_Debug CMakeFiles/VolcanoClient.dir/src/Config.cpp.obj CMakeFiles/VolcanoClient.dir/src/Logger.cpp.obj CMakeFiles/VolcanoClient.dir/src/PlayerAttributes.cpp.obj CMakeFiles/VolcanoClient.dir/src/SystemInfo.cpp.obj CMakeFiles/VolcanoClient.dir/src/TickLoop.cpp.obj CMakeFiles/VolcanoClient.dir/src/TickThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/VolcanoClient.cpp.obj CMakeFiles/VolcanoClient.dir/src/interaction/InteractionManager.cpp.obj CMakeFiles/VolcanoClient.dir/src/inventory/ItemRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/Connection.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/LocalServer.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/MSAuth.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NBT.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NetworkClient.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/NetworkThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/network/TextComponent.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/RenderThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/SplashScreen.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/TextureManager.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/VulkanInit.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/engine/RenderEngine.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/engine/ShaderLibrary.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/engine/passes/NonCubicPass.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/engine/passes/ShaderPackPass.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/engine/passes/SkyboxPass.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/engine/passes/TerrainPass.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/engine/vulkan/VulkanRenderEngine.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/entity/EntityRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/entity/models/EntityRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/ControlRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/GUIController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/ImGuiVulkan.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/OverlayController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/models/Chat.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/screens/LoadingScreen.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/screens/MainMenuScreen.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/screens/PauseScreen.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/gui/screens/SettingsScreen.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/misc/NonCubicMesher.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/misc/SelectionRenderer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/models/SlabBuffer.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkMesher.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/ChunkParser.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/MeshingThread.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/VisibleChunkController.cpp.obj CMakeFiles/VolcanoClient.dir/src/renderer/terrain/models/BlockRegistry.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/vk-bootstrap/src/VkBootstrap.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_demo.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_draw.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_tables.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/imgui_widgets.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_glfw.cpp.obj CMakeFiles/VolcanoClient.dir/C_/Apps/Libraries/ImGui/backends/imgui_impl_vulkan.cpp.obj | C$:/Apps/VulkanSDK/Lib/vulkan-1.lib C$:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib C$:/Apps/Libraries/ZLIB/zlib.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libcrypto.lib C$:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libssl.lib
   CONFIG = Debug
   FLAGS = -O0 -g -Xclang -gcodeview -D_DEBUG -D_DLL -D_MT -Xclang --dependent-lib=msvcrtd
   LINK_FLAGS = -fuse-ld=lld -Xlinker /subsystem:console -fuse-ld=lld
@@ -772,16 +928,30 @@ build all: phony VolcanoClient.exe NetDiag.exe
 
 
 #############################################
+# Phony target to force glob verification run.
+
+build C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/CMakeFiles/VerifyGlobs.cmake_force: phony
+
+
+#############################################
+# Re-run CMake to check if globbed directories changed.
+
+build C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/CMakeFiles/cmake.verify_globs: VERIFY_GLOBS | C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/CMakeFiles/VerifyGlobs.cmake_force
+  pool = console
+  restat = 1
+
+
+#############################################
 # Re-run CMake if any of its inputs changed.
 
-build build.ninja C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/cmake_install.cmake: RERUN_CMAKE | C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeCXXInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeCommonLanguageInclude.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeGenericSystem.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeInitializeConfigs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeLanguageInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeRCInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInitialize.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/CMakeCommonCompilerMacros.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/Clang-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/Clang.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindVulkan.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Internal/CMakeCXXLinkerInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Internal/CMakeCommonLinkerInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/LLD-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/LLD.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/MSVC.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-LLD-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-LLD.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-MSVC.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Clang-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Clang.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Initialize.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/WindowsPaths.cmake CMakeCache.txt CMakeFiles/4.4.3/CMakeCXXCompiler.cmake CMakeFiles/4.4.3/CMakeRCCompiler.cmake CMakeFiles/4.4.3/CMakeSystem.cmake CMakeLists.txt
+build build.ninja C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/cmake_install.cmake: RERUN_CMAKE C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/CMakeFiles/cmake.verify_globs | C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/CMakeFiles/VerifyGlobs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeCXXInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeCommonLanguageInclude.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeGenericSystem.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeInitializeConfigs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeLanguageInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeRCInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInitialize.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/CMakeCommonCompilerMacros.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/Clang-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/Clang.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindVulkan.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Internal/CMakeCXXLinkerInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Internal/CMakeCommonLinkerInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/LLD-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/LLD.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/MSVC.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-LLD-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-LLD.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-MSVC.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Clang-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Clang.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Initialize.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/WindowsPaths.cmake CMakeCache.txt CMakeFiles/4.4.3/CMakeCXXCompiler.cmake CMakeFiles/4.4.3/CMakeRCCompiler.cmake CMakeFiles/4.4.3/CMakeSystem.cmake CMakeLists.txt
   pool = console
 
 
 #############################################
 # A missing CMake input file is not an error.
 
-build C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeCXXInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeCommonLanguageInclude.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeGenericSystem.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeInitializeConfigs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeLanguageInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeRCInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInitialize.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/CMakeCommonCompilerMacros.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/Clang-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/Clang.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindVulkan.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Internal/CMakeCXXLinkerInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Internal/CMakeCommonLinkerInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/LLD-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/LLD.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/MSVC.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-LLD-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-LLD.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-MSVC.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Clang-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Clang.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Initialize.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/WindowsPaths.cmake CMakeCache.txt CMakeFiles/4.4.3/CMakeCXXCompiler.cmake CMakeFiles/4.4.3/CMakeRCCompiler.cmake CMakeFiles/4.4.3/CMakeSystem.cmake CMakeLists.txt: phony
+build C$:/Users/Gabriel$ Jemail/Projects/Volcano$ Client/CMakeFiles/VerifyGlobs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeCXXInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeCommonLanguageInclude.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeGenericSystem.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeInitializeConfigs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeLanguageInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeRCInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/CMakeSystemSpecificInitialize.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/CMakeCommonCompilerMacros.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/Clang-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Compiler/Clang.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/FindVulkan.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Internal/CMakeCXXLinkerInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Internal/CMakeCommonLinkerInformation.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/LLD-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/LLD.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Linker/MSVC.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-LLD-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-LLD.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Linker/Windows-MSVC.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Clang-CXX.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Clang.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows-Initialize.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/Windows.cmake C$:/Apps/CMake/share/cmake-4.4/Modules/Platform/WindowsPaths.cmake CMakeCache.txt CMakeFiles/4.4.3/CMakeCXXCompiler.cmake CMakeFiles/4.4.3/CMakeRCCompiler.cmake CMakeFiles/4.4.3/CMakeSystem.cmake CMakeLists.txt: phony
 
 
 #############################################

@@ -10,6 +10,10 @@ namespace Volcano {
 
 class Player {
 public:
+    // Collision box, feet-centered: vanilla's 0.6 x 1.8 standing player.
+    static constexpr float HALF_WIDTH = 0.3f;
+    static constexpr float HEIGHT = 1.8f;
+
     Camera camera;
 
     // Position stored as three atomics per your spec's "high-frequency
@@ -30,9 +34,11 @@ public:
     }
 
 private:
-    // Spawn position in center of 4-chunk grid (chunks 0-1 in both axes)
-    // Each chunk is 16 blocks, so center is at (16, 5, 16) to see all terrain
-    std::atomic<float> x{16.0f}, y{5.0f}, z{16.0f};
+    // Untouched until MeshingThread applies the server's real spawn
+    // position (see GlobalState::worldReady) — nothing reads this before
+    // then that needs it to look like a plausible spawn point, so it's just
+    // the zero value rather than a guess.
+    std::atomic<float> x{0.0f}, y{0.0f}, z{0.0f};
 };
 
 } // namespace Volcano

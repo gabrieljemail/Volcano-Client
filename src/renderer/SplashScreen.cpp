@@ -416,7 +416,7 @@ void Show()
         vkFreeCommandBuffers(dev, commandPool, 1, &cmd);
         cmd = VK_NULL_HANDLE;
 
-        Log::Info("[INFO] Splash screen shown.");
+        Log::Info("Splash screen shown.");
     }
     catch (const std::exception& e)
     {

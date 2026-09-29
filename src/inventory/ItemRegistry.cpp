@@ -23,11 +23,11 @@ std::unordered_map<int32_t, ItemTypeInfo> g_itemsById;
 void InitImpl(const TextureManager& textureManager) {
     g_itemsById.clear();
 
-    Log::Info("[INFO] ItemRegistry: reading " + ITEMS_JSON_PATH);
+    Log::Info("ItemRegistry: reading " + ITEMS_JSON_PATH);
 
     std::ifstream file(ITEMS_JSON_PATH);
     if (!file) {
-        Log::Error("[ERROR] ItemRegistry: couldn't open " + ITEMS_JSON_PATH
+        Log::Error("ItemRegistry: couldn't open " + ITEMS_JSON_PATH
             + " — item lookups will find nothing this run.");
         return;
     }
@@ -40,7 +40,7 @@ void InitImpl(const TextureManager& textureManager) {
         return;
     }
 
-    Log::Info("[INFO] ItemRegistry: parsed " + std::to_string(itemsJson.size()) + " item entries.");
+    Log::Info("ItemRegistry: parsed " + std::to_string(itemsJson.size()) + " item entries.");
 
     int resolvedIcons = 0;
     for (const json& i : itemsJson) {
@@ -77,7 +77,7 @@ void InitImpl(const TextureManager& textureManager) {
         }
     }
 
-    Log::Info("[INFO] ItemRegistry: loaded minecraft-data " + std::string(MC_DATA_VERSION) + " — "
+    Log::Info("ItemRegistry: loaded minecraft-data " + std::string(MC_DATA_VERSION) + " — "
         + std::to_string(g_itemsById.size()) + " item types, " + std::to_string(resolvedIcons)
         + " with a resolved icon texture.");
 }

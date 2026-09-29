@@ -48,6 +48,8 @@ enum class NonCubeShape : uint8_t {
     Cross,           // Two (or more) intersecting billboard planes: grass, flowers, saplings, ...
     Partial,         // One or more axis-aligned boxes smaller than a full block: slabs, carpets, snow layers, ...
     TransparentCube, // A full unit cube, but not opaque: glass, slime, ice, ...
+    Liquid,          // A flat-topped box whose height depends on the block's fluid "level" state: water. Drawn
+                      // genuinely alpha-blended (depth write off) rather than cutout — see NonCubicMesher.
 };
 
 // One axis-aligned box within a Partial/TransparentCube visual, in the same
@@ -78,7 +80,9 @@ struct NonCubeVisual {
 // interned table of NonCubeVisuals — for any block that didn't resolve to an
 // opaque full-cube visual via MapStateId. 0 means nothing to draw this way
 // either (true air, an out-of-range id, or a shape this pass still doesn't
-// handle — fluids and multipart blockstates like fences/walls/redstone).
+// handle — lava and multipart blockstates like fences/walls/redstone). Water
+// is the one fluid resolved this pass (NonCubeShape::Liquid, static —
+// flow/waterlogged interaction still isn't modeled).
 uint16_t MapStateIdNonCube(int32_t stateId);
 
 // Looks up a previously-resolved non-cube visual by id. Returns a
@@ -124,6 +128,21 @@ uint16_t MapStateIdCollisionShape(int32_t stateId);
 // cube or nothing". Shared by TickLoop's physics collision and (later)
 // block-selection raycasting so both agree on the exact same shape.
 CollisionBoxes GetCollisionBoxes(const Block& block);
+
+// Ticks (1/20s) to hand-mine a block: ceil(hardness * (requiresTool ? 100 :
+// 30)), vanilla's own divisor for hasCorrectToolForDrops false/true. No held
+// item is checked yet, so tool-restricted blocks always get the "wrong tool"
+// 100 (exact hand-mining time; too slow once real tools exist). -1 means
+// unbreakable or out-of-range, 0 means instant (hardness 0.0).
+int32_t MapStateIdBreakTicks(int32_t stateId);
+
+// Fully-resolved Block for a protocol state id (visual, non-cube visual,
+// collision shape and break ticks) — what chunk parsing and Block Update use.
+Block ResolveStateId(int32_t stateId);
+
+// A block's default state id by name (e.g. "stone"), or -1 if unknown. Used
+// to predict block placement from the held item's name.
+int32_t DefaultStateIdForName(const std::string& blockName);
 
 } // namespace Volcano::BlockRegistry
 

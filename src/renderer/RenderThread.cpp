@@ -84,6 +84,12 @@ void RenderThread::WaitForTargetFrame()
 
     while (steady_clock::now() < spinTarget)
     {
+        // Note: Even yield() can be off because this hands off to the scheduler,
+        // which can take as long as it wants. It's still better than sleep though.
+        // In the future, we can replace yield() with a no-op like a useless while loop.
+        // However, yield() resets the execution timer to fit all of our operations, while
+        // the no-op method does not and might cause the timer to interrupt mid-frame.
+        // Ideally, we want to keep interrupts off-frame.
         this_thread::yield();
     }
 }
@@ -213,14 +219,10 @@ void RenderThread::PollInputs()
     // added) — same inputAllowed gate as Hotbar/Camera above.
     state->interaction->Update(inputAllowed);
 
-    // Gravity/collision/movement run on NetworkThread's own steady 20Hz
-    // clock now (see the tick-loop plan), not here — this just publishes
-    // what Tick() needs from this frame's input. Jump/JumpHold are gated by
-    // inputAllowed right at this read site (a screen/chat box being open
-    // means a jump press is never even latched, not latched-and-ignored),
-    // matching TickLoop::RequestJump's own comment; Move/Sneak/Sprint are
-    // published unconditionally, same as before — FixedStep() zeroes the
-    // movement axes itself when input isn't allowed.
+    // Publish this frame's input, then drive TickLoop with it immediately —
+    // gravity/collision/movement run right here (see TickLoop's class
+    // comment). Jump is gated by inputAllowed at this read site; Move/Sneak/
+    // Sprint publish unconditionally, since FixedStep() zeroes them itself.
     if (inputAllowed && state->input->WasActivated("Jump"))
     {
         state->tickLoop->RequestJump();
@@ -232,6 +234,7 @@ void RenderThread::PollInputs()
         state->input->IsActive("Sneak"),
         state->input->IsActive("Sprint"),
         inputAllowed && state->input->IsActive("JumpHold"));
+    state->tickLoop->Tick();
 }
 
 void RenderThread::DrawFrame()
@@ -282,6 +285,20 @@ float DayBrightness(int64_t dayTimeTicks)
 constexpr glm::vec3 SKY_COLOR_NIGHT(0.015f, 0.015f, 0.035f);
 constexpr glm::vec3 SKY_COLOR_DAY(0.52941f, 0.80784f, 0.92157f);
 
+// C++ mirror of terrain.frag's NotGamma — see its own comment for the
+// curve's shape and where it comes from (the real notGamma(vec3) in
+// resources/minecraft/assets/minecraft/shaders/core/lightmap.fsh). Used
+// here to apply the same "Bright" curve to the sky clear color that the
+// shader applies to per-block lighting, so raising Graphics.Brightness
+// actually lifts the night sky instead of leaving it exactly as dark as a
+// pure day/night color lerp would — the "clear color interpolation is
+// linear" gap this was added to close.
+float NotGamma(float level)
+{
+    float inverted = 1.0f - level;
+    return 1.0f - (inverted * inverted * inverted * inverted);
+}
+
 } // namespace
 
 Engine::SceneView RenderThread::BuildSceneView()
@@ -293,13 +310,49 @@ Engine::SceneView RenderThread::BuildSceneView()
     scene.proj = BuildProjection(state->renderEngine->GetExtent());
     scene.cameraPosition = state->player->camera.GetEyePosition(renderPosition);
 
+    // Read once and shared between skyColor below and the UBO fields further
+    // down (VulkanRenderEngine::SubmitFrame), rather than two separate config
+    // lookups + a second DayBrightness call for what has to be the same
+    // frame's values anyway.
+    bool lightingEnabled = std::get<bool>(state->config->Get("Graphics.Lighting", true));
+    float brightnessFactor = static_cast<float>(
+        std::get<uint32_t>(state->config->Get("Graphics.Brightness", uint32_t{50}))) / 100.0f;
+    // See terrain.frag's LightCurve. A raw factor, not a 0-100 percentage,
+    // so unlike Brightness above it's stored/read as-is.
+    float lightCurveBias = static_cast<float>(
+        std::get<uint32_t>(state->config->Get("Graphics.LightCurveBias", uint32_t{5})));
+
     scene.dayBrightness = DayBrightness(state->dayTimeTicks.load());
-    scene.skyColor = glm::mix(SKY_COLOR_NIGHT, SKY_COLOR_DAY, scene.dayBrightness);
+    scene.brightnessFactor = brightnessFactor;
+    scene.lightCurveBias = lightCurveBias;
+
+    // Vanilla's hardcoded per-face shade (LevelRenderer::getShade), stored
+    // as a 0-100 percentage like Brightness above rather than a raw float —
+    // Config has no float alternative (see ConfigValue). Defaults match
+    // vanilla exactly: Up=100, Down=50, North/South=80, East/West=60.
+    scene.shadeTop = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.Top", uint32_t{100}))) / 100.0f;
+    scene.shadeBottom = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.Bottom", uint32_t{50}))) / 100.0f;
+    scene.shadeNorthSouth = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.NorthSouth", uint32_t{80}))) / 100.0f;
+    scene.shadeEastWest = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.EastWest", uint32_t{60}))) / 100.0f;
+
+    // Same γ/NotGamma blend terrain.frag applies to per-block lighting, so
+    // raising Graphics.Brightness lifts the night sky too instead of only
+    // affecting terrain — this is the "clear color interpolation is linear"
+    // gap. Skipped entirely (not just blended toward brightnessFactor=0)
+    // when lighting is off, matching "G"'s existing all-or-nothing meaning.
+    float skyColorBrightness = lightingEnabled
+        ? glm::mix(scene.dayBrightness, NotGamma(scene.dayBrightness), brightnessFactor)
+        : scene.dayBrightness;
+    scene.skyColor = glm::mix(SKY_COLOR_NIGHT, SKY_COLOR_DAY, skyColorBrightness);
 
     scene.time = chrono::duration<float>(chrono::steady_clock::now() - startTime).count();
     scene.deltaTime = frameDeltaTime;
 
-    scene.lightingEnabled = std::get<bool>(state->config->Get("Graphics.Lighting", true));
+    // Not just !worldReady: a mid-session Respawn drops worldReady briefly,
+    // and the panorama shouldn't flash up for that (phase stays Playing).
+    scene.menuBackground = !state->worldReady.load()
+        && state->connectionPhase.load() != ConnectionPhase::Playing;
+    scene.lightingEnabled = lightingEnabled;
     scene.wireframe = wireframeMode;
     return scene;
 }

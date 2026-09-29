@@ -1,0 +1,13 @@
+{
+    "_comment": "Shared by player/mannequin/zombie — vanilla HumanoidModel.createMesh(CubeDeformation.NONE, 0.0F) box values, resources/minecraft-code/net/minecraft/client/model/HumanoidModel.java. Box space: Y-down, 16 units/block, y=0 at the neck/shoulder line, origin+size are addBox(x,y,z,w,h,d), uv is texOffs(u,v), pivot is PartPose.offset. See EntityJsonModel.hpp for how this gets converted to world-local space.",
+    "textureWidth": 64,
+    "textureHeight": 64,
+    "boxes": [
+        { "name": "head",      "origin": [-4.0, -8.0, -4.0], "size": [8.0, 8.0, 8.0],  "uv": [0.0, 0.0],   "pivot": [0.0, 0.0, 0.0] },
+        { "name": "body",      "origin": [-4.0,  0.0, -2.0], "size": [8.0, 12.0, 4.0], "uv": [16.0, 16.0], "pivot": [0.0, 0.0, 0.0] },
+        { "name": "right_arm", "origin": [-3.0, -2.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [40.0, 16.0], "pivot": [-5.0, 2.0, 0.0] },
+        { "name": "left_arm",  "origin": [-1.0, -2.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [40.0, 16.0], "mirror": true, "pivot": [5.0, 2.0, 0.0] },
+        { "name": "right_leg", "origin": [-2.0,  0.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [0.0, 16.0],  "pivot": [-1.9, 12.0, 0.0] },
+        { "name": "left_leg",  "origin": [-2.0,  0.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [0.0, 16.0],  "mirror": true, "pivot": [1.9, 12.0, 0.0] }
+    ]
+}

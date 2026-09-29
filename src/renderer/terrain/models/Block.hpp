@@ -38,8 +38,21 @@ struct Block {
     // into blocks the server treats as solid and got teleported back for it.
     uint16_t collisionShapeId = UNKNOWN_COLLISION_SHAPE;
 
+    // Ticks (1/20s) to hand-mine this block, resolved per state id at parse
+    // time — see BlockRegistry::MapStateIdBreakTicks. -1 (the default) also
+    // covers a Block never built from a real state id, same fail-safe
+    // direction as UNKNOWN_COLLISION_SHAPE.
+    int32_t breakTicks = -1;
+
     bool isOpaque() const {
         return visualId != 0;
+    }
+
+    // True air — neither a full-cube nor a non-cube visual. Used by
+    // Chunk::IsSectionEmpty to skip meshing/uploading a section that has
+    // nothing to draw at all (common near build-height limits).
+    bool isAir() const {
+        return visualId == 0 && nonCubeVisualId == 0;
     }
 
     // Solid for collision purposes, per the real collision shape — see

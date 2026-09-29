@@ -21,12 +21,18 @@
 #include "renderer/terrain/MeshingThread.hpp"
 #include "renderer/gui/GUIController.hpp"
 #include "renderer/gui/models/Screen.hpp"
+#include "renderer/gui/screens/LoadingScreen.hpp"
+#include "renderer/gui/screens/MainMenuScreen.hpp"
+#include "renderer/gui/screens/PauseScreen.hpp"
+#include "renderer/gui/screens/SettingsScreen.hpp"
 #include "renderer/gui/models/TextInput.hpp"
 #include "renderer/gui/models/Button.hpp"
 #include "network/NetworkThread.hpp"
 #include "PlayerAttributes.hpp"
 #include "TickLoop.hpp"
+#include "TickThread.hpp"
 #include "interaction/InteractionManager.hpp"
+#include <filesystem>
 #include <vector>
 using namespace std;
 
@@ -57,7 +63,7 @@ static void ParseServerAddress(const std::string& address, std::string& outHost,
 
 // Chunk generation function for 4-chunk view distance (2x2 grid)
 void GenerateChunks(Volcano::GlobalState& state, const Volcano::TextureManager& textureManager) {
-    Volcano::Log::Info("[INFO] Generating 2x2 chunk grid...");
+    Volcano::Log::Info("Generating 2x2 chunk grid...");
 
     // Generate 2x2 chunk grid (chunks 0 and 1 in both axes)
     for (int cx = 0; cx < 2; cx++) {
@@ -103,23 +109,33 @@ void GenerateChunks(Volcano::GlobalState& state, const Volcano::TextureManager& 
                 chunk.setBlock(treeX, 7, treeZ, leavesVisual);
             }
 
-            Volcano::Mesh chunkMesh = Volcano::ChunkMesher::MeshChunk(chunk, *state.world, textureManager);
+            // One mesh per non-empty 16-tall section now (see
+            // ChunkMesher::MeshChunkSection) instead of one whole-column
+            // mesh — this debug generator only ever touches y=0-7, so only
+            // section 0 has anything to draw.
+            for (int sectionY = 0; sectionY < Volcano::SECTIONS_PER_CHUNK; sectionY++) {
+                if (chunk.IsSectionEmpty(sectionY)) continue;
+                Volcano::Mesh chunkMesh = Volcano::ChunkMesher::MeshChunkSection(chunk, *state.world, textureManager, sectionY);
 
-            // Position the chunk in world space
-            chunkMesh.modelMatrix = glm::translate(glm::mat4(1.0f),
-                glm::vec3(cx * CHUNK_SIZE_X, 0.0f, cz * CHUNK_SIZE_Z));
+                // This debug generator ignores WORLD_MIN_Y (its blocks are
+                // placed as if y=0 were the world floor, not -64) — override
+                // MeshChunkSection's own model matrix the same way the old
+                // whole-column call here always did.
+                chunkMesh.modelMatrix = glm::translate(glm::mat4(1.0f),
+                    glm::vec3(cx * CHUNK_SIZE_X, sectionY * Volcano::SECTION_SIZE_Y, cz * CHUNK_SIZE_Z));
 
-            state.renderList.push_back(chunkMesh);
+                state.renderList.insert_or_assign(Volcano::SectionKey{ cx, cz, sectionY }, chunkMesh);
+            }
         }
     }
 
-    Volcano::Log::Info("[INFO] Generated " + std::to_string(state.renderList.size()) + " chunk meshes");
+    Volcano::Log::Info("Generated " + std::to_string(state.renderList.size()) + " chunk section meshes");
 }
 
 int main()
 {
     // Let's keep this just for fun.
-    Volcano::Log::Info("[INFO] Hello, World!");
+    Volcano::Log::Info("Hello, World!");
 
     // Initialize global state.
     Volcano::GlobalState state{};
@@ -224,10 +240,10 @@ int main()
     Volcano::EntityRegistry::Init();
 
     // Initialize texture manager and load textures
-    Volcano::Log::Info("[INFO] Loading textures... (this may take a moment)");
+    Volcano::Log::Info("Loading textures... (this may take a moment)");
     Volcano::TextureManager textureManager;
     textureManager.LoadResourcePack("resources/minecraft");
-    Volcano::Log::Info("[INFO] Texture loading complete!");
+    Volcano::Log::Info("Texture loading complete!");
 
     // Resolves item icon texture layers against the array textureManager
     // just built — must run after LoadResourcePack(), not alongside
@@ -273,11 +289,43 @@ int main()
     Volcano::MeshingThread meshingThread(&state, &textureManager);
     meshingThread.Start();
 
+    // Drives TickLoop::Tick() and the per-tick position/rotation report on
+    // its own steady cadence — see TickThread's own class comment for why
+    // this can't just run inline on NetworkThread the way it used to.
+    // Started immediately, same as MeshingThread just above: it idles
+    // (worldReady stays false, GlobalState::activeConnection stays null)
+    // until there's an actual connection to report to.
+    Volcano::TickThread tickThread(&state);
+    tickThread.Start();
+
     // Network runs on its own thread, deliberately separate from this
     // (GLFW-owning) main thread — see the networking plan for why. It's
     // only created once the player submits the connect screen below, since
     // the host/port/username aren't known until then.
     std::unique_ptr<Volcano::NetworkThread> network;
+
+    // Singleplayer screen: one button per settings.json's
+    // Network.LocalServerDirs entry, each launching that directory's
+    // server.jar on Network.LoopbackPort and connecting to it exactly like
+    // any other server — see NetworkThread's localServerDir constructor
+    // argument. Its buttons are filled in further down.
+    Volcano::GUI::Screen* singleplayerScreen = Volcano::GUIController::CreateScreen("Singleplayer", /* closable */ false);
+
+    // Shown from the moment a connection attempt starts (singleplayer or
+    // multiplayer) until the world is ready — the main loop below closes it
+    // once GlobalState::worldReady flips. See LoadingScreen.hpp; what it
+    // says follows GlobalState::connectionPhase. Cancel (only offered while
+    // a local server is starting) doesn't block on the server shutting down
+    // — see RequestStop's own comment. The old NetworkThread (and its
+    // still-shutting-down LocalServer) gets joined for real whenever
+    // `network` is next reassigned, not here, so this can't freeze the
+    // render thread waiting on LocalServer::Stop()'s up-to-30s grace period.
+    Volcano::GUI::Screen* loadingScreen = Volcano::GUI::CreateLoadingScreen(&state,
+        [&state, &network, singleplayerScreen] {
+            if (network) network->RequestStop();
+            state.SetConnectionPhase(Volcano::ConnectionPhase::Idle);
+            Volcano::GUIController::OpenScreen(singleplayerScreen);
+        });
 
     // Connect screen: collects server address + username and starts the
     // network thread on "Connect". Shown immediately so the player never
@@ -298,24 +346,92 @@ int main()
     auto* disconnectReasonText = new Volcano::GUI::GUIComponent(Volcano::GUI::GUIComponentType::TEXT, "");
     disconnectReasonText->SetVisibile(false);
 
-    connectButton->AddClickHandler(new std::function<void()>([&state, &network, addressInput, usernameInput, connectScreen, devServerPort] {
+    connectButton->AddClickHandler(new std::function<void()>([&state, &network, addressInput, usernameInput, loadingScreen, devServerPort] {
         std::string host;
         uint16_t port;
         ParseServerAddress(addressInput->GetValue(), host, port, devServerPort);
         std::string username = usernameInput->GetValue();
         if (host.empty() || username.empty()) return;
 
+        state.SetConnectionPhase(Volcano::ConnectionPhase::Connecting, host + ":" + std::to_string(port));
         network = std::make_unique<Volcano::NetworkThread>(&state, host, port, username);
         network->Start();
 
-        Volcano::GUIController::CloseScreen();
+        Volcano::GUIController::OpenScreen(loadingScreen);
     }));
+
+    // Built once here (the LocalServerDirs list isn't expected to change at
+    // runtime) rather than re-scanning it on every screen open.
+    uint16_t loopbackPort = static_cast<uint16_t>(std::get<uint32_t>(state.config->Get("Network.LoopbackPort", uint32_t{25565})));
+
+    for (const std::string& serverDir : state.config->GetStringArray("Network.LocalServerDirs"))
+    {
+        if (!std::filesystem::exists(std::filesystem::path(serverDir) / "server.jar"))
+        {
+            Volcano::Log::Error("Singleplayer: no server.jar in " + serverDir + ", skipping");
+            continue;
+        }
+
+        std::string worldName = std::filesystem::path(serverDir).filename().string();
+        auto* worldButton = new Volcano::GUI::Button(worldName);
+        worldButton->AddClickHandler(new std::function<void()>(
+            [&state, &network, usernameInput, serverDir, loopbackPort, loadingScreen] {
+                std::string username = usernameInput->GetValue();
+                if (username.empty()) return;
+
+                state.SetConnectionPhase(Volcano::ConnectionPhase::StartingServer);
+                network = std::make_unique<Volcano::NetworkThread>(&state, "127.0.0.1", loopbackPort, username, serverDir);
+                network->Start();
+
+                Volcano::GUIController::OpenScreen(loadingScreen);
+            }));
+        singleplayerScreen->components.push_back(worldButton);
+    }
 
     connectScreen->components.push_back(disconnectReasonText);
     connectScreen->components.push_back(addressInput);
     connectScreen->components.push_back(usernameInput);
     connectScreen->components.push_back(connectButton);
-    Volcano::GUIController::OpenScreen(connectScreen);
+
+    // Main menu: the actual startup screen and navigation hub now — see
+    // MainMenuScreen.hpp. Built after singleplayerScreen/connectScreen
+    // (its Singleplayer/Multiplayer buttons open them directly), so their
+    // own Back buttons (added right after, below) can close the loop back
+    // to it instead of each other.
+    Volcano::GUI::Screen* settingsScreen = Volcano::GUI::CreateSettingsScreen();
+    Volcano::GUI::Screen* mainMenuScreen =
+        Volcano::GUI::CreateMainMenuScreen(&state, singleplayerScreen, connectScreen, settingsScreen);
+
+    // Pause menu (Esc in a world). Servers and Disconnect both leave the
+    // current session the same way — RequestStop, show the loading screen
+    // as "Disconnecting...", and let the main loop below finish the job once
+    // the network thread (and, in singleplayer, the local server, which can
+    // take a while to save and exit) has actually wound down; resetting the
+    // world any earlier would let still-arriving packets repopulate it. They
+    // differ only in where the player lands afterward.
+    Volcano::GUI::Screen* disconnectDestination = nullptr;
+    auto beginDisconnect = [&state, &network, &disconnectDestination, loadingScreen](Volcano::GUI::Screen* destination) {
+        disconnectDestination = destination;
+        state.SetConnectionPhase(Volcano::ConnectionPhase::Disconnecting);
+        if (network) network->RequestStop();
+        Volcano::GUIController::OpenScreen(loadingScreen);
+    };
+    Volcano::GUIController::SetPauseScreen(Volcano::GUI::CreatePauseScreen(
+        [beginDisconnect, connectScreen] { beginDisconnect(connectScreen); },
+        [settingsScreen] { Volcano::GUI::OpenSettingsScreen(settingsScreen, Volcano::GUIController::GetPauseScreen()); },
+        [beginDisconnect, mainMenuScreen] { beginDisconnect(mainMenuScreen); }));
+
+    auto* singleplayerBackButton = new Volcano::GUI::Button("Back");
+    singleplayerBackButton->AddClickHandler(new std::function<void()>(
+        [mainMenuScreen] { Volcano::GUIController::OpenScreen(mainMenuScreen); }));
+    singleplayerScreen->components.push_back(singleplayerBackButton);
+
+    auto* connectBackButton = new Volcano::GUI::Button("Back");
+    connectBackButton->AddClickHandler(new std::function<void()>(
+        [mainMenuScreen] { Volcano::GUIController::OpenScreen(mainMenuScreen); }));
+    connectScreen->components.push_back(connectBackButton);
+
+    Volcano::GUIController::OpenScreen(mainMenuScreen);
 
     // This is now the frame loop itself (see RenderThread::RunFrame — it
     // calls glfwPollEvents() internally as the first step of PollInputs)
@@ -346,16 +462,48 @@ int main()
                 std::lock_guard<std::mutex> lock(state.disconnectMutex);
                 reason = state.disconnectReason;
             }
-            Volcano::Log::Info("[INFO] Returned to connect screen: " + reason);
+            Volcano::Log::Info("Returned to connect screen: " + reason);
 
             // See GlobalState::ResetWorldState's own comment — same reset a
             // mid-session dimension change (PlayS2C::Respawn) uses, just
             // followed here by actually reopening the connect screen.
+            state.SetConnectionPhase(Volcano::ConnectionPhase::Idle);
             state.ResetWorldState();
 
             disconnectReasonText->SetLabel(reason);
             disconnectReasonText->SetVisibile(!reason.empty());
+            disconnectDestination = nullptr; // The unexpected disconnect wins over a pending player-requested one.
             Volcano::GUIController::OpenScreen(connectScreen);
+        }
+
+        // Finishes a player-requested leave (pause menu's Servers/Disconnect
+        // — see beginDisconnect above) once nothing can repopulate the world.
+        if (disconnectDestination != nullptr && (!network || network->HasSessionEnded()))
+        {
+            Volcano::GUI::Screen* destination = disconnectDestination;
+            disconnectDestination = nullptr;
+
+            state.SetConnectionPhase(Volcano::ConnectionPhase::Idle);
+            state.ResetWorldState();
+
+            disconnectReasonText->SetVisibile(false);
+            Volcano::GUIController::OpenScreen(destination);
+        }
+
+        // The world actually streamed in (singleplayer or multiplayer alike)
+        // — swap the loading screen out for the game itself. Checked after
+        // the disconnect branch above (which already covers the failure
+        // case: a connection dying before this ever becomes true reports
+        // its own reason and reopens connectScreen instead, with the phase
+        // back at Idle). Playing also keeps the menu panorama off across a
+        // mid-session Respawn, where worldReady briefly drops again.
+        if (state.connectionPhase.load() == Volcano::ConnectionPhase::LoadingTerrain && state.worldReady.load())
+        {
+            state.SetConnectionPhase(Volcano::ConnectionPhase::Playing);
+            if (Volcano::GUIController::GetActiveScreen() == loadingScreen)
+            {
+                Volcano::GUIController::CloseScreen();
+            }
         }
 
         renderer.RunFrame();

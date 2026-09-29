@@ -95,10 +95,10 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
                 texturePaths.push_back(entry.path());
     }
 
-    Log::Info("[INFO] Found " + std::to_string(texturePaths.size()) + " texture files");
+    Log::Info("Found " + std::to_string(texturePaths.size()) + " texture files");
 
     if (texturePaths.empty()) {
-        Log::Error("[ERROR] No textures found! Cannot create texture array.");
+        Log::Error("No textures found! Cannot create texture array.");
         return;
     }
 
@@ -131,7 +131,7 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
     }
 
     if (skipped > 0) {
-        Log::Info("[WARN] Skipped " + std::to_string(skipped) + " non-16x16 textures");
+        Log::Info("Skipped " + std::to_string(skipped) + " non-16x16 textures");
     }
 
     CreateArrayImage(static_cast<uint32_t>(validPaths.size()));
@@ -143,7 +143,7 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
         uint8_t* pixels = stbi_load(path.string().c_str(), &w, &h, &channels, STBI_rgb_alpha);
         if (!pixels)
         {
-            Log::Error("[WARN] Failed to load texture: " + path.string());
+            Log::Error("Failed to load texture: " + path.string());
             continue;
         }
 
@@ -158,7 +158,7 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
     GenerateMipmaps();
     CreateSampler();
 
-    Log::Info("[INFO] Loaded " + std::to_string(layer) + " textures into array.");
+    Log::Info("Loaded " + std::to_string(layer) + " textures into array.");
 }
 
 uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
@@ -166,7 +166,7 @@ uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
     auto it = layerLookup.find(textureName);
     // return it != layerLookup.end() ? it->second : 0;
     if (it == layerLookup.end()) {
-        Log::Error("[WARN] Texture not found: " + textureName);
+        Log::Error("Texture not found: " + textureName);
         return 0;
     }
     return it->second;

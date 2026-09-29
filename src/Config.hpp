@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <variant>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 namespace Volcano {
@@ -42,6 +43,19 @@ public:
 
     // Writes value to key immediately (e.g. from a SettingsUpdateEvent).
     void Set(const std::string& key, const ConfigValue& value);
+
+    // Reads a JSON array of strings at key (e.g. Network.LocalServerDirs) —
+    // not expressible through Get()/ConfigValue, which only covers scalar
+    // settings. Missing key, non-array, or non-string entries are simply
+    // skipped rather than persisting a default; there's no sensible default
+    // list of server directories to write back.
+    std::vector<std::string> GetStringArray(const std::string& key) const;
+
+    // Resolves relativePath against the same directory settings.json lives
+    // in (the executable's directory, not the process's current working
+    // directory) — e.g. for Network.LogPackets, so the dump file lands next
+    // to settings.json regardless of how the client was launched.
+    std::string ResolvePath(const std::string& relativePath) const;
 
     // Global accessor for code with no GlobalState pointer at hand (e.g.
     // Logger's free functions). Null until GlobalState::LoadSettings runs.

@@ -43,7 +43,7 @@ bool SlabBuffer::Allocate(const void* data, VkDeviceSize size, VkDeviceSize alig
         : cursor;
 
     if (alignedOffset + size > capacity) {
-        Log::Error("[ERROR] SlabBuffer out of space (capacity " + std::to_string(capacity)
+        Log::Error("SlabBuffer out of space (capacity " + std::to_string(capacity)
                   + " bytes, requested " + std::to_string(size) + " bytes at offset " + std::to_string(alignedOffset)
                   + "). Consider increasing the slab size.");
         return false;

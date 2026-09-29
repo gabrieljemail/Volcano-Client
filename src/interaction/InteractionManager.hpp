@@ -2,6 +2,7 @@
 #ifndef VOLCANO_INTERACTION_MANAGER_H
 #define VOLCANO_INTERACTION_MANAGER_H
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <glm/glm.hpp>
@@ -114,6 +115,18 @@ private:
     std::optional<TargetedBlock> targetedBlock;
     std::optional<uint32_t> targetedEntityId;
 
+    // A real (non-instant, non-creative) mining hold in progress — see
+    // BeginMining/ContinueMining/CancelMining. Absent whenever nothing's
+    // being mined: between clicks, during an instant break (creative or
+    // hardness-0), or while a real hold's dig timer hasn't started yet.
+    struct MiningState {
+        glm::ivec3 position;
+        glm::ivec3 face;
+        int32_t ticksRequired; // See BlockRegistry::MapStateIdBreakTicks.
+        std::chrono::steady_clock::time_point startTime;
+    };
+    std::optional<MiningState> mining;
+
     // Reach distance, in blocks.
     // Synced with server NBT attributes.
     float reachDistance = 3.0f;
@@ -135,11 +148,33 @@ private:
     // every other PlayerAttributes-backed value (see TickLoop's own reads).
     void RefreshReach();
 
-    // Primary trigger handler (attack / start breaking a block). Held-gated
-    // (see PrimaryAction's registration) — mining will need its own
-    // start/hold/release split too once block breaking exists, same reason
-    // secondary has one below, but that's for whenever that lands.
+    // Primary trigger handler: attack (edge-gated, one dispatch per click),
+    // or drive the mining state machine below — called every frame
+    // PrimaryAction is held, not just the press edge, since mining needs to
+    // keep running across frames. Update() handles the release-edge cancel
+    // this doesn't see, since it's simply not called once the button is up.
     void PrimaryTrigger();
+
+    // Starts mining `target`. canInstabuild or a hardness-0 block (flowers,
+    // torches, ...) dispatches an instant BreakBlockEvent. An unbreakable
+    // block (bedrock, or one never resolved from a real state id) does
+    // nothing. Otherwise sends StartDigging and arms `mining` with the real
+    // tick count (BlockRegistry::MapStateIdBreakTicks) for ContinueMining.
+    void BeginMining(const TargetedBlock& target);
+
+    // Called every frame a hold continues targeting the same block/face
+    // `mining` was armed for. Once enough real time has passed (ticksRequired
+    // / 20 seconds), dispatches BreakBlockEvent with sendStart=false (the
+    // StartDigging already went out from BeginMining) and clears `mining`.
+    // No-op (returns early) while still within the required time.
+    void ContinueMining();
+
+    // Ends `mining` early without breaking anything: sends CancelDigging (if
+    // a hold was actually in progress — a no-op otherwise) and clears it.
+    // Called whenever a hold stops being valid: the button was released, the
+    // crosshair moved off the block/face being mined, or an entity/nothing
+    // is now targeted instead.
+    void CancelMining();
 
     // Secondary is a use, not just a click — split the same way Jump/
     // JumpHold are, but three ways: an instant item (a block, a bucket)

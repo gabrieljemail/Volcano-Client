@@ -16,15 +16,16 @@ layout(location = 2) in uint inPacked;
 layout(location = 0) out vec2 fragUV;
 layout(location = 1) flat out uint fragLayer;
 layout(location = 2) out float fragSkyLight;
-layout(location = 3) flat out uint fragBiomeTinted;
+layout(location = 3) flat out uint fragBiomeTint;
 layout(location = 4) out float fragBlockLight;
 
 void main() {
-    // See MiscVertex::Pack: textureLayer (0-15), blockLight (16-19), skyLight (20-23), biomeTinted (bit 24).
+    // See MiscVertex::Pack: textureLayer (0-15), blockLight (16-19), skyLight
+    // (20-23), tintMode (24-25: 0=none, 1=foliage, 2=water).
     fragLayer = bitfieldExtract(inPacked, 0, 16);
     uint blockLight = bitfieldExtract(inPacked, 16, 4);
     uint skyLight = bitfieldExtract(inPacked, 20, 4);
-    fragBiomeTinted = bitfieldExtract(inPacked, 24, 1);
+    fragBiomeTint = bitfieldExtract(inPacked, 24, 2);
 
     vec4 worldPos = pc.model * vec4(inPosition, 1.0);
     gl_Position = camera.proj * camera.view * worldPos;

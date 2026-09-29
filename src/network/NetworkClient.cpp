@@ -5,6 +5,7 @@
 #include "models/ChatEvent.hpp"
 #include "../Logger.hpp"
 #include "../renderer/terrain/ChunkParser.hpp"
+#include "../renderer/terrain/models/BlockRegistry.hpp"
 #include "../renderer/gui/models/Chat.hpp"
 #include "../renderer/entity/models/Entity.hpp"
 #include "../renderer/entity/models/EntityRegistry.hpp"
@@ -13,10 +14,12 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iomanip>
 #include <optional>
 #include <sstream>
+#include <unordered_set>
 
 namespace Volcano {
 
@@ -46,14 +49,21 @@ std::array<uint8_t, 16> OfflineUuidFromUsername(const std::string& username)
 }
 
 // Minecraft packs yaw/pitch as a signed byte spanning a full 360 degrees
-// (256 steps per turn), matching the shader's own yaw convention (see
-// entity.vert: forward = (-sin(yaw), 0, cos(yaw)), the same "0 = looking
-// +Z, increasing per Minecraft's own rotation direction" convention this
-// byte encodes) — so no sign flip is needed converting it to the radians
-// Entity::yaw stores.
+// (256 steps per turn). entity.vert/entity_textured.vert's shared yaw
+// rotation matrix computes world forward as (sin(yaw), 0, cos(yaw)) for a
+// mesh's local +Z — the mirror image of Minecraft's own convention
+// (forward = (-sin(yaw), 0, cos(yaw)), verified against
+// Entity.calculateViewVector in resources/minecraft-code). Every shape's
+// mesh (QuadrupedModel, PigModel, CowModel, and EntityJsonModel's humanoid
+// path via its own 180-degree flip) is authored consistently against that
+// shader convention, not vanilla's real one, so patching the shader (or any
+// one mesh) would just move the mirroring elsewhere. Negating here instead
+// feeds the whole already-self-consistent rendering pipeline the angle that
+// makes its output match vanilla's real facing direction, without touching
+// the shader or any mesh.
 float AngleByteToRadians(int8_t angleByte)
 {
-    return static_cast<float>(angleByte) * (glm::pi<float>() / 128.0f);
+    return static_cast<float>(-angleByte) * (glm::pi<float>() / 128.0f);
 }
 
 // Update Entity Position packets encode movement as a fixed-point delta:
@@ -114,7 +124,7 @@ ParsedSlot ReadItemStack(PacketReader& reader)
 bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, const std::string& username)
 {
     try {
-        Log::Info("[NET] Connecting to " + host + ":" + std::to_string(port) + "...");
+        Log::Info("Connecting to " + host + ":" + std::to_string(port) + "...");
         connection.Connect(host, port);
 
         // Handshake (-> Login state).
@@ -132,7 +142,7 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
         loginStart.WriteBytes(uuid.data(), uuid.size());
         connection.SendPacket(0x00, loginStart.Data());
 
-        Log::Info("[NET] Sent Handshake + Login Start as '" + username
+        Log::Info("Sent Handshake + Login Start as '" + username
                   + "' (offline UUID " + FormatUuid(uuid) + "). Waiting for response...");
 
         // Set Compression (0x03) can arrive before Login Success once the
@@ -146,7 +156,7 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
             if (packetId == 0x03) {
                 int32_t compressionThreshold = reader.ReadVarInt();
                 connection.EnableCompression(compressionThreshold);
-                Log::Info("[NET] Set Compression: threshold " + std::to_string(compressionThreshold));
+                Log::Info("Set Compression: threshold " + std::to_string(compressionThreshold));
                 continue;
             }
 
@@ -154,7 +164,7 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
                 std::array<uint8_t, 16> serverUuid{};
                 reader.ReadBytes(serverUuid.data(), serverUuid.size());
                 std::string serverUsername = reader.ReadString();
-                Log::Info("[NET] Login Success: " + serverUsername
+                Log::Info("Login Success: " + serverUsername
                           + " (" + FormatUuid(serverUuid) + ")");
 
                 // Login Acknowledged (Login state, serverbound, empty body) —
@@ -164,13 +174,13 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
                 // outright), until the client explicitly acks Login Success.
                 PacketWriter loginAcknowledged;
                 connection.SendPacket(0x03, loginAcknowledged.Data());
-                Log::Info("[NET] Sent Login Acknowledged. Configuration state handling comes next.");
+                Log::Info("Sent Login Acknowledged. Configuration state handling comes next.");
                 return true;
             }
 
             if (packetId == 0x00) {
                 std::string reason = reader.ReadString();
-                Log::Error("[NET] Server disconnected during login: " + reason);
+                Log::Error("Server disconnected during login: " + reason);
                 lastError = reason;
                 return false;
             }
@@ -251,6 +261,13 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
         Log::Debug("[DIAG] Skipping Client Information send (NETDIAG_SKIP_SEND set).");
     }
 
+    // Each packet below updates GlobalState::connectionDetail so the loading
+    // screen can say what Configuration is up to — most of these steps take
+    // milliseconds, but a big modded server's registry/tag sync can visibly
+    // take seconds.
+    state->SetConnectionPhase(ConnectionPhase::Configuring, "Sending client information");
+    int registryCount = 0;
+
     for (;;) {
         std::vector<uint8_t> payload;
         int32_t packetId = connection.ReadPacket(payload);
@@ -259,11 +276,37 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
         if (packetId == ConfigS2C::FinishConfiguration) {
             PacketWriter ack;
             connection.SendPacket(ConfigC2S::AcknowledgeFinishConfiguration, ack.Data());
-            Log::Info("[NET] Configuration finished, entering Play state.");
+            Log::Info("Configuration finished, entering Play state.");
+            state->SetConnectionPhase(ConnectionPhase::LoadingTerrain);
             return true;
         }
 
+        if (packetId == ConfigS2C::RegistryData) {
+            // Body starts with the registry's identifier; the entries after
+            // it aren't needed here (see the catch-all comment below).
+            registryCount++;
+            std::string registryId = reader.ReadString();
+            state->SetConnectionDetail("Receiving registries (" + std::to_string(registryCount) + "): " + registryId);
+            continue;
+        }
+
+        if (packetId == ConfigS2C::UpdateTags) {
+            state->SetConnectionDetail("Updating tags");
+            continue;
+        }
+
+        if (packetId == ConfigS2C::FeatureFlags) {
+            state->SetConnectionDetail("Receiving feature flags");
+            continue;
+        }
+
+        if (packetId == ConfigS2C::AddResourcePack) {
+            state->SetConnectionDetail("Server resource pack offered (ignored)");
+            continue;
+        }
+
         if (packetId == ConfigS2C::KnownPacks) {
+            state->SetConnectionDetail("Negotiating known packs");
             // Same array schema in both directions — echo the payload back
             // verbatim rather than parsing/re-encoding it.
             connection.SendPacket(ConfigC2S::KnownPacks, payload);
@@ -280,9 +323,15 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
         }
 
         if (packetId == ConfigS2C::Ping) {
-            int32_t id = reader.ReadVarInt();
+            // Fixed 4-byte int, NOT a VarInt — unlike almost every other
+            // numeric protocol field. Writing/reading it as a VarInt here
+            // produced a malformed Pong body the server's Netty decoder
+            // couldn't parse, which the server reports back as
+            // "Failed to decode packet 'serverbound/minecraft:pong'" and
+            // disconnects for.
+            int32_t id = reader.ReadInt();
             PacketWriter pong;
-            pong.WriteVarInt(id);
+            pong.WriteInt(id);
             connection.SendPacket(ConfigC2S::Pong, pong.Data());
             continue;
         }
@@ -293,7 +342,7 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
             // misparse the NBT tag bytes as a length-prefixed string,
             // producing garbage (or throwing) instead of the real reason.
             std::string reason = PlainText(ReadTextComponent(reader));
-            Log::Error("[NET] Server disconnected during configuration: " + reason);
+            Log::Error("Server disconnected during configuration: " + reason);
             lastError = reason;
             return false;
         }
@@ -305,19 +354,35 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
     }
 }
 
-void NetworkClient::SendPlayerPosition(glm::vec3 position, bool onGround)
+void NetworkClient::SendPlayerPosition(glm::vec3 position, float yaw, float pitch, bool onGround)
 {
+    // Every outgoing position funnels through here, so this is the one place
+    // that can catch a non-finite value regardless of which caller (the
+    // immediate post-teleport echo in RunPlayLoop's SynchronizePlayerPosition
+    // handler, or the periodic report) produced it — see the "Invalid move
+    // player packet received" server kick this was added to chase down; a
+    // vanilla server disconnects the instant x/y/z stops being finite, but
+    // gives no hint which of this client's own writers put it there.
+    if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) {
+        std::ostringstream oss;
+        oss << "[NET] About to send non-finite player position: (" << position.x << ", "
+            << position.y << ", " << position.z << ") onGround: " << (onGround ? "true" : "false");
+        Log::Error(oss.str());
+    }
+
     PacketWriter writer;
     writer.WriteDouble(static_cast<double>(position.x));
     writer.WriteDouble(static_cast<double>(position.y));
     writer.WriteDouble(static_cast<double>(position.z));
+    writer.WriteFloat(yaw);
+    writer.WriteFloat(pitch);
     // MovementFlags is a u8 bitflag — bit 0 onGround, bit 1
     // hasHorizontalCollision (protocol.json's MovementFlags type). This
     // client doesn't track horizontal-collision state, so that bit always
     // stays 0.
     uint8_t flags = onGround ? 0x01 : 0x00;
     writer.WriteBytes(&flags, 1);
-    connection.SendPacket(PlayC2S::SetPlayerPosition, writer.Data());
+    connection.SendPacket(PlayC2S::SetPlayerPositionAndRotation, writer.Data());
 }
 
 void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
@@ -329,43 +394,16 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
     // "blocker" section.
     constexpr auto kReadPollInterval = std::chrono::milliseconds(15);
 
-    // Vanilla clients report position roughly once per tick — without this,
-    // the server only ever learns where the player is once (right after the
-    // initial teleport, see SendPlayerPosition's call site below), and from
-    // its perspective the player never moves again: no fall distance to
-    // apply fall damage from, no sprint distance to accumulate hunger
-    // exhaustion from, and no reason to push new chunks as the player
-    // actually walks around.
-    constexpr auto kPositionReportInterval = std::chrono::milliseconds(50); // 1 tick.
-    auto lastPositionReport = std::chrono::steady_clock::now();
-
     while (!stopToken.stop_requested() && !state->shouldClose) {
-        // Called every iteration, not just on a timeout/lull — the callback
-        // (TickLoop::Tick(), wired up by NetworkThread — see
-        // SetTickCallback's own comment) times itself against real elapsed
-        // wall time, so calling it here even while packets are arriving
-        // back-to-back (e.g. a burst of chunk data right after spawn) keeps
-        // ticking steady through the burst instead of freezing
-        // movement/gravity until it lets up. Its return value is this
-        // tick's grounded state (TickLoop::IsGrounded()) — defaults to
-        // false when tickCallback isn't set (NetDiag), matching
-        // SendPlayerPosition's own onGround=false default before this existed.
-        bool grounded = tickCallback ? tickCallback() : false;
-
-        // Null-checked the same reason tickCallback is a callback rather
-        // than a direct state->tickLoop-> call: NetDiag (tools/
-        // netdiag_main.cpp) runs this same loop against a headless
-        // GlobalState with no Player. Player::GetPosition() is a lock-free
-        // atomic read (see Player.hpp), safe to call from this thread even
-        // though NetworkThread never writes it (TickLoop, on this same
-        // thread, does).
-        if (state->player) {
-            auto now = std::chrono::steady_clock::now();
-            if (now - lastPositionReport >= kPositionReportInterval) {
-                SendPlayerPosition(state->player->GetPosition(), grounded);
-                lastPositionReport = now;
-            }
-        }
+        // TickLoop::Tick() (and with it, sending PlayC2S::PlayerLoaded and
+        // the per-tick position/rotation report) used to happen right here,
+        // once per RunPlayLoop iteration — moved to its own TickThread,
+        // driven by a steady wall-clock timer instead of this loop's own
+        // pacing. See TickThread's class comment for why: this loop's
+        // ReadPacket() call below blocks synchronously on however long a
+        // packet takes to fully arrive (routinely several hundred ms for a
+        // large one on a slow link), which used to freeze ticking — and
+        // therefore the position report's cadence — right along with it.
 
         // Drain anything other threads queued (chat, commands, respawn —
         // see SendChatMessage). Must happen on this thread and outside
@@ -383,7 +421,63 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         PacketReader reader(payload.data(), payload.size());
 
         if (packetId == PlayS2C::LoginPlay) {
-            Log::Info("[NET] Entered Play state.");
+            try {
+                reader.ReadInt();  // entityId
+                reader.ReadBool(); // isHardcore
+                int32_t worldCount = reader.ReadVarInt();
+                for (int32_t i = 0; i < worldCount; i++) reader.ReadString(); // worldNames
+                reader.ReadVarInt(); // maxPlayers
+                reader.ReadVarInt(); // viewDistance
+                reader.ReadVarInt(); // simulationDistance
+                reader.ReadBool();   // reducedDebugInfo
+                reader.ReadBool();   // enableRespawnScreen
+                reader.ReadBool();   // doLimitedCrafting
+                reader.ReadVarInt(); // worldState.dimension
+                reader.ReadString(); // worldState.name
+                reader.ReadLong();   // worldState.hashedSeed
+                uint8_t gameMode = reader.ReadByte(); // worldState.gamemode — see GlobalState::localGameMode.
+                state->localGameMode.store(gameMode, std::memory_order_relaxed);
+                // Rest of SpawnInfo (previousGamemode, isDebug, isFlat, death,
+                // portalCooldown, seaLevel) and enforcesSecureChat aren't
+                // needed — nothing else in this packet is read.
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Login Play (gamemode keeps its previous value): ") + e.what());
+            }
+            Log::Info("Entered Play state.");
+            continue;
+        }
+
+        if (packetId == PlayS2C::GameStateChange) {
+            try {
+                uint8_t reason = reader.ReadByte();
+                float value = reader.ReadFloat();
+                if (reason == 3) { // change_game_mode
+                    state->localGameMode.store(static_cast<uint8_t>(value), std::memory_order_relaxed);
+                }
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Game Event packet: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::UpdateLight) {
+            try {
+                PendingLightUpdate update = ChunkParser::ParseLightUpdatePacket(reader);
+                std::lock_guard lock(state->networkInbox.mutex);
+                state->networkInbox.pendingLightUpdates.push_back(std::move(update));
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Update Light packet: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::PlayerAbilities) {
+            try {
+                uint8_t flags = reader.ReadByte();
+                state->canInstabuild.store((flags & 0x08) != 0, std::memory_order_relaxed);
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Player Abilities packet: ") + e.what());
+            }
             continue;
         }
 
@@ -391,7 +485,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             try {
                 reader.ReadVarInt(); // dimension id — unused, the name below is enough for the log line.
                 std::string dimensionName = reader.ReadString();
-                Log::Info("[NET] Respawn: switching to dimension " + dimensionName);
+                Log::Info("Respawn: switching to dimension " + dimensionName);
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Respawn (resetting world state anyway): ") + e.what());
             }
@@ -472,7 +566,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                         state->inventory.SetSlot(i, slot.item);
                         if (!slot.complete) {
                             appliedAll = false;
-                            Log::Info("[NET] Set Container Content: slot " + std::to_string(i)
+                            Log::Info("Set Container Content: slot " + std::to_string(i)
                                 + " carries item data components this client doesn't decode yet — "
                                 + std::to_string(itemCount - i - 1) + " remaining slot(s) in this packet "
                                 + "not applied; a later Set Container Slot update will still catch up "
@@ -556,6 +650,27 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
+        if (packetId == PlayS2C::DamageEvent) {
+            uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
+            std::lock_guard<std::mutex> lock(state->entitiesMutex);
+            auto it = state->entities.find(entityId);
+            if (it != state->entities.end()) it->second.lastHurtTime = std::chrono::steady_clock::now();
+            continue;
+        }
+
+        if (packetId == PlayS2C::ChunkBatchStart) {
+            continue;
+        }
+
+        if (packetId == PlayS2C::ChunkBatchFinished) {
+            // Vanilla's client reports its measured meshing rate here; a
+            // fixed rate is fine since MeshingThread just queues the backlog.
+            PacketWriter ack;
+            ack.WriteFloat(20.0f);
+            connection.SendPacket(PlayC2S::ChunkBatchReceived, ack.Data());
+            continue;
+        }
+
         if (packetId == PlayS2C::KeepAlive) {
             int64_t id = reader.ReadLong();
             PacketWriter response;
@@ -575,13 +690,22 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             connection.SendPacket(PlayC2S::ConfirmTeleportation, confirm.Data());
 
             // Reporting our position is what makes servers that don't push
-            // chunks unprompted start streaming them; RunPlayLoop's own
-            // periodic call keeps the server current after this first one.
+            // chunks unprompted start streaming them; TickThread's own
+            // per-tick report keeps the server current after this first one.
             // onGround=false: right after a teleport, TickLoop hasn't run a
             // fixed step from the new position yet, so there's no real
             // grounded state to report — same as vanilla's own behavior
             // immediately following a teleport confirmation.
-            SendPlayerPosition(glm::vec3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)), false);
+            //
+            // yaw/pitch come from the camera, not this packet's own trailing
+            // velocity/yaw/pitch/flags fields (left unread — see ParsedSlot's
+            // sibling comment elsewhere on reading only what's needed): a
+            // server-dictated facing on spawn is a real gap, but a
+            // NetDiag-null state->player is guarded the same way TickThread
+            // guards it, so this stays 0 there rather than crash.
+            float yaw = state->player ? state->player->camera.GetYaw() : 0.0f;
+            float pitch = state->player ? state->player->camera.GetPitch() : 0.0f;
+            SendPlayerPosition(glm::vec3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)), yaw, pitch, false);
 
             {
                 std::lock_guard lock(state->networkInbox.mutex);
@@ -604,6 +728,24 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 state->networkInbox.chunks.push(std::move(chunk));
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse chunk data packet: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::BlockUpdate) {
+            try {
+                int32_t worldX, worldY, worldZ;
+                reader.ReadPosition(worldX, worldY, worldZ);
+                int32_t stateId = reader.ReadVarInt();
+
+                PendingBlockEdit edit;
+                edit.position = glm::ivec3(worldX, worldY, worldZ);
+                edit.block = BlockRegistry::ResolveStateId(stateId);
+
+                std::lock_guard lock(state->networkInbox.mutex);
+                state->networkInbox.pendingBlockEdits.push_back(edit);
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse block update packet: ") + e.what());
             }
             continue;
         }
@@ -669,7 +811,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 // Ambiguous (two widths both fit) is as untrustworthy as
                 // none fitting — either way we'd be guessing at the yaw.
                 if (fittingWidths != 1) {
-                    Log::Error("[NET] Spawn Entity tail (" + std::to_string(tailLen)
+                    Log::Error("Spawn Entity tail (" + std::to_string(tailLen)
                         + " bytes) matched no unambiguous velocity encoding — skipping entity "
                         + std::to_string(entityId));
                     continue;
@@ -867,6 +1009,15 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         }
 
         if (packetId == PlayS2C::PlayerChatMessage) {
+            // Logged unconditionally, before parsing even starts — the open
+            // question is whether the server sends this packet back to the
+            // sender at all, not just whether this client parses it right.
+            // If this line never appears, the server isn't broadcasting the
+            // message back (or is sending it via SystemChatMessage/a
+            // different id instead); if it appears but no chat line shows
+            // up, the bug is in parsing/display below.
+            Log::Info("[NET] Received PlayerChatMessage, " + std::to_string(payload.size()) + " bytes");
+
             // Best-effort — see the UNVERIFIED note on PlayerChatMessage in
             // PacketIds.hpp. Anything read wrong here is contained to a
             // wrong-looking chat line or the catch below; it can't desync
@@ -917,16 +1068,25 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             // Disconnect above — see that handler's comment. ReadString()
             // here meant a kick's real reason was never actually visible.
             std::string reason = PlainText(ReadTextComponent(reader));
-            Log::Error("[NET] Server disconnected: " + reason);
+            Log::Error("Server disconnected: " + reason);
             lastError = reason;
             return;
         }
 
         {
-            std::ostringstream oss;
-            oss << "[NET] Unhandled Play packet id 0x" << std::hex << packetId
-                << std::dec << " (" << payload.size() << " bytes), skipping.";
-            Log::Info(oss.str());
+            // Logged once per distinct id, not once per occurrence — a busy
+            // populated world sends routine high-frequency packets (entity
+            // metadata, sound, particles, ...) this client doesn't handle
+            // yet, and logging every single one was thousands of lines
+            // (each one a real syscall — see Logger::Info's own comment)
+            // competing with this same loop's own chunk-packet reads.
+            static std::unordered_set<int32_t> loggedIds;
+            if (loggedIds.insert(packetId).second) {
+                std::ostringstream oss;
+                oss << "[NET] Unhandled Play packet id 0x" << std::hex << packetId
+                    << std::dec << " (" << payload.size() << " bytes), skipping.";
+                Log::Info(oss.str());
+            }
         }
     }
 }
@@ -938,7 +1098,7 @@ void SendChatMessage(GlobalState* state, const std::string& message)
     // GlobalState::activeConnection's own comment.
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
-        Log::Info("[NET] Dropped outgoing chat message, no active connection: " + message);
+        Log::Info("Dropped outgoing chat message, no active connection: " + message);
         return;
     }
 
@@ -955,6 +1115,12 @@ void SendChatMessage(GlobalState* state, const std::string& message)
         writer.WriteBytes(reinterpret_cast<const uint8_t*>("\x00"), 1); // checksum — see PacketIds.hpp's own comment.
 
         connection->QueuePacket(PlayC2S::ChatMessage, writer.Data());
+        // Neither this nor SendChatCommand below logged anything on a
+        // successful queue — "no chat logs at all" was consistent with both
+        // "never called" and "sent fine, just no visible server response",
+        // completely undiagnosable from the log alone. This line exists to
+        // separate those two cases.
+        Log::Info("[NET] Queued chat message: " + message);
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Failed to send chat message: ") + e.what());
     }
@@ -964,7 +1130,7 @@ void SendChatCommand(GlobalState* state, const std::string& command)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
-        Log::Info("[NET] Dropped outgoing command, no active connection: /" + command);
+        Log::Info("Dropped outgoing command, no active connection: /" + command);
         return;
     }
 
@@ -972,6 +1138,7 @@ void SendChatCommand(GlobalState* state, const std::string& command)
         PacketWriter writer;
         writer.WriteString(command); // No leading "/" — the packet field is just the command text.
         connection->QueuePacket(PlayC2S::ChatCommand, writer.Data());
+        Log::Info("[NET] Queued chat command: /" + command);
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Failed to send chat command: ") + e.what());
     }
@@ -981,7 +1148,7 @@ void SendRespawnRequest(GlobalState* state)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
-        Log::Info("[NET] Dropped respawn request, no active connection.");
+        Log::Info("Dropped respawn request, no active connection.");
         return;
     }
 
@@ -998,7 +1165,7 @@ void SendHeldItemSlot(GlobalState* state, uint8_t slot)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
-        Log::Info("[NET] Dropped held-item-slot report, no active connection.");
+        Log::Info("Dropped held-item-slot report, no active connection.");
         return;
     }
 
@@ -1008,6 +1175,129 @@ void SendHeldItemSlot(GlobalState* state, uint8_t slot)
         connection->QueuePacket(PlayC2S::SetHeldItem, writer.Data());
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Failed to send held item slot: ") + e.what());
+    }
+}
+
+void SendAttack(GlobalState* state, uint32_t entityId)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) {
+        Log::Info("Dropped attack, no active connection.");
+        return;
+    }
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(static_cast<int32_t>(entityId));
+        connection->QueuePacket(PlayC2S::Attack, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send attack: ") + e.what());
+    }
+}
+
+void SendInteractEntity(GlobalState* state, uint32_t entityId, Hand hand, bool sneaking)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) {
+        Log::Info("Dropped entity interact, no active connection.");
+        return;
+    }
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(static_cast<int32_t>(entityId));
+        writer.WriteVarInt(static_cast<int32_t>(hand));
+        // location (lpVec3) — see PacketIds.hpp::UseEntity's own comment on
+        // why this is always the entity's own origin for now.
+        uint8_t zeroLpVec3 = 0; // lpVec3 encodes (0,0,0) as one zero byte — see SpawnEntity's velocity parse.
+        writer.WriteBytes(&zeroLpVec3, 1);
+        writer.WriteBool(sneaking);
+        connection->QueuePacket(PlayC2S::UseEntity, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send entity interact: ") + e.what());
+    }
+}
+
+void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position, glm::ivec3 face)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) {
+        Log::Info("Dropped player action, no active connection.");
+        return;
+    }
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(static_cast<int32_t>(status));
+        writer.WritePosition(position.x, position.y, position.z);
+        uint8_t faceByte = static_cast<uint8_t>(DirectionToProtocolId(face));
+        writer.WriteBytes(&faceByte, 1);
+        writer.WriteVarInt(state->interactionSequence.fetch_add(1, std::memory_order_relaxed) + 1);
+        connection->QueuePacket(PlayC2S::BlockDig, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send player action: ") + e.what());
+    }
+}
+
+void SendArmAnimation(GlobalState* state, Hand hand)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) {
+        Log::Info("Dropped arm animation, no active connection.");
+        return;
+    }
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(static_cast<int32_t>(hand));
+        connection->QueuePacket(PlayC2S::ArmAnimation, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send arm animation: ") + e.what());
+    }
+}
+
+void SendBlockPlace(GlobalState* state, Hand hand, glm::ivec3 position, glm::ivec3 face, glm::vec3 cursor)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) {
+        Log::Info("Dropped block place, no active connection.");
+        return;
+    }
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(static_cast<int32_t>(hand));
+        writer.WritePosition(position.x, position.y, position.z);
+        writer.WriteVarInt(DirectionToProtocolId(face));
+        writer.WriteFloat(cursor.x);
+        writer.WriteFloat(cursor.y);
+        writer.WriteFloat(cursor.z);
+        writer.WriteBool(false); // insideBlock — the player's own head/feet occupying the target cell; not tracked yet.
+        writer.WriteBool(false); // worldBorderHit — this client doesn't track the world border yet.
+        writer.WriteVarInt(state->interactionSequence.fetch_add(1, std::memory_order_relaxed) + 1);
+        connection->QueuePacket(PlayC2S::BlockPlace, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send block place: ") + e.what());
+    }
+}
+
+void SendUseItem(GlobalState* state, Hand hand, float yaw, float pitch)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) {
+        Log::Info("Dropped use item, no active connection.");
+        return;
+    }
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(static_cast<int32_t>(hand));
+        writer.WriteVarInt(state->interactionSequence.fetch_add(1, std::memory_order_relaxed) + 1);
+        writer.WriteFloat(yaw);
+        writer.WriteFloat(pitch);
+        connection->QueuePacket(PlayC2S::UseItem, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send use item: ") + e.what());
     }
 }
 

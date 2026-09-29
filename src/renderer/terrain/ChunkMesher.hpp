@@ -24,7 +24,13 @@ public:
     // geometry (visible as constant z-fighting/flicker at chunk seams).
     // `chunk` itself doesn't need to already be inserted into `world` for
     // this call.
-    static Mesh MeshChunk(const Chunk& chunk, const World& world, const TextureManager& textureManager);
+    //
+    // Meshes one 16-tall vertical slice (sectionY 0..SECTIONS_PER_CHUNK-1 —
+    // see ChunkSection.hpp) instead of the whole 384-tall column, so a
+    // single block edit only costs re-sweeping ~16x16x16, not the entire
+    // column. Callers should skip calling this for a section
+    // Chunk::IsSectionEmpty reports as empty.
+    static Mesh MeshChunkSection(const Chunk& chunk, const World& world, const TextureManager& textureManager, int sectionY);
 
     // Releases the slab buffers. Must be called before the VMA allocator is
     // destroyed (e.g. from VulkanInit::Cleanup()).

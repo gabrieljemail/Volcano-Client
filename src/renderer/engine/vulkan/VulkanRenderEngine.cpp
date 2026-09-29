@@ -9,6 +9,7 @@
 #include "../passes/NonCubicPass.hpp"
 #include "../passes/SelectionPass.hpp"
 #include "../passes/ShaderPackPass.hpp"
+#include "../passes/SkyboxPass.hpp"
 #include "../passes/TerrainPass.hpp"
 #include "../../VulkanInit.hpp"
 #include "../../TextureManager.hpp"
@@ -37,6 +38,7 @@ void VulkanRenderEngine::Init()
 
 void VulkanRenderEngine::RegisterBuiltInPasses()
 {
+    AddPass(std::make_unique<Passes::SkyboxPass>());
     AddPass(std::make_unique<Passes::TerrainPass>());
     AddPass(std::make_unique<Passes::EntityPass>());
     AddPass(std::make_unique<Passes::NonCubicPass>());
@@ -196,7 +198,9 @@ void VulkanRenderEngine::BeginCommandBuffer(VkCommandBuffer cmd)
 
 void VulkanRenderEngine::UploadCamera(const SceneView& scene)
 {
-    CameraUBO ubo{ scene.view, scene.proj, scene.lightingEnabled ? 1.0f : 0.0f };
+    CameraUBO ubo{ scene.view, scene.proj, scene.lightingEnabled ? 1.0f : 0.0f,
+        scene.brightnessFactor, scene.dayBrightness, scene.lightCurveBias,
+        scene.shadeTop, scene.shadeBottom, scene.shadeNorthSouth, scene.shadeEastWest };
     std::memcpy(cameraUBOsMapped[currentFrame], &ubo, sizeof(ubo));
 }
 

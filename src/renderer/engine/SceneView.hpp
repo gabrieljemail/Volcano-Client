@@ -20,15 +20,37 @@ struct SceneView {
     // entities) don't have to invert the view matrix to recover it.
     glm::vec3 cameraPosition{0.0f};
 
-    // Clear color for the main pass, and the 0 (midnight) .. 1 (noon)
-    // brightness it was mixed from — see RenderThread's DayBrightness().
+    // Clear color for the main pass (already gamma-corrected by
+    // Graphics.Brightness — see RenderThread::BuildSceneView), and the raw
+    // linear 0 (midnight) .. 1 (noon) brightness it was mixed from — see
+    // RenderThread's DayBrightness(). CameraUBO's skyLightFactor reads this
+    // raw value directly, not skyColor's gamma-corrected one.
     glm::vec3 skyColor{0.0f};
     float dayBrightness = 1.0f;
+
+    // Vanilla's Brightness slider (0=Moody, 1=Bright) and LightCurve's
+    // mid-range falloff bias — read from Graphics.Brightness/
+    // Graphics.LightCurveBias, forwarded into CameraUBO for terrain.frag's
+    // NotGamma/LightCurve (see CameraUBO's own comments).
+    float brightnessFactor = 0.5f;
+    float lightCurveBias = 5.0f;
+
+    // Vanilla's per-face diffuse shading (Graphics.Shading.*), forwarded
+    // into CameraUBO — see that struct's own comment.
+    float shadeTop = 1.0f;
+    float shadeBottom = 0.5f;
+    float shadeNorthSouth = 0.8f;
+    float shadeEastWest = 0.6f;
 
     // Seconds since the client started, and since the previous frame —
     // mostly for shader pack overlays that animate.
     float time = 0.0f;
     float deltaTime = 0.0f;
+
+    // True while the client isn't showing a world yet (main menu, connecting,
+    // loading chunks): SkyboxPass draws the rotating title panorama instead
+    // of leaving the plain sky-colored clear.
+    bool menuBackground = false;
 
     // Graphics.Lighting ("G") and the F3 wireframe debug view.
     bool lightingEnabled = true;

@@ -89,7 +89,7 @@ public:
     // ---- Passes ----
 
     // Passes run in list order, all inside one render pass sharing one
-    // color + depth target. Built-in names, in order: "Terrain",
+    // color + depth target. Built-in names, in order: "Skybox", "Terrain",
     // "Entities", "NonCubic", "Selection", "ShaderPackOverlay", "GUI".
     //
     // Adding a pass after Init() creates it immediately; a pass whose

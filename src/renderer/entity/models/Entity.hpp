@@ -62,8 +62,16 @@ struct Entity {
     glm::vec2 boundingBox{0.6f, 1.8f}; // width, height.
     glm::vec3 color{0.8f, 0.2f, 0.2f};
 
-    float hurtAmount = 0.0f; // 0-1 red hit-flash intensity (tick invulnerability).
+    // Set by the Damage Event packet. The hit flash lasts vanilla's 10-tick
+    // hurtTime — see IsHurt.
+    std::chrono::steady_clock::time_point lastHurtTime{};
     bool visible = true;
+
+    bool IsHurt(std::chrono::steady_clock::time_point now) const
+    {
+        return lastHurtTime != std::chrono::steady_clock::time_point{}
+            && now - lastHurtTime < std::chrono::milliseconds(500);
+    }
 
     // Render-time position, blending previousPosition -> position over
     // ENTITY_INTERP_SECONDS starting at lastUpdateTime. Clamped to

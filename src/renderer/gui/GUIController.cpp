@@ -97,20 +97,6 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     debugText = new GUI::GUIComponent(GUI::GUIComponentType::TEXT, "");
     debugWindow->components.push_back(debugText);
 
-    // Pause screen — Esc opens it whenever no other screen/chat box already
-    // owns input (see Update()), Esc closes it again like any other
-    // closable screen. This is also the only reliable way to quit on some
-    // Windows versions where a stuck cursor-lock/focus fight (see
-    // VulkanInit's WindowFocusCallback) can prevent Alt+F4 from ever
-    // reaching the OS's own close handling.
-    pauseScreen = CreateScreen("Paused", /* closable */ true);
-    auto* resumeButton = new GUI::Button("Resume");
-    resumeButton->AddClickHandler(new std::function<void()>([] { CloseScreen(); }));
-    auto* quitButton = new GUI::Button("Quit Game");
-    quitButton->AddClickHandler(new std::function<void()>([] { state->shouldClose = true; }));
-    pauseScreen->components.push_back(resumeButton);
-    pauseScreen->components.push_back(quitButton);
-
     // Death screen — opened by Update() when GlobalState::playerDied is set
     // (see NetworkClient's PlayerCombatKill handling). Not closable via Esc;
     // Respawn is the only way out.
@@ -138,7 +124,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     crosshairIcon = LoadStandaloneIcon("resources/crosshair.png");
     crosshairEntityIcon = LoadStandaloneIcon("resources/crosshair-entity.png");
 
-    Log::Info("[INFO] GUI Controller initialized with ImGui");
+    Log::Info("GUI Controller initialized with ImGui");
     initialized = true;
 }
 
@@ -171,7 +157,7 @@ void GUIController::Shutdown()
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    Log::Info("[INFO] GUI Controller shutdown");
+    Log::Info("GUI Controller shutdown");
     initialized = false;
 }
 
@@ -202,7 +188,7 @@ ImTextureID GUIController::GetItemIcon(uint16_t textureLayer)
     viewInfo.subresourceRange.layerCount = 1;
 
     if (vkCreateImageView(GetDevice(), &viewInfo, nullptr, &icon.view) != VK_SUCCESS) {
-        Log::Error("[ERROR] GUIController: failed to create an item icon view for texture layer "
+        Log::Error("GUIController: failed to create an item icon view for texture layer "
             + std::to_string(textureLayer));
         return 0;
     }
@@ -228,7 +214,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
     int width = 0, height = 0, channels = 0;
     uint8_t* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
     if (!pixels) {
-        Log::Error("[ERROR] GUIController: failed to load " + path + ", skipping.");
+        Log::Error("GUIController: failed to load " + path + ", skipping.");
         return icon;
     }
 
@@ -252,7 +238,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
     allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
 
     if (vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &icon.image, &icon.allocation, nullptr) != VK_SUCCESS) {
-        Log::Error("[ERROR] GUIController: failed to create image for " + path);
+        Log::Error("GUIController: failed to create image for " + path);
         stbi_image_free(pixels);
         return StandaloneIcon{};
     }
@@ -291,7 +277,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
     viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
     viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     if (vkCreateImageView(GetDevice(), &viewInfo, nullptr, &icon.view) != VK_SUCCESS) {
-        Log::Error("[ERROR] GUIController: failed to create image view for " + path);
+        Log::Error("GUIController: failed to create image view for " + path);
         vmaDestroyImage(vmaAllocator, icon.image, icon.allocation);
         return StandaloneIcon{};
     }
@@ -358,8 +344,12 @@ void GUIController::Update(float deltaTime)
     // Esc with nothing else open pauses the game instead, same key Minecraft
     // uses for both. Doesn't fire on top of a non-closable screen (e.g. the
     // connect screen) since that leaves activeScreen non-null and the first
-    // branch above already owns Esc in that case.
-    else if (activeScreen == nullptr && !chatInputOpen && state->input->IsKeyPressed(GLFW_KEY_ESCAPE))
+    // branch above already owns Esc in that case. Only while actually in a
+    // world (ConnectionPhase::Playing) and once a pause screen has been
+    // registered (SetPauseScreen).
+    else if (activeScreen == nullptr && !chatInputOpen && pauseScreen != nullptr
+        && state->connectionPhase.load() == ConnectionPhase::Playing
+        && state->input->IsKeyPressed(GLFW_KEY_ESCAPE))
     {
         OpenScreen(pauseScreen);
     }
@@ -440,9 +430,6 @@ void GUIController::Update(float deltaTime)
                 "\nFPS: " + std::to_string(static_cast<int>(std::round(fps))) +
                 "\nFrame Time: " + std::to_string(frameTime) + "ms" +
                 "\nPresent Mode: " + vsync +
-                // No "<N>x" unit-count prefix on GPU, unlike CPU — see
-                // SystemInfo's own comment on why there's no portable
-                // cross-vendor way to get an EU/CU/SM-style count.
                 "\nCPU: " + std::to_string(sys.cpuLogicalCores) + "x " + sys.cpuModel +
                 "\nGPU: " + sys.gpuModel +
                 "\nDisplay: " + std::to_string(windowWidth) + "x" + std::to_string(windowHeight)
@@ -455,22 +442,6 @@ void GUIController::Update(float deltaTime)
 void GUIController::Render(VkCommandBuffer commandBuffer)
 {
     if (!initialized) return;
-
-    /*
-    // FPS Display Window
-    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(180, 80), ImGuiCond_Always);
-    ImGui::Begin("Performance", nullptr,
-        ImGuiWindowFlags_AlwaysAutoResize |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoCollapse);
-    ImGui::Text("FPS: %.1f", fps);
-    ImGui::Text("Frame Time: %.2f ms", frameTime);
-    ImGui::Text("Mouse Input X: %.3f px", state->input->GetAxis("Camera.X"));
-    ImGui::Text("Mouse Input Y: %.4f px", state->input->GetAxis("Camera.Y"));
-    */
 
     // A screen (e.g. the connect screen) takes over the whole frame — it
     // hides every other window, including the debug HUD, while it's open.
@@ -510,7 +481,7 @@ void GUIController::Render(VkCommandBuffer commandBuffer)
                 const ImGuiStyle& style = ImGui::GetStyle();
                 natural.x += style.WindowPadding.x * 2.0f;
                 natural.y += style.WindowPadding.y * 2.0f;
-                size = ImVec2(natural.x * 2.0f, natural.y * 3.0f);
+                size = ImVec2(natural.x, natural.y);
                 flags &= ~ImGuiWindowFlags_AlwaysAutoResize;
             }
 
@@ -731,6 +702,11 @@ void GUIController::RenderChatInputBox()
     ImGui::SetNextItemWidth(CHAT_WIDTH - 16.0f);
     if (ImGui::InputText("##chatinputtext", chatInputBuffer, sizeof(chatInputBuffer), ImGuiInputTextFlags_EnterReturnsTrue))
     {
+        // Confirms Enter/InputText itself fired, separate from whether the
+        // network layer then actually queued anything (see SendChatMessage/
+        // SendChatCommand's own new logging) — closes the last gap in
+        // "chat does nothing and nothing logs" being fully undiagnosable.
+        Log::Info(std::string("Chat input submitted: '") + chatInputBuffer + "'");
         if (chatInputBuffer[0] == '/') SendChatCommand(state, chatInputBuffer + 1);
         else if (chatInputBuffer[0] != '\0') SendChatMessage(state, chatInputBuffer);
         CloseChatInput();

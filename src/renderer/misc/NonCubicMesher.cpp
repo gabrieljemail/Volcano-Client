@@ -1,9 +1,11 @@
 #include "NonCubicMesher.hpp"
 #include "MiscVertex.hpp"
 #include "../terrain/models/BlockRegistry.hpp"
+#include "../terrain/models/ChunkSection.hpp"
 #include "../models/SlabBuffer.hpp"
 #include "../VulkanInit.hpp"
 #include "../BiomeColors.hpp"
+#include "../../Logger.hpp"
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/gtc/constants.hpp>
 #include <array>
@@ -14,10 +16,14 @@ namespace Volcano {
 // Same "one slab pair, bump-allocated per chunk mesh" scheme ChunkMesher
 // uses — see its own comment for why (streamed-in chunks, avoiding a
 // VkBuffer/VmaAllocation per chunk). Kept entirely separate from
-// ChunkMesher's slabs since this mesh is bound by a different pipeline
-// (nonCubicPipeline) with a different vertex format (MiscVertex).
+// ChunkMesher's slabs since this mesh is bound by different pipelines
+// (nonCubicPipeline/translucentPipeline) with a different vertex format
+// (MiscVertex). Two pairs — cutout and translucent — since MeshChunk now
+// produces two Meshes per chunk; see NonCubicMesher::ChunkMeshes.
 static SlabBuffer vertexSlab;
 static SlabBuffer indexSlab;
+static SlabBuffer translucentVertexSlab;
+static SlabBuffer translucentIndexSlab;
 static bool slabsInitialized = false;
 
 static void EnsureSlabsInitialized() {
@@ -25,6 +31,8 @@ static void EnsureSlabsInitialized() {
 
     vertexSlab.Init(NonCubicMesher::DEFAULT_SLAB_SIZE, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     indexSlab.Init(NonCubicMesher::DEFAULT_SLAB_SIZE, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    translucentVertexSlab.Init(NonCubicMesher::DEFAULT_SLAB_SIZE, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    translucentIndexSlab.Init(NonCubicMesher::DEFAULT_SLAB_SIZE, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     slabsInitialized = true;
 }
 
@@ -33,6 +41,8 @@ void NonCubicMesher::Shutdown() {
 
     vertexSlab.Destroy();
     indexSlab.Destroy();
+    translucentVertexSlab.Destroy();
+    translucentIndexSlab.Destroy();
     slabsInitialized = false;
 }
 
@@ -114,7 +124,7 @@ static std::array<glm::vec3, 4> FaceCorners(const glm::vec3& min, const glm::vec
 // no up/down to get wrong.
 static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices,
         const std::array<glm::vec3, 4>& corners, const glm::vec4& uvRect,
-        uint16_t textureLayer, bool biomeTinted, LightSample light, bool verticalFace) {
+        uint16_t textureLayer, BiomeTint tint, LightSample light, bool verticalFace) {
     glm::vec2 uvMin = glm::vec2(uvRect.x, uvRect.y) / 16.0f;
     glm::vec2 uvMax = glm::vec2(uvRect.z, uvRect.w) / 16.0f;
     float vBottom = verticalFace ? uvMax.y : uvMin.y;
@@ -125,7 +135,7 @@ static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& i
     };
 
     uint32_t base = static_cast<uint32_t>(vertices.size());
-    uint32_t packed = MiscVertex::Pack(textureLayer, light.sky, light.block, biomeTinted);
+    uint32_t packed = MiscVertex::Pack(textureLayer, light.sky, light.block, static_cast<uint8_t>(tint));
 
     for (int i = 0; i < 4; i++) {
         vertices.push_back(MiscVertex{ corners[static_cast<size_t>(i)], uvs[static_cast<size_t>(i)], packed });
@@ -181,10 +191,9 @@ static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const
         }
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
-        bool tinted = IsBiomeTinted(textureName);
         LightSample light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
         EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), element.faceUVs[static_cast<size_t>(f)],
-            layer, tinted, light, f >= 2);
+            layer, GetMiscTint(textureName), light, f >= 2);
     }
 }
 
@@ -210,10 +219,42 @@ static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, ui
         if (neighbor.nonCubeVisualId == visualId || neighbor.isOpaque()) continue;
 
         uint16_t layer = textureManager.GetLayerIndex(textureName);
-        bool tinted = IsBiomeTinted(textureName);
         LightSample light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
         EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), element.faceUVs[static_cast<size_t>(f)],
-            layer, tinted, light, f >= 2);
+            layer, GetMiscTint(textureName), light, f >= 2);
+    }
+}
+
+// Water's own face culling: skip a face when the neighbor is ALSO water, at
+// ANY level (mirrors vanilla's FluidRenderer.isNeighborSameFluid — a shared
+// water/water face never draws regardless of the two levels either side of
+// it, sloped-corner interpolation or not), or when it's occluded by a flush
+// opaque neighbor (same rule MeshElementFaces uses for slabs/carpets/etc.).
+// Emits into the caller's own vertex/index vectors — MeshChunk below routes
+// this shape's output to the translucent pass instead of the cutout one.
+static bool IsWaterVisual(uint16_t nonCubeVisualId) {
+    return nonCubeVisualId != 0
+        && BlockRegistry::GetNonCubeVisual(nonCubeVisualId).shape == BlockRegistry::NonCubeShape::Liquid;
+}
+
+static void MeshLiquid(const BlockRegistry::NonCubeElement& element, const Chunk& chunk, const World& world,
+        int bx, int by, int bz, const glm::vec3& blockOrigin, const TextureManager& textureManager,
+        std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
+    glm::vec3 boxMin = blockOrigin + element.from / 16.0f;
+    glm::vec3 boxMax = blockOrigin + element.to / 16.0f;
+
+    for (int f = 0; f < 6; f++) {
+        const std::string& textureName = element.faceTextures[static_cast<size_t>(f)];
+        if (textureName.empty()) continue;
+
+        Block neighbor = GetBlockAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
+        if (IsWaterVisual(neighbor.nonCubeVisualId)) continue;
+        if (IsFaceFlush(element, f) && neighbor.isOpaque()) continue;
+
+        uint16_t layer = textureManager.GetLayerIndex(textureName);
+        LightSample light = GetLightAcrossChunks(chunk, world, bx + FACE_DX[f], by + FACE_DY[f], bz + FACE_DZ[f]);
+        EmitQuad(vertices, indices, FaceCorners(boxMin, boxMax, f), element.faceUVs[static_cast<size_t>(f)],
+            layer, BiomeTint::Water, light, f >= 2);
     }
 }
 
@@ -226,7 +267,7 @@ static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const Chunk& c
         int bx, int by, int bz, const glm::vec3& blockOrigin, const TextureManager& textureManager,
         std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
     uint16_t layer = textureManager.GetLayerIndex(visual.crossTexture);
-    bool tinted = IsBiomeTinted(visual.crossTexture);
+    BiomeTint tint = GetMiscTint(visual.crossTexture);
     // Flat — a billboard has no single well-defined face normal to sample a neighbor by; use the block's own light.
     LightSample light = chunk.getLightSample(bx, by, bz);
 
@@ -246,70 +287,104 @@ static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const Chunk& c
             glm::vec3(p1.x, 1.0f, p1.z),
             glm::vec3(p0.x, 1.0f, p0.z),
         };
-        EmitQuad(vertices, indices, corners, glm::vec4(0.0f, 0.0f, 16.0f, 16.0f), layer, tinted, light,
+        EmitQuad(vertices, indices, corners, glm::vec4(0.0f, 0.0f, 16.0f, 16.0f), layer, tint, light,
             /* verticalFace */ true);
     }
 }
 
-Mesh NonCubicMesher::MeshChunk(const Chunk& chunk, const World& world, const TextureManager& textureManager) {
-    std::vector<MiscVertex> vertices;
-    std::vector<uint32_t> indices;
-
-    for (int y = 0; y < CHUNK_SIZE_Y; y++) {
-        for (int z = 0; z < CHUNK_SIZE_Z; z++) {
-            for (int x = 0; x < CHUNK_SIZE_X; x++) {
-                Block block = chunk.getBlock(x, y, z);
-                if (block.nonCubeVisualId == 0) continue;
-
-                const BlockRegistry::NonCubeVisual& visual = BlockRegistry::GetNonCubeVisual(block.nonCubeVisualId);
-                glm::vec3 blockOrigin(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
-
-                if (visual.shape == BlockRegistry::NonCubeShape::Cross) {
-                    MeshCross(visual, chunk, x, y, z, blockOrigin, textureManager, vertices, indices);
-                    continue;
-                }
-
-                for (const BlockRegistry::NonCubeElement& element : visual.elements) {
-                    if (visual.shape == BlockRegistry::NonCubeShape::TransparentCube) {
-                        MeshTransparentCube(element, block.nonCubeVisualId, chunk, world, x, y, z, blockOrigin,
-                            textureManager, vertices, indices);
-                    } else {
-                        MeshElementFaces(element, chunk, world, x, y, z, blockOrigin, textureManager, vertices, indices);
-                    }
-                }
-            }
-        }
-    }
-
+// Bump-allocates one Mesh's vertices/indices into the given slab pair —
+// shared by MeshChunk's two outputs (cutout and translucent) below so the
+// allocate-or-fall-back-to-empty logic only exists once.
+static Mesh BuildMesh(const std::vector<MiscVertex>& vertices, const std::vector<uint32_t>& indices,
+        const glm::mat4& modelMatrix, SlabBuffer& targetVertexSlab, SlabBuffer& targetIndexSlab) {
     Mesh mesh{};
     mesh.vertexCount = static_cast<uint32_t>(vertices.size());
     mesh.indexCount = static_cast<uint32_t>(indices.size());
-    mesh.modelMatrix = glm::translate(glm::mat4(1.0f),
-        glm::vec3(chunk.getX() * CHUNK_SIZE_X, WORLD_MIN_Y, chunk.getZ() * CHUNK_SIZE_Z));
+    mesh.modelMatrix = modelMatrix;
 
     if (mesh.vertexCount > 0) {
         EnsureSlabsInitialized();
 
         VkDeviceSize vertexBufferSize = sizeof(MiscVertex) * vertices.size();
         VkDeviceSize vertexOffset = 0;
-        if (vertexSlab.Allocate(vertices.data(), vertexBufferSize, sizeof(MiscVertex), vertexOffset)) {
-            mesh.vertexBuffer = vertexSlab.GetBuffer();
+        if (targetVertexSlab.Allocate(vertices.data(), vertexBufferSize, sizeof(MiscVertex), vertexOffset)) {
+            mesh.vertexBuffer = targetVertexSlab.GetBuffer();
             mesh.vertexOffset = vertexOffset;
         } else {
+            // See ChunkMesher.cpp's own Allocate-failure comment — same
+            // "bump allocator never reclaims a remesh's old region" story.
+            glm::vec3 origin(modelMatrix[3]);
+            Log::Error("[MESH] non-cubic vertex slab full (near " + std::to_string(origin.x) + ","
+                + std::to_string(origin.y) + "," + std::to_string(origin.z) + ") — section not updated.");
             mesh.vertexCount = 0;
         }
 
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * indices.size();
         VkDeviceSize indexOffset = 0;
-        if (indexSlab.Allocate(indices.data(), indexBufferSize, sizeof(uint32_t), indexOffset)) {
-            mesh.indexBuffer = indexSlab.GetBuffer();
+        if (targetIndexSlab.Allocate(indices.data(), indexBufferSize, sizeof(uint32_t), indexOffset)) {
+            mesh.indexBuffer = targetIndexSlab.GetBuffer();
             mesh.indexOffset = indexOffset;
         } else {
+            glm::vec3 origin(modelMatrix[3]);
+            Log::Error("[MESH] non-cubic index slab full (near " + std::to_string(origin.x) + ","
+                + std::to_string(origin.y) + "," + std::to_string(origin.z) + ") — section not updated.");
             mesh.indexCount = 0;
         }
     }
 
     return mesh;
+}
+
+NonCubicMesher::ChunkMeshes NonCubicMesher::MeshChunkSection(const Chunk& chunk, const World& world, const TextureManager& textureManager, int sectionY) {
+    std::vector<MiscVertex> cutoutVertices;
+    std::vector<uint32_t> cutoutIndices;
+    std::vector<MiscVertex> translucentVertices;
+    std::vector<uint32_t> translucentIndices;
+
+    int yMin = sectionY * SECTION_SIZE_Y;
+    int yMax = yMin + SECTION_SIZE_Y;
+    for (int y = yMin; y < yMax; y++) {
+        for (int z = 0; z < CHUNK_SIZE_Z; z++) {
+            for (int x = 0; x < CHUNK_SIZE_X; x++) {
+                Block block = chunk.getBlock(x, y, z);
+                if (block.nonCubeVisualId == 0) continue;
+
+                const BlockRegistry::NonCubeVisual& visual = BlockRegistry::GetNonCubeVisual(block.nonCubeVisualId);
+                // blockOrigin.y is section-relative (0-15), matching the
+                // model matrix's own translation to this section's Y origin
+                // below — bx/by/bz passed to the Mesh* helpers below stay
+                // absolute chunk-local (their own neighbor lookups need the
+                // real coordinate), only the vertex-position base changes.
+                glm::vec3 blockOrigin(static_cast<float>(x), static_cast<float>(y - yMin), static_cast<float>(z));
+
+                if (visual.shape == BlockRegistry::NonCubeShape::Cross) {
+                    MeshCross(visual, chunk, x, y, z, blockOrigin, textureManager, cutoutVertices, cutoutIndices);
+                    continue;
+                }
+
+                for (const BlockRegistry::NonCubeElement& element : visual.elements) {
+                    if (visual.shape == BlockRegistry::NonCubeShape::TransparentCube) {
+                        MeshTransparentCube(element, block.nonCubeVisualId, chunk, world, x, y, z, blockOrigin,
+                            textureManager, cutoutVertices, cutoutIndices);
+                    } else if (visual.shape == BlockRegistry::NonCubeShape::Liquid) {
+                        MeshLiquid(element, chunk, world, x, y, z, blockOrigin, textureManager,
+                            translucentVertices, translucentIndices);
+                    } else {
+                        MeshElementFaces(element, chunk, world, x, y, z, blockOrigin, textureManager, cutoutVertices, cutoutIndices);
+                    }
+                }
+            }
+        }
+    }
+
+    glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f),
+        glm::vec3(chunk.getX() * CHUNK_SIZE_X, WORLD_MIN_Y + yMin, chunk.getZ() * CHUNK_SIZE_Z));
+
+    ChunkMeshes result;
+    result.cutout = BuildMesh(cutoutVertices, cutoutIndices, modelMatrix, vertexSlab, indexSlab);
+    result.translucent = BuildMesh(translucentVertices, translucentIndices, modelMatrix,
+        translucentVertexSlab, translucentIndexSlab);
+    return result;
 }
 
 } // namespace Volcano

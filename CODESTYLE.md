@@ -13,6 +13,7 @@ never shares one with the statement that owns it.
 
 Correct:
 ```cpp
+template<typename T>
 void MyFunction()
 {
     DoSomething();
@@ -21,7 +22,7 @@ void MyFunction()
 
 Incorrect:
 ```cpp
-void MyFunction() {
+template<typename T> void MyFunction() {
     DoSomething();
 }
 ```
@@ -72,7 +73,8 @@ model to copy — default to an instance method every other time.
 ## Comments
 
 Comment blocks describe what the code is doing at a glance, not a
-line-by-line restatement of the code beneath them.
+line-by-line restatement of the code beneath them. Basically, don't be writing
+long-ass comments that take up half the page.
 
 Correct:
 ```cpp
@@ -152,3 +154,34 @@ exists purely for code with no `GlobalState*` in hand at all (`Logger`'s free
 functions). It's a fallback for that specific case, not a second pattern to
 reach for — new code should take a `GlobalState*` rather than inventing its
 own static/singleton accessor.
+
+## Shader Languages
+This project uses two source shader languages: GLSL (for most things) and HLSL (for compute shaders and PBR). All of these are compiled into SPIR-V bytecode for use with the Vulkan backend, and optionally OpenGL 4.6 and DirectX 12 backends in the future.
+
+Like with C++ in this project, it is ill-advised to write long comments, especially in HLSL where the math explains itself.
+
+Correct:
+```glsl
+// Vanilla's own "Bright" curve (see the real notGamma(vec3) in
+// resources/minecraft/assets/minecraft/shaders/core/lightmap.fsh)
+float NotGamma(float level) {
+    float inverted = 1.0 - level;
+    return 1.0 - (inverted * inverted * inverted * inverted);
+}
+```
+
+Incorrect:
+```glsl
+// Vanilla's own "Bright" curve (see the real notGamma(vec3) in
+// resources/minecraft/assets/minecraft/shaders/core/lightmap.fsh — this is
+// that function's scalar equivalent, since Volcano tracks one combined
+// brightness value per fragment rather than vanilla's full tinted-RGB
+// light). Quartic ease-out toward 1.0: barely changes already-bright
+// levels, but pulls dim ones up hard — that asymmetry is what makes raising
+// Graphics.Brightness open up shadow detail instead of just washing
+// everything out uniformly.
+float NotGamma(float level) {
+    float inverted = 1.0 - level;
+    return 1.0 - (inverted * inverted * inverted * inverted);
+}
+```

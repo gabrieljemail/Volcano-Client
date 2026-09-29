@@ -2,6 +2,7 @@
 #ifndef BIOME_COLORS_H
 #define BIOME_COLORS_H
 
+#include <cstdint>
 #include <string>
 #include <unordered_set>
 #include <glm/glm.hpp>
@@ -27,6 +28,29 @@ inline bool IsBiomeTinted(const std::string& textureName)
         "oak_leaves",
     };
     return whitelist.contains(textureName);
+}
+
+// Same placeholder situation as BIOME_COLOR_PLAINS above — vanilla's default
+// (swamp-less) water color, since water_still.png is grayscale and relies
+// entirely on a biome-color multiply to read as blue.
+inline constexpr glm::vec3 BIOME_COLOR_WATER = { 0x3F / 255.0f, 0x76 / 255.0f, 0xE4 / 255.0f };
+
+// Which placeholder biome color (if any) a texture should be tinted with —
+// widened from IsBiomeTinted's plain bool because the non-cubic render pass
+// (MiscVertex/misc.frag) now has two colors to choose between, not one.
+// ChunkMesher/PackedVertex/terrain.frag are untouched: full-cube opaque
+// blocks (grass, leaves) still only ever need IsBiomeTinted's single bool.
+enum class BiomeTint : uint8_t
+{
+    None = 0,
+    Foliage = 1,
+    Water = 2,
+};
+
+inline BiomeTint GetMiscTint(const std::string& textureName)
+{
+    if (textureName == "water_still") return BiomeTint::Water;
+    return IsBiomeTinted(textureName) ? BiomeTint::Foliage : BiomeTint::None;
 }
 
 } // namespace Volcano

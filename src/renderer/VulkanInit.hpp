@@ -50,8 +50,15 @@ inline VkPipelineLayout pipelineLayout;
 // Non-cubic (transparent/cross/partial-shape block) pass — see
 // CreateNonCubicPipeline(). Shares pipelineLayout (same push constant +
 // descriptor set layout signature) since only the fixed-function state
-// (no backface cull, alpha blend, no depth write) differs from graphicsPipeline.
+// (no backface cull, alpha blend, depth write ON — see that function's own
+// comment on why) differs from graphicsPipeline.
 inline VkPipeline nonCubicPipeline;
+// Genuinely translucent pass (currently water only) — see
+// CreateTranslucentPipeline(). Same shaders/vertex format/blend state as
+// nonCubicPipeline; the only fixed-function difference is depth write OFF,
+// which is exactly the "third pass" nonCubicPipeline's own comment describes
+// as worth adding once something genuinely translucent needed it.
+inline VkPipeline translucentPipeline;
 inline VkQueue graphicsQueue;
 inline VkQueue presentQueue;
 inline uint32_t graphicsQueueFamilyIndex;
@@ -108,6 +115,11 @@ void DestroyGraphicsPipeline();
 // Must run after CreateGraphicsPipeline() — reuses its pipelineLayout.
 void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders);
 void DestroyNonCubicPipeline();
+// Third pass, for geometry that's genuinely translucent rather than cutout
+// (currently just water) — see CreateTranslucentPipeline's own comment.
+// Must run after CreateGraphicsPipeline() — reuses its pipelineLayout, same as CreateNonCubicPipeline().
+void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders);
+void DestroyTranslucentPipeline();
 
 // Builds a VkShaderModule from shaders.Load(shaderName) ("terrain.vert",
 // ...). Throws if the shader can't be found or the driver rejects it —

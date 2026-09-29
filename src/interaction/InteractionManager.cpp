@@ -1,5 +1,15 @@
 #include "InteractionManager.hpp"
 #include "../renderer/terrain/models/BlockRegistry.hpp"
+#include "../network/NetworkClient.hpp"
+#include "../inventory/ItemRegistry.hpp"
+#include "../renderer/entity/models/EntityRegistry.hpp"
+#include "../TickLoop.hpp"
+#include "events/AttackEvent.hpp"
+#include "events/InteractEntityEvent.hpp"
+#include "events/BreakBlockEvent.hpp"
+#include "events/BlockEntityInteractEvent.hpp"
+#include "events/PlaceBlockEvent.hpp"
+#include "events/UseItemEvent.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -167,6 +177,16 @@ std::optional<TargetedBlock> RaycastBlocks(GlobalState* state, const glm::vec3& 
     return std::nullopt;
 }
 
+// Vanilla's crosshair can't target dropped items, XP orbs or projectiles
+// (Entity::isPickable), and the server kicks for interacting with or
+// attacking them.
+bool IsTargetable(uint16_t entityType)
+{
+    const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entityType);
+    if (info == nullptr) return false;
+    return info->entityKind != "projectile" && info->name != "item" && info->name != "experience_orb";
+}
+
 // One entity-shaped raycast hit.
 struct EntityHit { uint32_t entityId; float distance; };
 
@@ -183,6 +203,8 @@ std::optional<EntityHit> RaycastEntities(GlobalState* state, const glm::vec3& or
     std::lock_guard<std::mutex> lock(state->entitiesMutex);
     for (const auto& [id, entity] : state->entities)
     {
+        if (!IsTargetable(entity.type)) continue;
+
         glm::vec3 halfExtents(entity.boundingBox.x * 0.5f, entity.boundingBox.y * 0.5f, entity.boundingBox.x * 0.5f);
         glm::vec3 center = entity.InterpolatedPosition(now) + glm::vec3(0.0f, halfExtents.y, 0.0f);
 
@@ -243,6 +265,14 @@ void InteractionManager::Update(bool inputAllowed)
     {
         PrimaryTrigger();
     }
+    else if (mining.has_value())
+    {
+        // The button came up somewhere between last frame and this one —
+        // PrimaryTrigger (the only other place that would see this) simply
+        // isn't called while the button's up, so this is the one place a
+        // release actually gets observed.
+        CancelMining();
+    }
 
     // Not mutually exclusive on the press frame — Hold is already true then
     // too (it's a HOLD action and the button is down), so Start and Hold
@@ -296,30 +326,146 @@ void InteractionManager::PrimaryTrigger()
     // Vanilla never refuses a swing — attackStrengthTicker only scales the
     // damage a landed hit deals (GetAttackStrengthScale), it doesn't gate
     // whether one happens. Resets unconditionally, same as an air-swing
-    // does in vanilla.
-    state->attackStrengthTicker.store(0, std::memory_order_relaxed);
+    // does in vanilla. Only on the press edge — an attack shouldn't reset
+    // the recovery timer on every frame a mining hold keeps this method
+    // running.
+    bool pressedThisFrame = state->input->WasActivated("PrimaryAction");
+    if (pressedThisFrame) state->attackStrengthTicker.store(0, std::memory_order_relaxed);
 
-    // Nothing to dispatch to yet — targetedEntityId/targetedBlock now hold
-    // a real target, but this client has no outbound attack/dig packet.
+    if (targetedEntityId.has_value())
+    {
+        // An entity in front always wins over whatever was being mined
+        // (mirrors RaycastSelection picking whichever the ray reaches
+        // first) — attack itself stays edge-gated, one dispatch per click,
+        // same as before this method also had to drive mining.
+        CancelMining();
+        if (pressedThisFrame) AttackEvent{ *targetedEntityId }.Dispatch(state);
+        return;
+    }
+
+    if (!targetedBlock.has_value())
+    {
+        // An air-swing. Vanilla still sends Swing Arm for one (visual only,
+        // no packet this client models yet needs it for) — no dispatch
+        // needed here.
+        CancelMining();
+        return;
+    }
+
+    if (mining.has_value()
+        && (mining->position != targetedBlock->position || mining->face != targetedBlock->face))
+    {
+        // Looked away mid-hold (a different block, or the same block from a
+        // different face) — vanilla restarts rather than carrying progress
+        // over.
+        CancelMining();
+    }
+
+    if (!mining.has_value())
+    {
+        if (!pressedThisFrame) return; // A held-over frame with nothing in progress starts nothing new.
+        BeginMining(*targetedBlock);
+        return;
+    }
+
+    ContinueMining();
+}
+
+void InteractionManager::BeginMining(const TargetedBlock& target)
+{
+    bool instabuild = state->canInstabuild.load(std::memory_order_relaxed);
+    Block block = state->world->GetBlock(target.position.x, target.position.y, target.position.z);
+
+    if (instabuild || block.breakTicks == 0)
+    {
+        BreakBlockEvent{ target.position, target.face }.Dispatch(state);
+        return;
+    }
+    if (block.breakTicks < 0) return; // Unbreakable (bedrock, ...), or not resolved from a real state id.
+
+    SendPlayerAction(state, DigStatus::StartDigging, target.position, target.face);
+    SendArmAnimation(state, Hand::Main);
+    mining = MiningState{ target.position, target.face, block.breakTicks, std::chrono::steady_clock::now() };
+}
+
+void InteractionManager::ContinueMining()
+{
+    double elapsedTicks = std::chrono::duration<double>(std::chrono::steady_clock::now() - mining->startTime).count() * 20.0;
+    if (elapsedTicks < static_cast<double>(mining->ticksRequired)) return;
+
+    BreakBlockEvent{ mining->position, mining->face, /*sendStart=*/false }.Dispatch(state);
+    mining.reset();
+}
+
+void InteractionManager::CancelMining()
+{
+    if (!mining.has_value()) return;
+    SendPlayerAction(state, DigStatus::CancelDigging, mining->position, mining->face);
+    mining.reset();
 }
 
 void InteractionManager::SecondaryTriggerStart()
 {
-    // Where an instant item (a block, a bucket) would act immediately, and
-    // where a continuous one (food, a shield, a bow) would begin — nothing
-    // does yet, same "no outbound packet for it" story as PrimaryTrigger.
+    // Simplification: there's no per-item "is this placeable/edible/a
+    // tool/..." behavior classification yet (see ItemRegistry), so this
+    // always tries block-place when a block is targeted and falls back to
+    // a bare use-item otherwise — matching vanilla's own dispatch order
+    // (interact entity > use-on-block > use-item) without its PASS-result
+    // fallback (real vanilla can send both a block-use AND a plain use in
+    // the same click if the former locally predicts a no-op; this client
+    // has no item behavior data to predict that with, so it only ever
+    // sends one).
+    Hand hand = Hand::Main; // offhandInteractible is always false for now — see its own comment.
+
+    if (targetedEntityId.has_value())
+    {
+        bool sneaking = state->tickLoop->IsSneaking();
+        InteractEntityEvent{ *targetedEntityId, hand, sneaking }.Dispatch(state);
+    }
+    else if (targetedBlock.has_value() && state->world->HasBlockEntity(targetedBlock->position)
+        && !(state->tickLoop->IsSneaking() && !mainhand.IsEmpty()))
+    {
+        // Vanilla: sneaking with something in hand places against the block
+        // instead of opening it.
+        BlockEntityInteractEvent{ targetedBlock->position, targetedBlock->face, hand }.Dispatch(state);
+    }
+    else if (targetedBlock.has_value())
+    {
+        // Block items share their block's name ("stone" -> stone), which is
+        // enough to predict the common case; anything else just waits for
+        // the server.
+        int32_t predictedStateId = -1;
+        if (!mainhand.IsEmpty())
+        {
+            const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(mainhand.itemId);
+            if (item != nullptr) predictedStateId = BlockRegistry::DefaultStateIdForName(item->name);
+        }
+        PlaceBlockEvent{ targetedBlock->position, targetedBlock->face, hand, predictedStateId }.Dispatch(state);
+    }
+    else
+    {
+        float yaw = state->player->camera.GetYaw();
+        float pitch = state->player->camera.GetPitch();
+        UseItemEvent{ hand, yaw, pitch }.Dispatch(state);
+    }
 }
 
 void InteractionManager::SecondaryTriggerHold()
 {
     // Continues whatever SecondaryTriggerStart began (keep eating, keep
-    // charging a bow, keep blocking with a shield). Nothing does yet.
+    // charging a bow, keep blocking with a shield). Unlike Start, this
+    // needs no packet of its own — the server times a continuous use off
+    // the single UseItem packet Start already sent; nothing repeats it.
 }
 
 void InteractionManager::SecondaryTriggerRelease()
 {
     // Ends whatever SecondaryTriggerStart began, early (release a drawn
-    // bow, lower a shield). Nothing does yet.
+    // bow, stop eating, lower a shield) — vanilla's ReleaseUseItem action
+    // doesn't care what's targeted, so this ignores targetedBlock/
+    // targetedEntityId entirely and sends the same fixed dummy position/
+    // face every time, matching vanilla's own call site for this action.
+    SendPlayerAction(state, DigStatus::ReleaseUseItem, glm::ivec3(0), glm::ivec3(0, 1, 0));
 }
 
 void InteractionManager::RaycastSelection()

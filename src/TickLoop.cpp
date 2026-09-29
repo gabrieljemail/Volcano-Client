@@ -1,13 +1,16 @@
 #include "TickLoop.hpp"
+#include "Logger.hpp"
 #include "renderer/terrain/models/BlockRegistry.hpp"
+#include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
+#include <sstream>
 
 namespace Volcano {
 
 namespace {
-    constexpr float PLAYER_HALF_WIDTH = 0.3f;
-    constexpr float PLAYER_HEIGHT = 1.8f;
+    constexpr float PLAYER_HALF_WIDTH = Player::HALF_WIDTH;
+    constexpr float PLAYER_HEIGHT = Player::HEIGHT;
     // Fixed-timestep accumulators can spiral if a frame stalls badly (a
     // breakpoint, alt-tab, a slow load) — clamp how much time can accumulate so
     // a stall causes a pause, not a burst of catch-up ticks.
@@ -25,12 +28,35 @@ namespace {
     // Exponential ease rate applied per-tick below — higher = snappier. Framerate
     // (tick-rate) independent the same way RenderThread's FOV easing is.
     constexpr float EYE_HEIGHT_EASE_RATE = 10.0f;
+
+    bool IsFinite(glm::vec3 v)
+    {
+        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+    }
+
+    // A vanilla server disconnects with "Invalid move player packet
+    // received" the instant a reported position stops being finite (see
+    // ServerGamePacketListenerImpl's own move-player check) — this used to
+    // show up client-side only as an opaque connection-aborted error with no
+    // way to tell which tick, or which half of FixedStep, produced the bad
+    // value. Logged once per occurrence rather than guarded/clamped: a NaN
+    // here means a real bug upstream, and silently clamping it would only
+    // hide that bug behind a still-wrong position.
+    void LogIfNotFinite(const char* what, glm::vec3 v, glm::vec3 velocity, bool grounded)
+    {
+        if (IsFinite(v)) return;
+        std::ostringstream oss;
+        oss << "[TICK] Non-finite " << what << ": (" << v.x << ", " << v.y << ", " << v.z
+            << ") velocity: (" << velocity.x << ", " << velocity.y << ", " << velocity.z
+            << ") grounded: " << (grounded ? "true" : "false");
+        Log::Error(oss.str());
+    }
 } // namespace
 
 TickLoop::TickLoop(GlobalState* stateIn) : state(stateIn)
 {
     previousPosition = currentPosition = state->player->GetPosition();
-    renderPositionSnapshot = currentPosition;
+    renderPreviousPosition = renderCurrentPosition = currentPosition;
 }
 
 void TickLoop::PublishInput(bool inputAllowedIn, float moveForward, float moveRight,
@@ -53,28 +79,19 @@ void TickLoop::Tick()
     // ordering guarantee that makes reading cached position state below
     // safe once this becomes true.
     //
-    // This check must come before the lastTickTime read/write below, not
-    // after it. MeshingThread writes lastTickTime too (via
-    // SyncToPlayerPosition), and its right to do so rests entirely on
-    // worldReady still being false at that moment — the same argument every
-    // other field here relies on. Touching lastTickTime above this line
-    // opted it out of that argument and left it as the one piece of
-    // TickLoop state genuinely written by two threads at once.
+    // Must come before the lastTickTime read/write below — MeshingThread
+    // also writes lastTickTime (via SyncToPlayerPosition), and its right to
+    // do so rests on worldReady still being false at that moment.
     if (!state->worldReady.load()) return;
 
-    // Self-timed: NetworkThread calls this once per loop iteration (see
-    // NetworkClient::RunPlayLoop) rather than passing a frame delta, since
-    // it has no frame of its own to measure. Returning above without
-    // updating this is what keeps a long wait for the world to load from
-    // showing up as one huge dt the moment it finishes: SyncToPlayerPosition
-    // re-arms lastTickTime immediately before worldReady flips, so the first
-    // dt measured here spans that re-arm, not the whole load.
+    // Self-timed rather than fed a frame delta: measuring elapsed wall time
+    // here keeps this correct even across an unusually long frame.
     auto now = std::chrono::steady_clock::now();
     float dt = std::chrono::duration<float>(now - lastTickTime).count();
     lastTickTime = now;
 
-    // Apply any teleport the server sent since the last call. Done here,
-    // on NetworkThread, because past this point this thread owns the
+    // Apply any teleport the server sent since the last call. Done here, on
+    // RenderThread, because past this point this thread owns the
     // position/velocity state below — see QueueTeleport's comment.
     //
     // Velocity is deliberately left alone here. SynchronizePlayerPosition
@@ -128,18 +145,26 @@ void TickLoop::Tick()
         accumulator -= FIXED_DT;
     }
 
-    // Cache the interpolated position for GetRenderPosition() — see its own
-    // comment on why this can't be computed live from another thread.
+    // Publish the raw pair GetRenderPosition() mixes, plus the wall-clock
+    // instant the last completed FixedStep() corresponds to (now minus
+    // however far accumulator has drifted past it).
     {
         std::lock_guard<std::mutex> lock(renderPositionMutex);
-        renderPositionSnapshot = glm::mix(previousPosition, currentPosition, accumulator / FIXED_DT);
+        renderPreviousPosition = previousPosition;
+        renderCurrentPosition = currentPosition;
+        lastFixedStepTime = now - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<float>(accumulator));
     }
 }
 
 glm::vec3 TickLoop::GetRenderPosition() const
 {
+    // Computed fresh every call, not cached — FixedStep() only advances at a
+    // fixed 20Hz, so a cached mix would sit frozen then visibly snap.
     std::lock_guard<std::mutex> lock(renderPositionMutex);
-    return renderPositionSnapshot;
+    float alpha = std::chrono::duration<float>(std::chrono::steady_clock::now() - lastFixedStepTime).count() / FIXED_DT;
+    alpha = std::clamp(alpha, 0.0f, 1.0f);
+    return glm::mix(renderPreviousPosition, renderCurrentPosition, alpha);
 }
 
 void TickLoop::SyncToPlayerPosition()
@@ -147,11 +172,13 @@ void TickLoop::SyncToPlayerPosition()
     previousPosition = currentPosition = state->player->GetPosition();
     velocity = glm::vec3(0.0f);
     grounded = false;
+    horizontalCollision = false;
     accumulator = 0.0f;
     lastTickTime = std::chrono::steady_clock::now();
     {
         std::lock_guard<std::mutex> lock(renderPositionMutex);
-        renderPositionSnapshot = currentPosition;
+        renderPreviousPosition = renderCurrentPosition = currentPosition;
+        lastFixedStepTime = lastTickTime;
     }
 }
 
@@ -164,6 +191,7 @@ void TickLoop::QueueTeleport(glm::vec3 position)
 void TickLoop::FixedStep(bool inputAllowedNow)
 {
     previousPosition = currentPosition;
+    horizontalCollision = false; // Re-derived from this step's own MoveAxis calls below.
 
     // See GlobalState::attackStrengthTicker's own comment — reset by
     // InteractionManager::PrimaryTrigger on a swing, incremented here once
@@ -201,9 +229,12 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     // Client-side-only sprint/sneak: vanilla applies these as attribute
     // modifiers server-side, but here it's simplest to just scale the speed
     // used below directly. Sneak wins if both are held, matching vanilla
-    // (can't sprint while sneaking).
+    // (can't sprint while sneaking). Sprint also requires actual forward
+    // input, matching vanilla's own canStartSprinting — holding Sprint while
+    // idle or moving backward doesn't boost speed, but forward+strafe still
+    // does since horizontalDir below combines both into one direction.
     bool sneaking = sneakActive.load();
-    bool sprinting = !sneaking && sprintActive.load();
+    bool sprinting = !sneaking && sprintActive.load() && forwardInput > 0.0f;
     float speedMultiplier = sneaking ? 0.3f : (sprinting ? 1.3f : 1.0f);
 
     float movementSpeed = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1)) * speedMultiplier;
@@ -214,6 +245,7 @@ void TickLoop::FixedStep(bool inputAllowedNow)
 
     velocity.x = velocity.x * friction + horizontalDir.x * acceleration;
     velocity.z = velocity.z * friction + horizontalDir.z * acceleration;
+    LogIfNotFinite("velocity after friction/acceleration", velocity, velocity, grounded);
 
     // Jump is an instant velocity set, exactly like vanilla's
     // jumpFromGround(). It has to land before this tick's move below, not
@@ -240,6 +272,7 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     MoveAxis(pos, velocity, 2, velocity.z);
 
     currentPosition = pos;
+    LogIfNotFinite("position after MoveAxis", currentPosition, velocity, grounded);
     state->player->SetPosition(currentPosition);
 
     // Scope-limited sneak: just lower the camera, don't touch the collision
@@ -265,6 +298,7 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     constexpr float VERTICAL_DRAG = 0.98f;
     velocity.y = (velocity.y - gravity) * VERTICAL_DRAG;
     if (std::fabs(velocity.y) < 0.005f) velocity.y = 0.0f;
+    LogIfNotFinite("velocity after gravity", velocity, velocity, grounded);
 }
 
 void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float delta)
@@ -326,6 +360,7 @@ void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float del
         // speed, so the gap stays far smaller.
         position[axis] = FindWallContactCoordinate(axis, position, tentative[axis]);
         vel[axis] = 0.0f;
+        horizontalCollision = true; // MovementFlags bit 1 — see HasHorizontalCollision.
         return;
     }
 

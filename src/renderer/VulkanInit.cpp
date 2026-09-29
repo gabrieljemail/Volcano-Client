@@ -9,6 +9,7 @@
 #include "Logger.hpp"
 #include "VulkanInit.hpp"
 #include "RenderThread.hpp"
+#include "gui/GUIController.hpp"
 #include "../Helpers.hpp"
 #include "models/Mesh.hpp"
 #include "models/CameraUBO.hpp"
@@ -341,7 +342,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     // 11. CLEANUP TEMPORARY SHADER MODULES
     destroyModules();
 
-    Volcano::Log::Info("[INFO] Graphics pipeline successfully initialized.");
+    Volcano::Log::Info("Graphics pipeline successfully initialized.");
 }
 
 void DestroyGraphicsPipeline()
@@ -385,9 +386,11 @@ void DestroyGraphicsPipeline()
 // The trade-off is genuinely translucent texels (0 < alpha < 1, e.g.
 // stained glass) now write depth too and so can occlude translucent
 // geometry behind them. Fixing that properly needs a third pass that draws
-// truly translucent surfaces after this one with writes off — worth doing
-// when stained glass/water actually render, but strictly better than every
-// opaque partial shape in the world being drawn inside-out.
+// truly translucent surfaces after this one with writes off — strictly
+// better than every opaque partial shape in the world being drawn
+// inside-out. That third pass now exists (CreateTranslucentPipeline, right
+// below this function) for water, the first thing that actually needed it;
+// stained glass still goes through this cutout pass unchanged.
 void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
 {
     VkDevice dev = GetDevice();
@@ -520,10 +523,162 @@ void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     Volcano::Log::Info("[INFO] Non-cubic graphics pipeline successfully initialized.");
 }
 
+// Third pass, for geometry that's genuinely translucent rather than cutout —
+// currently just water (NonCubicMesher's Liquid shape). Identical to
+// CreateNonCubicPipeline in every way (same shaders, same MiscVertex layout,
+// same pipelineLayout, same alpha blend factors, no backface culling) except
+// depth WRITE is off here: two overlapping translucent surfaces (looking
+// through one water surface at another, or at stained glass once that also
+// moves to this pass) need to actually blend, not have the nearer one win
+// the depth test outright the way the cutout pass's writes-on approach needs
+// for stairs/slabs — see CreateNonCubicPipeline's own comment for why THAT
+// pass writes depth. Depth TEST stays on, so this still draws correctly
+// behind opaque terrain/entities/cutout geometry; NonCubicPass::Record draws
+// this pass right after the cutout pass (and sorts its meshes back-to-front
+// by chunk) so translucency reads right at least at chunk granularity — see
+// its own comment for the per-chunk-only caveat that leaves.
+void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders)
+{
+    VkDevice dev = GetDevice();
+
+    VkShaderModule vertShaderModule = CreateShaderModule(shaders, "misc.vert");
+    VkShaderModule fragShaderModule = VK_NULL_HANDLE;
+    try
+    {
+        fragShaderModule = CreateShaderModule(shaders, "misc.frag");
+    }
+    catch (...)
+    {
+        vkDestroyShaderModule(dev, vertShaderModule, nullptr);
+        throw;
+    }
+
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShaderModule;
+    vertShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShaderModule;
+    fragShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+    auto bindingDescription = Volcano::MiscVertex::getBindingDescription();
+    auto attributeDescriptions = Volcano::MiscVertex::getAttributeDescriptions();
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+
+    VkPipelineDynamicStateCreateInfo dynamicStateInfo{};
+    dynamicStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicStateInfo.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicStateInfo.pDynamicStates = dynamicStates.data();
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE; // Same reasoning as CreateNonCubicPipeline's own comment.
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE; // The one difference from nonCubicPipeline — see this function's own comment.
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                          VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT |
+                                          VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicStateInfo;
+    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline — see CreateNonCubicPipeline's own comment.
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    VkResult translucentPipelineResult = vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &translucentPipeline);
+
+    vkDestroyShaderModule(dev, fragShaderModule, nullptr);
+    vkDestroyShaderModule(dev, vertShaderModule, nullptr);
+
+    if (translucentPipelineResult != VK_SUCCESS) {
+        translucentPipeline = VK_NULL_HANDLE;
+        throw std::runtime_error("Failed to create translucent graphics pipeline!");
+    }
+
+    Volcano::Log::Info("[INFO] Translucent graphics pipeline successfully initialized.");
+}
+
 void DestroyNonCubicPipeline()
 {
     if (nonCubicPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), nonCubicPipeline, nullptr);
     nonCubicPipeline = VK_NULL_HANDLE;
+}
+
+void DestroyTranslucentPipeline()
+{
+    if (translucentPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), translucentPipeline, nullptr);
+    translucentPipeline = VK_NULL_HANDLE;
 }
 
 // Create a buffer with VMA.
@@ -1031,10 +1186,11 @@ void Init(GlobalState* state)
     textureAllocInfo.pSetLayouts = &textureSetLayout;
     vkAllocateDescriptorSets(GetDevice(), &textureAllocInfo, &textureSet);
 
-    // Pipelines (terrain, non-cubic, entities, selection, ...) are no longer
-    // built here — each belongs to a RenderPass the engine creates right
-    // after this returns (see VulkanRenderEngine::Init), so a shader reload
-    // can rebuild them without touching the device/swapchain set up here.
+    // Pipelines (terrain, non-cubic, translucent, entities, selection, ...)
+    // are no longer built here — each belongs to a RenderPass the engine
+    // creates right after this returns (see VulkanRenderEngine::Init), so a
+    // shader reload can rebuild them without touching the device/swapchain
+    // set up here.
 
     // Create command pool and command buffers. Must happen before
     // EntityRenderer::Init() (EntityPass::Create): its UploadCubeMesh() uses
@@ -1217,6 +1373,7 @@ void Cleanup()
     // StopRendering destroys every pass) — these are idempotent, and only
     // matter if startup failed before the passes could be torn down.
     DestroyNonCubicPipeline();
+    DestroyTranslucentPipeline();
     DestroyGraphicsPipeline();
     vkDestroyCommandPool(device.device, commandPool, nullptr);
     vkDestroyRenderPass(device.device, renderPass, nullptr);

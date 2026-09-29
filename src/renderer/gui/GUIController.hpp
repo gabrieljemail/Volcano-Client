@@ -48,6 +48,11 @@ public:
     // the HUD, game inputs, and captured mouse cursor.
     static void CloseScreen();
     static bool IsScreenOpen() { return activeScreen != nullptr; }
+    static GUI::Screen* GetActiveScreen() { return activeScreen; }
+    // The screen Esc opens while in a world. Built by the caller (see
+    // screens/PauseScreen) since its buttons need the connection.
+    static void SetPauseScreen(GUI::Screen* screen) { pauseScreen = screen; }
+    static GUI::Screen* GetPauseScreen() { return pauseScreen; }
 
     // Chat input box — "T" (see VolcanoClient.cpp's "OpenChat" action)
     // raises it; Enter sends the typed text (via NetworkClient::

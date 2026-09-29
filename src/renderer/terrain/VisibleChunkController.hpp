@@ -3,29 +3,34 @@
 #define VOLCANO_VISIBLE_CHUNK_CONTROLLER_H
 
 #include <array>
+#include <unordered_map>
 #include <vector>
 #include <glm/glm.hpp>
 #include "../models/Mesh.hpp"
+#include "models/ChunkSection.hpp"
 
 namespace Volcano {
 
-// Frustum culling for chunk meshes. RenderThread hands this the current
-// view-projection matrix and state->renderList (already lock-held at that
-// point — see its call site) and gets back pointers to just the meshes
-// worth binding/drawing this frame.
+// Frustum culling for chunk section meshes. RenderThread hands this the
+// current view-projection matrix and state->renderList (already lock-held
+// at that point — see its call site) and gets back pointers to just the
+// meshes worth binding/drawing this frame.
 //
 // Each Mesh's AABB is derived from its modelMatrix translation column (the
-// chunk mesher places each chunk's world origin there, see
-// ChunkMesher::MeshChunk) plus the fixed CHUNK_SIZE_X/Y/Z extents — chunk
-// meshes are never scaled or rotated, so the rest of modelMatrix never
-// matters here.
+// chunk mesher places each section's own world origin there, see
+// ChunkMesher::MeshChunkSection) plus the fixed CHUNK_SIZE_X/SECTION_SIZE_Y/
+// CHUNK_SIZE_Z extents — chunk meshes are never scaled or rotated, so the
+// rest of modelMatrix never matters here. Every render-list entry is now
+// section-sized (not a whole 384-tall column), so this stays one flat
+// constant rather than a per-mesh field.
 class VisibleChunkController {
 public:
-    // Returns pointers into `meshes` for every mesh whose chunk-column AABB
+    // Returns pointers into `meshes` for every mesh whose section AABB
     // intersects the frustum described by `viewProj` (camera view * proj,
     // the same matrices the render engine uploads into CameraUBO — see FrameContext::viewProj).
     // `meshes` must outlive the returned vector.
-    static std::vector<const Mesh*> GetVisibleMeshes(const std::vector<Mesh>& meshes, const glm::mat4& viewProj);
+    static std::vector<const Mesh*> GetVisibleMeshes(
+        const std::unordered_map<SectionKey, Mesh, SectionKeyHash>& meshes, const glm::mat4& viewProj);
 
 private:
     // Plane equations ax+by+cz+d=0, stored as vec4(a,b,c,d) with the normal

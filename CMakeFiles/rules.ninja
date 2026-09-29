@@ -127,6 +127,15 @@ rule RERUN_CMAKE
 
 
 #############################################
+# Rule for re-checking globbed directories.
+
+rule VERIFY_GLOBS
+  command = C:\Apps\CMake\bin\cmake.exe -P "C:\Users\Gabriel Jemail\Projects\Volcano Client\CMakeFiles\VerifyGlobs.cmake"
+  description = Re-checking globbed directories...
+  generator = 1
+
+
+#############################################
 # Rule for cleaning all built files.
 
 rule CLEAN
