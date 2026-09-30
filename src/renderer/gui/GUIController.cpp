@@ -14,6 +14,9 @@
 #include "gui/models/GUIComponent.hpp"
 #include "gui/models/Button.hpp"
 #include "gui/models/Chat.hpp"
+#include "gui/models/NumberInput.hpp"
+#include "gui/models/OptionButton.hpp"
+#include "gui/models/Slider.hpp"
 #include "inventory/ItemRegistry.hpp"
 #include "TickLoop.hpp"
 #include "SystemInfo.hpp"
@@ -468,6 +471,12 @@ void GUIController::Update(float deltaTime)
     }
 }
 
+void GUIController::DiscardFrame()
+{
+    if (!initialized) return;
+    ImGui::EndFrame();
+}
+
 void GUIController::Render(VkCommandBuffer commandBuffer)
 {
     if (!initialized) return;
@@ -569,6 +578,40 @@ void GUIController::RenderComponent(GUI::GUIComponent* component)
             {
                 ImGui::SetNextItemWidth(240.0f);
                 ImGui::InputText(component->GetLabel().c_str(), buffer, component->GetTextBufferCapacity());
+            }
+            break;
+        }
+        case GUI::GUIComponentType::SLIDER: {
+            auto* slider = static_cast<GUI::Slider*>(component);
+            if (!slider->editing) slider->editValue = slider->GetValue();
+            std::string format = slider->GetLabel() + ": %d" + slider->GetSuffix();
+            ImGui::SetNextItemWidth(240.0f);
+            ImGui::SliderInt(("##" + slider->GetLabel()).c_str(), &slider->editValue,
+                slider->GetMin(), slider->GetMax(), format.c_str());
+            slider->editing = ImGui::IsItemActive();
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                slider->SetValue(slider->editValue);
+            }
+            break;
+        }
+        case GUI::GUIComponentType::NUMBER: {
+            auto* input = static_cast<GUI::NumberInput*>(component);
+            if (!input->editing) input->editValue = input->GetValue();
+            ImGui::SetNextItemWidth(240.0f);
+            ImGui::InputInt(input->GetLabel().c_str(), &input->editValue, 0, 0);
+            input->editing = ImGui::IsItemActive();
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                input->SetValue(std::clamp(input->editValue, input->GetMin(), input->GetMax()));
+            }
+            break;
+        }
+        case GUI::GUIComponentType::OPTION: {
+            auto* option = static_cast<GUI::OptionButton*>(component);
+            if (DrawStyledButton(option->GetDisplayText() + "##" + option->GetLabel(), ImVec2(240.0f, 0.0f)))
+            {
+                option->Click();
             }
             break;
         }
@@ -1244,7 +1287,7 @@ void GUIController::ApplyVolcanoTheme()
 // click/hover/active state; everything visible is drawn manually on top.
 bool GUIController::DrawStyledButton(const std::string& label, ImVec2 size)
 {
-    if (size.x <= 0.0f) size.x = ImGui::CalcTextSize(label.c_str()).x + 32.0f;
+    if (size.x <= 0.0f) size.x = ImGui::CalcTextSize(label.c_str(), nullptr, true).x + 32.0f;
     if (size.y <= 0.0f) size.y = ImGui::GetFrameHeight() + 8.0f;
 
     ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -1279,11 +1322,13 @@ bool GUIController::DrawStyledButton(const std::string& label, ImVec2 size)
     drawList->AddRectFilled(pos, rectMax, fill, rounding);
     drawList->AddRect(pos, rectMax, border, rounding, 0, 1.5f);
 
-    ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+    // Like ImGui's own widgets, anything after "##" is ID-only, not drawn.
+    const char* textEnd = label.c_str() + std::min(label.find("##"), label.size());
+    ImVec2 textSize = ImGui::CalcTextSize(label.c_str(), textEnd);
     ImVec2 textPos = ImVec2(
         pos.x + (size.x - textSize.x) * 0.5f,
         pos.y + (size.y - textSize.y) * 0.5f);
-    drawList->AddText(textPos, IM_COL32(235, 248, 255, 255), label.c_str());
+    drawList->AddText(textPos, IM_COL32(235, 248, 255, 255), label.c_str(), textEnd);
 
     return clicked;
 }

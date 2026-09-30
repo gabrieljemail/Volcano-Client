@@ -25,6 +25,8 @@ public:
     static void NewFrame();
     static void Update(float deltaTime);
     static void Render(VkCommandBuffer commandBuffer);
+    // Ends the current ImGui frame without drawing (for a skipped frame).
+    static void DiscardFrame();
 
     static float GetFPS() { return fps; }
     static float GetFrameTime() { return frameTime; }

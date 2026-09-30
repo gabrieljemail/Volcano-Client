@@ -110,6 +110,9 @@ void RenderThread::PollInputs()
     // here, immediately before this frame's input is read below, keeps the
     // latency-minimizing order intact: capture as late as possible,
     // immediately before the frame that uses it.
+    // Raw mouse is drained first, in one batch, before the message loop
+    // would otherwise dispatch it one WM_INPUT at a time.
+    state->input->PollRawMouse();
     glfwPollEvents();
 
     // Bind the close button (and Alt+F4).
@@ -223,7 +226,9 @@ void RenderThread::PollInputs()
         // there's exactly one sensitivity knob, not two multiplied together.
         float dx = state->input->GetAxis("Camera.X");
         float dy = state->input->GetAxis("Camera.Y");
-        state->player->camera.ApplyMouseDelta(dx, dy, 1.0f);
+        float sensitivity = static_cast<float>(
+            std::get<uint32_t>(state->config->Get("Controls.Mouse.Sensitivity", uint32_t{100}))) / 100.0f;
+        state->player->camera.ApplyMouseDelta(dx, dy, sensitivity);
     }
 
     // Mainhand/offhand interaction (attack; block breaking/placing once
@@ -266,13 +271,28 @@ void RenderThread::DrawFrame()
     {
         engine->SubmitFrame(BuildSceneView());
     }
+    else
+    {
+        // Close the ImGui frame NewFrame opened, or the next one asserts.
+        GUIController::DiscardFrame();
+    }
 
     auto workEnd = chrono::steady_clock::now();
 
     // Schedule the next frame.
     double frameWorkTime = std::chrono::duration<double, std::milli>(workEnd - workStart).count();
     averageWorkTime = (averageWorkTime * 0.9) + (frameWorkTime * 0.1);
+    // Re-read each frame so the Max FPS setting applies live.
+    uint16_t targetFPS = state->targetFPS;
+    targetFrameTime = 1000.0 / static_cast<double>(targetFPS > 0 ? targetFPS : 60);
     nextFrameTarget += std::chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
+
+    // Fell more than a frame behind (a hitch, or the limit was just raised):
+    // resync instead of rushing frames out to catch up.
+    if (nextFrameTarget < workEnd)
+    {
+        nextFrameTarget = workEnd + std::chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
+    }
 }
 
 namespace {

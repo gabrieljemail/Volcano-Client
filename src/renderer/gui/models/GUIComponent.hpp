@@ -13,7 +13,9 @@ enum GUIComponentType {
     BUTTON,
     INPUT,
     SLIDER,
-    LIST
+    LIST,
+    NUMBER,
+    OPTION
 };
 
 class GUIComponent {

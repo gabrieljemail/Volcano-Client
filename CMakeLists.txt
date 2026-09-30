@@ -98,6 +98,15 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
     "C:/Apps/Libraries/ImGui/backends"
 )
 
+# --- PLATFORM LIBRARIES (src/platform) ---
+# DbgHelp symbolizes crash stack traces on Windows; -rdynamic exports symbol
+# names so backtrace_symbols can on Linux.
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Dbghelp)
+elseif(UNIX)
+    target_link_options(${PROJECT_NAME} PRIVATE -rdynamic)
+endif()
+
 # --- MANUAL LINK LIBRARIES ---
 target_link_libraries(${PROJECT_NAME} PRIVATE
     "C:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib"

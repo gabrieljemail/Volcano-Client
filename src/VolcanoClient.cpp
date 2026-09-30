@@ -5,6 +5,7 @@
 #include <chrono>
 #include <stop_token>
 #include <GLFW/glfw3.h>
+#include "CrashReporter.hpp"
 #include "GlobalState.hpp"
 #include "InputHandler.hpp"
 #include "Logger.hpp"
@@ -132,8 +133,11 @@ void GenerateChunks(Volcano::GlobalState& state, const Volcano::TextureManager& 
     Volcano::Log::Info("Generated " + std::to_string(state.renderList.size()) + " chunk section meshes");
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    Volcano::CrashReporter::Install();
+    if (Volcano::CrashReporter::HandleReportMode(argc, argv)) return 0;
+
     // Let's keep this just for fun.
     Volcano::Log::Info("Hello, World!");
 
@@ -176,6 +180,7 @@ int main()
     // Input handler - must be created before render thread starts
     Volcano::InputHandler input(state.window);
     state.input = &input;
+    if (std::get<bool>(state.config->Get("Controls.Mouse.RawInput", true))) input.EnableRawMouse();
 
     // Register camera inputs. Sensitivity (degrees per pixel of mouse motion)
     // is the ONLY scaling applied to mouse look — RenderThread::PollInputs
@@ -401,7 +406,7 @@ int main()
     // (its Singleplayer/Multiplayer buttons open them directly), so their
     // own Back buttons (added right after, below) can close the loop back
     // to it instead of each other.
-    Volcano::GUI::Screen* settingsScreen = Volcano::GUI::CreateSettingsScreen();
+    Volcano::GUI::Screen* settingsScreen = Volcano::GUI::CreateSettingsScreen(&state);
     Volcano::GUI::Screen* mainMenuScreen =
         Volcano::GUI::CreateMainMenuScreen(&state, singleplayerScreen, connectScreen, settingsScreen);
 

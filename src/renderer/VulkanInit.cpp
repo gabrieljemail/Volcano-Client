@@ -18,6 +18,7 @@
 #include "terrain/ChunkMesher.hpp"
 #include "misc/MiscVertex.hpp"
 #include "misc/NonCubicMesher.hpp"
+#include "FullscreenExclusive.hpp"
 
 using namespace std;
 
@@ -691,7 +692,7 @@ void DestroyTranslucentPipeline()
     translucentPipeline = VK_NULL_HANDLE;
 }
 
-// Create a buffer with VMA.
+// Create a buffer with VMA. The caller owns it and must vmaDestroyBuffer it.
 AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA)
 {
     VkBufferCreateInfo bufferInfo{};
@@ -705,7 +706,6 @@ AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool i
 
     AllocatedBuffer result{};
     vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &result.buffer, &result.allocation, &result.info);
-    allocatedBuffers.push_back(result);
     return result;
 }
 
@@ -1203,6 +1203,7 @@ void Init(GlobalState* state)
     // the selected device's own true supported version, independent of
     // what we request here.
     vkb::InstanceBuilder instanceBuilder(vkGetInstanceProcAddr);
+    FullscreenExclusive::ConfigureInstance(instanceBuilder);
     auto instanceReturn = instanceBuilder
         .set_app_name(APP_NAME)
         .set_app_version(APP_VERSION)
@@ -1312,6 +1313,7 @@ void Init(GlobalState* state)
         return;
     }
     physicalDevice = physDeviceSelectorReturn.value();
+    FullscreenExclusive::ConfigureDevice(physicalDevice);
     cout << "[INFO] Found Vulkan GPU: " << physicalDevice.name << endl;
     cout << "[INFO] Vulkan API version: " << physicalDevice.properties.apiVersion << endl;
     g_globalState->systemInfo.DetectGPU(physicalDevice.properties.deviceName,
@@ -1344,6 +1346,7 @@ void Init(GlobalState* state)
     swapchainBuilder.set_desired_extent(windowWidth, windowHeight);
     swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
     swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
+    FullscreenExclusive::ConfigureSwapchain(swapchainBuilder, window, g_windowMode == WindowMode::ExclusiveFullscreen);
     auto swapchainBuilderReturn = swapchainBuilder.build();
 
     if (!swapchainBuilderReturn)
@@ -1355,6 +1358,7 @@ void Init(GlobalState* state)
         return;
     }
     swapchain = swapchainBuilderReturn.value();
+    FullscreenExclusive::Acquire(device.device, swapchain.swapchain);
     // Records what vk-bootstrap actually granted, not just what
     // DesiredPresentMode() asked for — see GlobalState::presentMode's own
     // comment for why those can differ.
@@ -1614,21 +1618,37 @@ void RecreateSwapchain(int width, int height)
     DestroyHiZResources(); // Recreated below at the new resolution, alongside CreateDepthResources().
 
     vkb::Swapchain oldSwapchain = swapchain;
+    FullscreenExclusive::Release(device.device, oldSwapchain.swapchain);
 
-    vkb::SwapchainBuilder swapchainBuilder{device, surface};
-    swapchainBuilder.set_desired_extent(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
-    swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
-    swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
-    swapchainBuilder.set_old_swapchain(oldSwapchain);
-    auto swapchainBuilderReturn = swapchainBuilder.build();
+    auto buildSwapchain = [&](bool exclusive, const vkb::Swapchain* previous)
+    {
+        vkb::SwapchainBuilder swapchainBuilder{device, surface};
+        swapchainBuilder.set_desired_extent(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+        swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
+        swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
+        if (previous) swapchainBuilder.set_old_swapchain(*previous);
+        FullscreenExclusive::ConfigureSwapchain(swapchainBuilder, window, exclusive);
+        return swapchainBuilder.build();
+    };
 
+    auto swapchainBuilderReturn = buildSwapchain(g_windowMode == WindowMode::ExclusiveFullscreen, &oldSwapchain);
+    // A failed create still retires the old swapchain, so it can't be reused.
     vkb::destroy_swapchain(oldSwapchain);
 
     if (!swapchainBuilderReturn)
     {
-        throw std::runtime_error("[ERROR] Failed to recreate swapchain: " + swapchainBuilderReturn.error().message());
+        Log::Error("[ERROR] Swapchain recreation failed (" + swapchainBuilderReturn.error().message()
+            + ", VkResult " + std::to_string(static_cast<int>(swapchainBuilderReturn.vk_result()))
+            + ") — retrying without exclusive fullscreen.");
+        swapchainBuilderReturn = buildSwapchain(false, nullptr);
+    }
+    if (!swapchainBuilderReturn)
+    {
+        throw std::runtime_error("Failed to recreate the swapchain: " + swapchainBuilderReturn.error().message()
+            + " (VkResult " + std::to_string(static_cast<int>(swapchainBuilderReturn.vk_result())) + ")");
     }
     swapchain = swapchainBuilderReturn.value();
+    FullscreenExclusive::Acquire(device.device, swapchain.swapchain);
     swapchainExtent = swapchain.extent;
     // See the Init() call site's own comment on this same line.
     g_globalState->presentMode = static_cast<uint8_t>(swapchain.present_mode);
@@ -1651,6 +1671,8 @@ struct AppliedWindowSettings {
     WindowMode mode = WindowMode::Windowed;
     uint32_t width = 0, height = 0;                        // Window.Width/Height (windowed size)
     uint32_t fsWidth = 0, fsHeight = 0, fsRefreshRate = 0; // Window.FullscreenMode.*
+    bool vsync = true;                                     // Graphics.VSync
+    uint32_t bufferCount = 0;                              // Graphics.BufferCount
 };
 static AppliedWindowSettings g_appliedWindow;
 static uint64_t g_appliedConfigVersion = UINT64_MAX;
@@ -1727,8 +1749,13 @@ static void SetWindowMode(WindowMode target, uint32_t fsWidth, uint32_t fsHeight
         }
     }
 
-    // The framebuffer-size callback flags the swapchain for recreation.
     g_windowMode = target;
+
+    // Force a swapchain rebuild even if the size didn't change, so the
+    // exclusive-fullscreen request (see FullscreenExclusive) follows the mode.
+    int framebufferWidth, framebufferHeight;
+    glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+    FramebufferSizeCallback(window, framebufferWidth, framebufferHeight);
 }
 
 // Reads Window.Mode (0 windowed, 1 borderless, 2 fullscreen), Window.Width/
@@ -1754,6 +1781,17 @@ void ApplyWindowSettings()
     wanted.fsWidth = std::get<uint32_t>(config->Get("Window.FullscreenMode.Width", uint32_t{0}));
     wanted.fsHeight = std::get<uint32_t>(config->Get("Window.FullscreenMode.Height", uint32_t{0}));
     wanted.fsRefreshRate = std::get<uint32_t>(config->Get("Window.FullscreenMode.RefreshRate", uint32_t{0}));
+    wanted.vsync = std::get<bool>(config->Get("Graphics.VSync", true));
+    wanted.bufferCount = DesiredBufferCount();
+
+    // Present mode and image count are baked into the swapchain: rebuild it.
+    bool firstApply = g_appliedWindow.bufferCount == 0;
+    if (!firstApply && (wanted.vsync != g_appliedWindow.vsync || wanted.bufferCount != g_appliedWindow.bufferCount))
+    {
+        int framebufferWidth, framebufferHeight;
+        glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+        FramebufferSizeCallback(window, framebufferWidth, framebufferHeight);
+    }
 
     // A changed windowed size applies right away if windowed, otherwise it's
     // just what Windowed restores to later.
@@ -1835,20 +1873,20 @@ void Cleanup()
     DestroyHiZPipelines();
     DestroyHiZResources();
 
-    // The camera UBOs (in allocatedBuffers, below) were left persistently
-    // mapped by Init() — vmaDestroyBuffer asserts if its allocation still
-    // has an outstanding map, so unmap them first.
-    for (int i = 0; i < 3; i++) {
-        if (cameraUBOsMapped[i] != nullptr) {
+    // Camera UBOs stay mapped from Init(); unmap before destroying.
+    for (int i = 0; i < 3; i++)
+    {
+        if (cameraUBOsMapped[i] != nullptr)
+        {
             vmaUnmapMemory(vmaAllocator, cameraUBOs[i].allocation);
             cameraUBOsMapped[i] = nullptr;
         }
+        if (cameraUBOs[i].buffer != VK_NULL_HANDLE)
+        {
+            vmaDestroyBuffer(vmaAllocator, cameraUBOs[i].buffer, cameraUBOs[i].allocation);
+            cameraUBOs[i] = AllocatedBuffer{};
+        }
     }
-    for (auto& buf : allocatedBuffers)
-    {
-        vmaDestroyBuffer(vmaAllocator, buf.buffer, buf.allocation);
-    }
-    allocatedBuffers.clear();
 
     // EntityRenderer/SelectionRenderer are shut down by their passes
     // (EntityPass/SelectionPass::Destroy), not here.

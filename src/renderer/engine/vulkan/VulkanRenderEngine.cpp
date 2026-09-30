@@ -132,7 +132,7 @@ bool VulkanRenderEngine::BeginFrame()
     // toggle that outran the framebuffer-size callback, or a minimized
     // window). Skip this frame; RecreateSwapchain runs at the top of the
     // next BeginFrame now that a resize is flagged.
-    if (result == VK_ERROR_OUT_OF_DATE_KHR)
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT)
     {
         state->framebufferResized = true;
         return false;
@@ -301,7 +301,9 @@ void VulkanRenderEngine::PresentImage()
     presentInfo.pImageIndices = &imageIndex;
 
     VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+    // Losing exclusive fullscreen (alt-tab, etc.) just means rebuilding.
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR
+        || result == VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT)
     {
         state->framebufferResized = true;
     }

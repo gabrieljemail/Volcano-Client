@@ -73,7 +73,6 @@ inline VkDescriptorPool descriptorPool;
 inline VkDescriptorSet cameraSets[3];
 inline AllocatedBuffer cameraUBOs[3];
 inline void* cameraUBOsMapped[3];
-inline std::vector<AllocatedBuffer> allocatedBuffers;
 inline std::vector<AllocatedImage> allocatedImages;
 inline VkDescriptorSetLayout textureSetLayout;
 inline VkDescriptorSet textureSet;

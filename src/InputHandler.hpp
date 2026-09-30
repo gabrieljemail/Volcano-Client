@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <bitset>
 #include <GLFW/glfw3.h>
+#include "platform/OS.hpp"
 
 namespace Volcano {
 
@@ -103,6 +104,27 @@ public:
         UpdateAxes();
     }
 
+    // Controls.Mouse.RawInput: raw (unaccelerated) mouse deltas for camera
+    // look. Buffered per frame via Platform::OS where supported, else GLFW's
+    // own raw motion. Call once after the window exists.
+    void EnableRawMouse()
+    {
+        if (Platform::OS::EnableBufferedRawMouse(window))
+        {
+            bufferedRawMouse = true;
+        }
+        else if (glfwRawMouseMotionSupported())
+        {
+            glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+        }
+    }
+
+    // Drains buffered raw motion — call right before glfwPollEvents().
+    void PollRawMouse()
+    {
+        if (bufferedRawMouse) Platform::OS::ReadBufferedRawMouse(rawMouseDeltaX, rawMouseDeltaY);
+    }
+
     // The render loop's explicit "this frame is over" marker: clears the
     // press/release edge bits (so an edge is only ever visible for the one
     // frame it happened in) and the accumulated mouse delta (so the next
@@ -115,6 +137,8 @@ public:
         state.keysReleasedThisFrame.reset();
         mouseDeltaX = 0.0;
         mouseDeltaY = 0.0;
+        rawMouseDeltaX = 0.0;
+        rawMouseDeltaY = 0.0;
     }
 
     void RegisterAction(const std::string& name, InputActionTriggerType triggerType,
@@ -195,6 +219,11 @@ private:
     double mouseDeltaX = 0.0, mouseDeltaY = 0.0;
     double lastMouseX = 0.0, lastMouseY = 0.0;
     bool firstMouseEvent = true;
+
+    // Buffered raw motion (see EnableRawMouse); replaces the cursor delta
+    // for the mouse axes when active.
+    bool bufferedRawMouse = false;
+    double rawMouseDeltaX = 0.0, rawMouseDeltaY = 0.0;
 
     // Fired by glfwPollEvents() (called from PollInputs(), on this same
     // thread) — writes straight into `state` with no locking needed now
@@ -282,10 +311,10 @@ private:
                     break;
                 }
                 case AxisSourceType::MouseX:
-                    axis.value = static_cast<float>(mouseDeltaX) * -axis.sensitivity;
+                    axis.value = static_cast<float>(bufferedRawMouse ? rawMouseDeltaX : mouseDeltaX) * -axis.sensitivity;
                     break;
                 case AxisSourceType::MouseY:
-                    axis.value = static_cast<float>(mouseDeltaY) * -axis.sensitivity;
+                    axis.value = static_cast<float>(bufferedRawMouse ? rawMouseDeltaY : mouseDeltaY) * -axis.sensitivity;
                     break;
             }
         }
