@@ -420,6 +420,9 @@ void InteractionManager::BeginMining(const TargetedBlock& target)
 
     if (instabuild || block.breakTicks == 0)
     {
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastInstantBreakTime < REPEAT_ACTION_DELAY) return;
+        lastInstantBreakTime = now;
         BreakBlockEvent{ target.position, target.face }.Dispatch(state);
         return;
     }
@@ -534,6 +537,31 @@ AttackType InteractionManager::ClassifyAttack(float strength, const TickLoop::Mo
 
 void InteractionManager::SecondaryTriggerStart()
 {
+    DispatchUse();
+}
+
+void InteractionManager::SecondaryTriggerHold()
+{
+    // Continues whatever SecondaryTriggerStart began (keep eating, keep
+    // charging a bow, keep blocking with a shield) — the server times a
+    // continuous use off the single UseItem packet Start already sent, so
+    // that case needs no packet here. Placing/using against a block is
+    // different: vanilla repeats it for as long as the button stays down
+    // (bridging, filling a wall, ...), which needs an explicit repeat here,
+    // rate-limited since nothing else paces it — see DispatchUse's own
+    // comment. Entity interact and bare use-item don't repeat on hold in
+    // vanilla either, so both are left alone the same as the continuous
+    // case above.
+    if (!targetedBlock.has_value()) return;
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - lastPlaceTime < REPEAT_ACTION_DELAY) return;
+    lastPlaceTime = now;
+    DispatchUse();
+}
+
+void InteractionManager::DispatchUse()
+{
     // Simplification: there's no per-item "is this placeable/edible/a
     // tool/..." behavior classification yet (see ItemRegistry), so this
     // always tries block-place when a block is targeted and falls back to
@@ -576,14 +604,6 @@ void InteractionManager::SecondaryTriggerStart()
         float pitch = state->player->camera.GetPitch();
         UseItemEvent{ hand, yaw, pitch }.Dispatch(state);
     }
-}
-
-void InteractionManager::SecondaryTriggerHold()
-{
-    // Continues whatever SecondaryTriggerStart began (keep eating, keep
-    // charging a bow, keep blocking with a shield). Unlike Start, this
-    // needs no packet of its own — the server times a continuous use off
-    // the single UseItem packet Start already sent; nothing repeats it.
 }
 
 void InteractionManager::SecondaryTriggerRelease()

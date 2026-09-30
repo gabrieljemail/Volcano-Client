@@ -14,6 +14,7 @@
 #include "../../VulkanInit.hpp"
 #include "../../TextureManager.hpp"
 #include "../../models/CameraUBO.hpp"
+#include "../../models/SlabBuffer.hpp"
 #include "../../gui/GUIController.hpp"
 #include "../../../GlobalState.hpp"
 #include "../../../Logger.hpp"
@@ -31,6 +32,7 @@ void VulkanRenderEngine::Init()
 
     RegisterBuiltInPasses();
     CreatePasses();
+    hizBuildPass.Create(shaders);
 
     Log::Info(std::string("[INFO] Render engine initialized (") + GetBackendName() + ", "
         + std::to_string(passes.size()) + " passes).");
@@ -84,6 +86,7 @@ void VulkanRenderEngine::StopRendering()
         GUIController::Shutdown();
         guiAttached = false;
     }
+    hizBuildPass.Destroy();
     DestroyPasses();
 }
 
@@ -152,6 +155,14 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
 {
     VkCommandBuffer cmd = commandBuffers[currentFrame];
 
+    // This slot's fence was waited in BeginFrame, so its Hi-Z readback from
+    // a couple of frames ago is done — publish it before the chunk passes
+    // cull against it.
+    hizBuildPass.BeginFrame(currentFrame);
+    // Past this slot's fence wait: lets SlabBuffer reuse regions freed
+    // enough frames ago (see SlabBuffer::FREE_DELAY_FRAMES).
+    renderFrameCounter++;
+
     BeginCommandBuffer(cmd);
     UploadCamera(scene);
     BeginMainPass(cmd, scene);
@@ -167,6 +178,10 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
     RecordPasses(frame);
 
     EndMainPass(cmd);
+    // Outside the render pass instance now (compute can't run inside one) —
+    // see HiZBuildPass's own comment on why it isn't a normal RenderPass.
+    hizBuildPass.Record(cmd, currentFrame, frame.viewProj);
+    vkEndCommandBuffer(cmd);
     SubmitCommandBuffer(cmd);
     PresentImage();
     NotifyFramePresented();
@@ -187,6 +202,11 @@ void VulkanRenderEngine::WaitIdle()
 void VulkanRenderEngine::ToggleWindowMode()
 {
     ::ToggleWindowMode();
+}
+
+void VulkanRenderEngine::ApplyWindowSettings()
+{
+    ::ApplyWindowSettings();
 }
 
 void VulkanRenderEngine::BeginCommandBuffer(VkCommandBuffer cmd)
@@ -239,7 +259,8 @@ void VulkanRenderEngine::BeginMainPass(VkCommandBuffer cmd, const SceneView& sce
 void VulkanRenderEngine::EndMainPass(VkCommandBuffer cmd)
 {
     vkCmdEndRenderPass(cmd);
-    vkEndCommandBuffer(cmd);
+    // vkEndCommandBuffer is NOT here: SubmitFrame still records HiZBuildPass
+    // after the render pass ends — see its own vkEndCommandBuffer call.
 }
 
 void VulkanRenderEngine::SubmitCommandBuffer(VkCommandBuffer cmd)

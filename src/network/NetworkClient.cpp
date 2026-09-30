@@ -811,9 +811,12 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             // sibling comment elsewhere on reading only what's needed): a
             // server-dictated facing on spawn is a real gap, but a
             // NetDiag-null state->player is guarded the same way TickThread
-            // guards it, so this stays 0 there rather than crash.
-            float yaw = state->player ? state->player->camera.GetYaw() : 0.0f;
-            float pitch = state->player ? state->player->camera.GetPitch() : 0.0f;
+            // guards it, so this stays 0 there rather than crash. Negated
+            // the same way TickThread negates its own per-tick report — the
+            // camera's yaw/pitch turn the opposite way from Minecraft's own
+            // convention (see AngleByteToRadians).
+            float yaw = state->player ? std::remainder(-state->player->camera.GetYaw(), 360.0f) : 0.0f;
+            float pitch = state->player ? -state->player->camera.GetPitch() : 0.0f;
             SendPlayerPosition(glm::vec3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)), yaw, pitch, false);
 
             {
@@ -837,6 +840,27 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 state->networkInbox.chunks.push(std::move(chunk));
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse chunk data packet: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::UnloadChunk) {
+            try {
+                int32_t chunkZ = reader.ReadInt();
+                int32_t chunkX = reader.ReadInt();
+
+                std::lock_guard lock(state->networkInbox.mutex);
+                // Drop any not-yet-meshed copy of this chunk still queued,
+                // so it can't be inserted after the unload is processed.
+                auto& queue = state->networkInbox.chunks;
+                for (size_t i = 0, n = queue.size(); i < n; i++) {
+                    std::unique_ptr<Chunk> queued = std::move(queue.front());
+                    queue.pop();
+                    if (queued->getX() != chunkX || queued->getZ() != chunkZ) queue.push(std::move(queued));
+                }
+                state->networkInbox.pendingUnloads.emplace_back(chunkX, chunkZ);
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse unload chunk packet: ") + e.what());
             }
             continue;
         }

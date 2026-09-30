@@ -2,7 +2,7 @@
 #ifndef VOLCANO_SELECTION_RENDERER_H
 #define VOLCANO_SELECTION_RENDERER_H
 
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 #include "../../GlobalState.hpp"
 #include "../engine/ShaderLibrary.hpp"
 

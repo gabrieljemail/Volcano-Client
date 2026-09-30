@@ -1,0 +1,39 @@
+#version 450
+
+// One mip-to-mip step of the Hi-Z pyramid: each dst texel is the MAX
+// (farthest) of the up-to-2x2 src texels below it. Max, not average or min,
+// because this engine's depth is non-reversed (VK_COMPARE_OP_LESS, 0=near,
+// 1=far — see VulkanInit.cpp) and a conservative occluder test needs every
+// Hi-Z texel to report the farthest depth actually written anywhere in its
+// footprint: an object is only safely cullable if it's farther than even
+// the most distant thing already drawn there.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, r32f) uniform readonly image2D srcMip;
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D dstMip;
+
+void main() {
+    ivec2 dstCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dstSize = imageSize(dstMip);
+    if (dstCoord.x >= dstSize.x || dstCoord.y >= dstSize.y) return;
+
+    ivec2 srcSize = imageSize(srcMip);
+    ivec2 srcStart = dstCoord * 2;
+    // On an odd-sized src, dst = floor(src/2) leaves the src's last
+    // row/column uncovered by a plain 2x2 — the last dst texel on that edge
+    // absorbs it (a 3-wide footprint), or the pyramid would under-report
+    // depth there and cull things only visible along the screen's edge.
+    ivec2 srcEnd = min(srcStart + ivec2(1), srcSize - ivec2(1));
+    if (dstCoord.x == dstSize.x - 1) srcEnd.x = srcSize.x - 1;
+    if (dstCoord.y == dstSize.y - 1) srcEnd.y = srcSize.y - 1;
+
+    float maxDepth = 0.0;
+    for (int y = srcStart.y; y <= srcEnd.y; y++) {
+        for (int x = srcStart.x; x <= srcEnd.x; x++) {
+            maxDepth = max(maxDepth, imageLoad(srcMip, ivec2(x, y)).r);
+        }
+    }
+
+    imageStore(dstMip, dstCoord, vec4(maxDepth, 0.0, 0.0, 0.0));
+}

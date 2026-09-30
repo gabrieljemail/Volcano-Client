@@ -2,6 +2,7 @@
 #ifndef VOLCANO_CONFIG_H
 #define VOLCANO_CONFIG_H
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <variant>
@@ -44,6 +45,11 @@ public:
     // Writes value to key immediately (e.g. from a SettingsUpdateEvent).
     void Set(const std::string& key, const ConfigValue& value);
 
+    // Bumped by every Set(). Code that applies settings with side effects
+    // (e.g. the window mode — see ApplyWindowSettings in VulkanInit) polls
+    // this and only re-reads its keys when it changes.
+    uint64_t GetVersion() const { return version.load(); }
+
     // Reads a JSON array of strings at key (e.g. Network.LocalServerDirs) —
     // not expressible through Get()/ConfigValue, which only covers scalar
     // settings. Missing key, non-array, or non-string entries are simply
@@ -67,6 +73,7 @@ private:
 
     nlohmann::json data = nlohmann::json::object();
     std::string path;
+    std::atomic<uint64_t> version{0};
 
     static inline Config* activeInstance = nullptr;
 };

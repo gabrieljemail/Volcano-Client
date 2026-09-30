@@ -3,6 +3,8 @@
 
 #ifdef _WIN32
 #include <intrin.h>
+#include <windows.h>
+#include <psapi.h>
 #endif
 
 namespace Volcano {
@@ -60,6 +62,21 @@ void SystemInfo::DetectGPU(const char* deviceName, uint32_t vendorID, uint32_t a
         case 0x1010: gpuDriverVendor = "Imagination Technologies"; break;
         default: gpuDriverVendor = "Unknown Vendor"; break;
     }
+}
+
+uint64_t GetProcessMemoryUsageBytes()
+{
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS_EX pmc{};
+    pmc.cb = sizeof(pmc);
+    if (K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc)))
+    {
+        return static_cast<uint64_t>(pmc.WorkingSetSize);
+    }
+    return 0;
+#else
+    return 0;
+#endif
 }
 
 } // namespace Volcano

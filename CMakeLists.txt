@@ -48,6 +48,19 @@ list(APPEND SOURCES
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# Precompiled headers: vulkan.h and glm.hpp are both large, near-universally
+# included across src/renderer, and stable (no per-TU #define gates the way
+# vk_mem_alloc.h/stb_image.h need VMA_IMPLEMENTATION/STB_IMAGE_IMPLEMENTATION
+# in exactly one .cpp — those two are deliberately left out of this list,
+# since precompiling them would bake in whichever #define state happened to
+# be active first and silently break the single file that needs the other
+# state). Cuts redundant parsing across ~150 translation units, which
+# matters more than usual on this machine's tight RAM budget.
+target_precompile_headers(${PROJECT_NAME} PRIVATE
+    <vulkan/vulkan.h>
+    <glm/glm.hpp>
+)
+
 # Third-party sources compiled directly into this target: silence their
 # warnings too, since -Wall -Wextra below applies per translation unit
 # and SYSTEM include dirs don't cover a file's own warnings.

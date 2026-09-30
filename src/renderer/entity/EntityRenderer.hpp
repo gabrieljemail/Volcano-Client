@@ -3,7 +3,7 @@
 #define ENTITY_RENDERER_H
 
 #include <cstdint>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "../../GlobalState.hpp"
 #include "../engine/ShaderLibrary.hpp"

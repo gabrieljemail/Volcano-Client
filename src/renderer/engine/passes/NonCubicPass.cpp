@@ -53,7 +53,7 @@ void NonCubicPass::Record(FrameContext& frame)
         for (const Mesh* mesh : meshes)
         {
             if (mesh->vertexCount == 0) continue;
-            DrawMesh(cmd, *mesh);
+            DrawMesh(cmd, *mesh, frame.state);
         }
     } // nonCubicRenderListMutex released here — the translucent pass below
       // only needs translucentRenderListMutex, and holding both at once
@@ -85,7 +85,7 @@ void NonCubicPass::Record(FrameContext& frame)
     for (const Mesh* mesh : translucentMeshes)
     {
         if (mesh->vertexCount == 0) continue;
-        DrawMesh(cmd, *mesh);
+        DrawMesh(cmd, *mesh, frame.state);
     }
 }
 

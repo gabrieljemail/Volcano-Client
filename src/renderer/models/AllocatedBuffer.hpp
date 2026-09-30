@@ -2,7 +2,7 @@
 #ifndef ALLOCATED_BUFFER_H
 #define ALLOCATED_BUFFER_H
 
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 
 namespace Volcano {

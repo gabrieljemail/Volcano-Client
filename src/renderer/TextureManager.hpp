@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 #include "VulkanInit.hpp"
 
 namespace Volcano {

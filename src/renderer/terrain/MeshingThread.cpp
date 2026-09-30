@@ -37,11 +37,18 @@ SectionMeshTiming MeshAndUpsertSection(GlobalState* state, const TextureManager*
     // otherwise a zero-count Mesh would sit in the render list forever
     // (harmless to draw, but never cleaned up, and would look like a stale
     // slab allocation if anyone went looking).
+    //
+    // Whatever mesh this replaces or erases hands its slab regions back
+    // (SlabBuffer::Free delays actual reuse until no in-flight frame can
+    // still be drawing it) — without this every remesh leaked its old
+    // region and the slabs filled up from edits/light updates alone.
     auto upsert = [&](std::mutex& mutex, std::unordered_map<SectionKey, Mesh, SectionKeyHash>& list, const Mesh& m)
     {
         std::lock_guard<std::mutex> lock(mutex);
+        auto existing = list.find(key);
+        if (existing != list.end()) ReleaseMeshSlabs(existing->second);
         if (m.vertexCount > 0) list.insert_or_assign(key, m);
-        else list.erase(key);
+        else if (existing != list.end()) list.erase(existing);
     };
     upsert(state->renderListMutex, state->renderList, mesh);
     upsert(state->nonCubicRenderListMutex, state->nonCubicRenderList, nonCubicMeshes.cutout);
@@ -61,9 +68,18 @@ SectionMeshTiming MeshAndUpsertSection(GlobalState* state, const TextureManager*
 
 } // namespace
 
+void ReleaseMeshSlabs(const Mesh& mesh)
+{
+    if (!ChunkMesher::ReleaseMesh(mesh)) NonCubicMesher::ReleaseMesh(mesh);
+}
+
 MeshingThread::MeshingThread(GlobalState* stateIn, const TextureManager* textureManagerIn)
     : state(stateIn), textureManager(textureManagerIn)
-{}
+{
+    // GlobalState::ResetWorldState can't include the meshers itself (NetDiag
+    // builds GlobalState without them), so it calls through this hook.
+    releaseMeshSlabsHook = &ReleaseMeshSlabs;
+}
 
 MeshingThread::~MeshingThread() = default;
 
@@ -103,6 +119,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
         std::optional<SectionKey> dirtySection;
         std::optional<glm::vec3> spawnPosition;
         size_t queueDepth = 0; // Remaining chunk-load backlog after this pop — see the timing log below.
+        std::vector<std::pair<int, int>> pendingUnloads;
 
         {
             std::lock_guard<std::mutex> lock(state->networkInbox.mutex);
@@ -136,6 +153,12 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                 }
             }
 
+            while (!state->networkInbox.pendingUnloads.empty())
+            {
+                pendingUnloads.push_back(state->networkInbox.pendingUnloads.front());
+                state->networkInbox.pendingUnloads.pop_front();
+            }
+
             // Dirty sections (a local block edit, or a Block Update just
             // applied above) take priority over ordinary chunk-load
             // traffic, so an edit near the player doesn't sit behind a
@@ -157,6 +180,30 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                 spawnPosition = state->networkInbox.spawnPosition;
                 state->networkInbox.spawnPosition.reset();
             }
+        }
+
+        // Server-side unloads (walked out of render distance): drop the chunk
+        // from World and every section of it from the three render lists,
+        // handing their slab regions back. Done here, on the only thread
+        // that inserts chunks, so it's ordered against loads — see
+        // NetworkInbox::pendingUnloads.
+        for (const auto& [unloadX, unloadZ] : pendingUnloads)
+        {
+            state->world->RemoveChunk(unloadX, unloadZ);
+            auto dropSections = [&](std::mutex& mutex, std::unordered_map<SectionKey, Mesh, SectionKeyHash>& list)
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                for (int sectionY = 0; sectionY < SECTIONS_PER_CHUNK; sectionY++)
+                {
+                    auto it = list.find(SectionKey{ unloadX, unloadZ, sectionY });
+                    if (it == list.end()) continue;
+                    ReleaseMeshSlabs(it->second);
+                    list.erase(it);
+                }
+            };
+            dropSections(state->renderListMutex, state->renderList);
+            dropSections(state->nonCubicRenderListMutex, state->nonCubicRenderList);
+            dropSections(state->translucentRenderListMutex, state->translucentRenderList);
         }
 
         if (spawnPosition.has_value())

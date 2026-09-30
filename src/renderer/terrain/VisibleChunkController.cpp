@@ -1,6 +1,7 @@
 #include "VisibleChunkController.hpp"
 #include "models/Chunk.hpp"
 #include "models/ChunkSection.hpp"
+#include "OcclusionSnapshot.hpp"
 #include <cmath>
 
 namespace Volcano {
@@ -68,7 +69,19 @@ std::vector<const Mesh*> VisibleChunkController::GetVisibleMeshes(
         glm::vec3 sectionMin(mesh.modelMatrix[3]);
         glm::vec3 sectionMax = sectionMin + glm::vec3(CHUNK_SIZE_X, SECTION_SIZE_Y, CHUNK_SIZE_Z);
 
-        if (AabbIntersectsFrustum(sectionMin, sectionMax, frustum)) visible.push_back(&mesh);
+        if (!AabbIntersectsFrustum(sectionMin, sectionMax, frustum)) continue;
+
+        // Hi-Z occlusion: drop sections fully hidden behind nearer
+        // geometry, per the pyramid from a couple of frames ago — see
+        // OcclusionSnapshot's own comment on the lag and why it's safe.
+        occlusionSnapshot.tested++;
+        if (occlusionSnapshot.IsOccluded(sectionMin, sectionMax))
+        {
+            occlusionSnapshot.occluded++;
+            continue;
+        }
+
+        visible.push_back(&mesh);
     }
 
     return visible;

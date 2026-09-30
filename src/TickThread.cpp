@@ -5,6 +5,7 @@
 #include "network/PacketIds.hpp"
 #include "network/VarInt.hpp"
 #include <chrono>
+#include <cmath>
 
 namespace Volcano {
 
@@ -116,14 +117,20 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
                     // rather than against (0,0,0) and reports a bogus
                     // thousand-block "move" on its very first packet.
                     lastSentPosition = state->player->GetPosition();
-                    lastSentYaw = state->player->camera.GetYaw();
-                    lastSentPitch = state->player->camera.GetPitch();
+                    lastSentYaw = std::remainder(-state->player->camera.GetYaw(), 360.0f);
+                    lastSentPitch = -state->player->camera.GetPitch();
                     positionReminder = 0;
                 }
 
+                // The camera's yaw/pitch turn the opposite way from
+                // Minecraft's own convention (see NetworkClient.cpp's
+                // AngleByteToRadians — the same reason incoming entity yaw
+                // bytes get negated on the way in), so both are negated on
+                // the way out too. Yaw is wrapped to -180..180 since the
+                // camera's own value accumulates without bound.
                 glm::vec3 position = state->player->GetPosition();
-                float yaw = state->player->camera.GetYaw();
-                float pitch = state->player->camera.GetPitch();
+                float yaw = std::remainder(-state->player->camera.GetYaw(), 360.0f);
+                float pitch = -state->player->camera.GetPitch();
                 bool onGround = state->tickLoop->IsGrounded();
                 bool horizontalCollision = state->tickLoop->HasHorizontalCollision();
 

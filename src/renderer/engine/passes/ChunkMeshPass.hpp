@@ -7,6 +7,7 @@
 #include "../RenderPass.hpp"
 #include "../../VulkanInit.hpp"
 #include "../../models/Mesh.hpp"
+#include "../../../GlobalState.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -26,7 +27,7 @@ protected:
         vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
     }
 
-    void DrawMesh(VkCommandBuffer cmd, const Mesh& mesh) const
+    void DrawMesh(VkCommandBuffer cmd, const Mesh& mesh, GlobalState* state) const
     {
         VkDeviceSize offsets[] = {mesh.vertexOffset};
         vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer, offsets);
@@ -36,9 +37,11 @@ protected:
         {
             vkCmdBindIndexBuffer(cmd, mesh.indexBuffer, mesh.indexOffset, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
+            if (state) state->trianglesDrawn += mesh.indexCount / 3;
         } else
         {
             vkCmdDraw(cmd, mesh.vertexCount, 1, 0, 0);
+            if (state) state->trianglesDrawn += mesh.vertexCount / 3;
         }
     }
 };

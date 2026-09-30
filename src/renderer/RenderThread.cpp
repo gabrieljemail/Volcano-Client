@@ -146,10 +146,21 @@ void RenderThread::PollInputs()
     {
         state->renderEngine->ToggleWindowMode();
     }
+    // Picks up Window.* changes from a Settings screen (no-op otherwise).
+    state->renderEngine->ApplyWindowSettings();
 
     if (state->input->WasActivated("ToggleWireframe"))
     {
         wireframeMode = !wireframeMode;
+    }
+
+    // Controls.ToggleSprint: a Sprint press latches sprinting on/off instead
+    // of needing the key held. Read every frame, same as Graphics.Lighting
+    // below — this isn't hot enough to bother caching.
+    bool toggleSprint = std::get<bool>(state->config->Get("Controls.ToggleSprint", false));
+    if (toggleSprint && state->input->WasActivated("Sprint"))
+    {
+        sprintToggled = !sprintToggled;
     }
 
     // F9 rebuilds every render pass's pipelines from disk — picks up edited
@@ -232,7 +243,7 @@ void RenderThread::PollInputs()
         state->input->GetAxis("Move.Forward"),
         state->input->GetAxis("Move.Right"),
         state->input->IsActive("Sneak"),
-        state->input->IsActive("Sprint"),
+        toggleSprint ? sprintToggled : state->input->IsActive("Sprint"),
         inputAllowed && state->input->IsActive("JumpHold"));
     state->tickLoop->Tick();
 }

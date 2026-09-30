@@ -44,6 +44,13 @@ public:
         return chunks.emplace(key, std::move(chunk)).first->second;
     }
 
+    // Drops one chunk (server Unload Chunk). No-op if it isn't loaded.
+    void RemoveChunk(int chunkX, int chunkZ)
+    {
+        std::unique_lock lock(mutex);
+        chunks.erase(ChunkKey(chunkX, chunkZ));
+    }
+
     // Drops every chunk — used when returning to the connect screen after a
     // disconnect, so a fresh connection doesn't layer new chunks on top of
     // the previous session's leftover world.

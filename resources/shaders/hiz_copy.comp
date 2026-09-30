@@ -1,0 +1,20 @@
+#version 450
+
+// Mip 0 of the Hi-Z pyramid: a same-resolution copy of this frame's just-
+// finished depth buffer, read as plain float depth (texelFetch — no
+// filtering, so the sampler's own filter/wrap settings never matter here).
+// See VulkanInit.hpp's own comment on the pyramid for why this exists.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcDepth;
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D dstMip0;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(dstMip0);
+    if (coord.x >= size.x || coord.y >= size.y) return;
+
+    float depth = texelFetch(srcDepth, coord, 0).r;
+    imageStore(dstMip0, coord, vec4(depth, 0.0, 0.0, 0.0));
+}

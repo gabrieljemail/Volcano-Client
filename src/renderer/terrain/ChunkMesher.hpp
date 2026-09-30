@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include "../models/Mesh.hpp"
+#include "../models/SlabBuffer.hpp"
 #include "models/Chunk.hpp"
 #include "models/World.hpp"
 #include "../TextureManager.hpp"
@@ -35,6 +36,15 @@ public:
     // Releases the slab buffers. Must be called before the VMA allocator is
     // destroyed (e.g. from VulkanInit::Cleanup()).
     static void Shutdown();
+
+    // Hands a mesh's slab regions back (reused a few frames later — see
+    // SlabBuffer::Free). Returns false if the mesh wasn't from these slabs.
+    static bool ReleaseMesh(const Mesh& mesh);
+
+    // Combined used/capacity across the vertex and index slabs, for the
+    // debug HUD (GUIController). {0, 0} before the first chunk mesh —
+    // slabsInitialized lazily, on first use.
+    static SlabStats GetSlabStats();
 };
 
 } // namespace Volcano

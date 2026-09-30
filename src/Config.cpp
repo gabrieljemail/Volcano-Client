@@ -140,6 +140,7 @@ void Config::Set(const std::string& key, const ConfigValue& value)
 {
     Assign(data, key, ToJson(value));
     Save();
+    version++;
 }
 
 std::string Config::ResolvePath(const std::string& relativePath) const

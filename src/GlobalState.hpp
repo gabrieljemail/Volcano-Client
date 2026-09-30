@@ -110,6 +110,13 @@ struct NetworkInbox {
     // Update Light packets waiting to be applied — drained by MeshingThread
     // the same way as pendingBlockEdits (World::ApplyLightUpdate).
     std::deque<PendingLightUpdate> pendingLightUpdates;
+
+    // Unload Chunk packets (chunkX, chunkZ) — drained by MeshingThread
+    // before it pops the next chunk, which drops the chunk from World and
+    // its sections from every render list (handing their slab space back).
+    // NetworkClient also purges any not-yet-meshed copy of that chunk from
+    // `chunks` when queuing one, so a stale load can't land after it.
+    std::deque<std::pair<int, int>> pendingUnloads;
 };
 
 // Where the client is in getting into a world — drives the loading screen
@@ -158,6 +165,11 @@ struct LocalMotionInbox {
         events.push_back(event);
     }
 };
+
+// Set by MeshingThread to ReleaseMeshSlabs, so ResetWorldState can hand
+// cleared meshes' slab regions back without GlobalState depending on the
+// meshers (NetDiag builds this header without them — null there).
+inline void (*releaseMeshSlabsHook)(const Mesh&) = nullptr;
 
 struct GlobalState {
     // Owns the client's settings — loaded from settings.json (next to the
@@ -269,6 +281,14 @@ struct GlobalState {
     // crash.
     std::unordered_map<SectionKey, Mesh, SectionKeyHash> renderList = {};
     std::mutex renderListMutex;
+
+    // Triangles actually drawn this frame, for the debug HUD (GUIController)
+    // — reset to 0 at the top of RenderEngine::RecordPasses, then added to by
+    // each pass's own draw calls (ChunkMeshPass::DrawMesh, EntityRenderer,
+    // ...) as it records them. Render-thread-owned like renderList itself:
+    // written and read only from RecordPasses' own call chain, all on
+    // RenderThread, so no mutex/atomic needed.
+    uint64_t trianglesDrawn = 0;
 
     // Non-cubic meshes (transparent full cubes, partial-volume shapes, and
     // cross-shaped plants — see NonCubicMesher) for the engine's separate
@@ -574,18 +594,18 @@ struct GlobalState {
     {
         worldReady.store(false);
         world->Clear();
+        auto clearList = [](std::mutex& mutex, std::unordered_map<SectionKey, Mesh, SectionKeyHash>& list)
         {
-            std::lock_guard<std::mutex> lock(renderListMutex);
-            renderList.clear();
-        }
-        {
-            std::lock_guard<std::mutex> lock(nonCubicRenderListMutex);
-            nonCubicRenderList.clear();
-        }
-        {
-            std::lock_guard<std::mutex> lock(translucentRenderListMutex);
-            translucentRenderList.clear();
-        }
+            std::lock_guard<std::mutex> lock(mutex);
+            if (releaseMeshSlabsHook)
+            {
+                for (const auto& [key, mesh] : list) releaseMeshSlabsHook(mesh);
+            }
+            list.clear();
+        };
+        clearList(renderListMutex, renderList);
+        clearList(nonCubicRenderListMutex, nonCubicRenderList);
+        clearList(translucentRenderListMutex, translucentRenderList);
         {
             std::lock_guard<std::mutex> lock(entitiesMutex);
             entities.clear();
@@ -602,6 +622,7 @@ struct GlobalState {
             networkInbox.dirtySections.clear();
             networkInbox.pendingBlockEdits.clear();
             networkInbox.pendingLightUpdates.clear();
+            networkInbox.pendingUnloads.clear();
         }
     }
 };

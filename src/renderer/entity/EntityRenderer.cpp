@@ -1268,6 +1268,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_cubeIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_CUBE * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
+            state->trianglesDrawn += (g_cubeIndexCount / 3) * cubeInstanceCount;
         }
         if (quadrupedInstanceCount > 0)
         {
@@ -1275,6 +1276,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_quadrupedIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_QUADRUPED * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
+            state->trianglesDrawn += (g_quadrupedIndexCount / 3) * quadrupedInstanceCount;
         }
         if (golemInstanceCount > 0)
         {
@@ -1282,6 +1284,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_golemIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_GOLEM * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
+            state->trianglesDrawn += (g_golemIndexCount / 3) * golemInstanceCount;
         }
         if (pigInstanceCount > 0)
         {
@@ -1289,6 +1292,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_pigIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_PIG * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
+            state->trianglesDrawn += (g_pigIndexCount / 3) * pigInstanceCount;
         }
         if (cowInstanceCount > 0)
         {
@@ -1296,6 +1300,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_cowIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_COW * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
+            state->trianglesDrawn += (g_cowIndexCount / 3) * cowInstanceCount;
         }
     }
 
@@ -1331,6 +1336,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdPushConstants(cmd, g_humanoidPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
 
             vkCmdDrawIndexed(cmd, draw.mesh->indexCount, 1, 0, 0, 0);
+            state->trianglesDrawn += draw.mesh->indexCount / 3;
         }
     }
 }

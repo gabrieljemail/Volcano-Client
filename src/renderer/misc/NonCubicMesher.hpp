@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include "../models/Mesh.hpp"
+#include "../models/SlabBuffer.hpp"
 #include "../terrain/models/Chunk.hpp"
 #include "../terrain/models/World.hpp"
 #include "../TextureManager.hpp"
@@ -55,6 +56,14 @@ public:
     // destroyed (e.g. from VulkanInit::Cleanup()), same requirement as
     // ChunkMesher::Shutdown().
     static void Shutdown();
+
+    // Same as ChunkMesher::ReleaseMesh, for any of this mesher's four slabs.
+    static bool ReleaseMesh(const Mesh& mesh);
+
+    // Combined used/capacity across all four slabs (cutout + translucent,
+    // vertex + index), for the debug HUD (GUIController). {0, 0} before the
+    // first chunk mesh — slabs initialize lazily, on first use.
+    static SlabStats GetSlabStats();
 };
 
 } // namespace Volcano

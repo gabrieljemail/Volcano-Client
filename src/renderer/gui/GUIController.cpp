@@ -16,6 +16,10 @@
 #include "gui/models/Chat.hpp"
 #include "inventory/ItemRegistry.hpp"
 #include "TickLoop.hpp"
+#include "SystemInfo.hpp"
+#include "renderer/VulkanInit.hpp"
+#include "renderer/terrain/ChunkMesher.hpp"
+#include "renderer/misc/NonCubicMesher.hpp"
 
 namespace Volcano {
 // Declared here rather than including network/NetworkClient.hpp: that
@@ -426,13 +430,37 @@ void GUIController::Update(float deltaTime)
                 + std::to_string(VK_API_VERSION_MINOR(sys.vulkanApiVersion)) + "."
                 + std::to_string(VK_API_VERSION_PATCH(sys.vulkanApiVersion));
 
+            auto ToMB = [](uint64_t bytes) { return std::to_string(bytes / (1024ull * 1024ull)) + " MB"; };
+
+            // Working set, not committed/virtual size — the number Task
+            // Manager's "Memory" column shows. See GetProcessMemoryUsageBytes'
+            // own comment for why this lives in SystemInfo.cpp, not here.
+            uint64_t ramUsage = GetProcessMemoryUsageBytes();
+
+            // vmaGetHeapBudgets wants one VmaBudget per memory heap; unused
+            // entries (a heap that doesn't exist on this device) come back
+            // zeroed, so summing the whole fixed-size array is safe without
+            // separately querying the real heap count.
+            VmaBudget heapBudgets[VK_MAX_MEMORY_HEAPS]{};
+            vmaGetHeapBudgets(vmaAllocator, heapBudgets);
+            uint64_t vramUsage = 0;
+            for (const VmaBudget& budget : heapBudgets) vramUsage += budget.usage;
+
+            SlabStats cubicSlab = ChunkMesher::GetSlabStats();
+            SlabStats nonCubicSlab = NonCubicMesher::GetSlabStats();
+
             debugText->SetLabel(
                 std::string("Debug Info") +
                 "\nFPS: " + std::to_string(static_cast<int>(std::round(fps))) +
                 "\nFrame Time: " + std::to_string(frameTime) + "ms" +
+                "\nTriangles: " + std::to_string(state->trianglesDrawn) +
                 "\nPresent Mode: " + vsync +
                 "\nCPU: " + std::to_string(sys.cpuLogicalCores) + "x " + sys.cpuModel +
+                "\nRAM: " + ToMB(ramUsage) +
                 "\nGPU: " + sys.gpuModel +
+                "\nVRAM: " + ToMB(vramUsage) +
+                "\nCubic Slab: " + ToMB(cubicSlab.used) + " / " + ToMB(cubicSlab.capacity) +
+                "\nNon-Cubic Slab: " + ToMB(nonCubicSlab.used) + " / " + ToMB(nonCubicSlab.capacity) +
                 "\nDisplay: " + std::to_string(windowWidth) + "x" + std::to_string(windowHeight)
                     + " (" + sys.gpuDriverVendor + ")" +
                 "\nGraphics API: " + vulkanVersion);
@@ -577,8 +605,14 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     ImGui::GetWindowDrawList()->AddRectFilled(
         ImVec2(0.0f, 0.0f), ImGui::GetIO().DisplaySize, IM_COL32(0, 0, 0, 140));
 
+    // Vertically centered: title + content as one block, using the height
+    // that block measured last frame (ImGui only knows it after drawing) —
+    // a newly opened screen sits at the top for its first frame only.
+    static std::unordered_map<const GUI::Screen*, float> lastContentHeight;
+    float contentTop = std::max(24.0f, (ImGui::GetWindowHeight() - lastContentHeight[&screen]) * 0.5f);
+
     ImVec2 titleSize = ImGui::CalcTextSize(screen.title.c_str());
-    ImGui::SetCursorPos(ImVec2((ImGui::GetWindowWidth() - titleSize.x) * 0.5f, 24.0f));
+    ImGui::SetCursorPos(ImVec2((ImGui::GetWindowWidth() - titleSize.x) * 0.5f, contentTop));
     ImGui::Text("%s", screen.title.c_str());
 
     ImGui::Dummy(ImVec2(0.0f, 16.0f));
@@ -600,6 +634,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
         }
     }
 
+    lastContentHeight[&screen] = ImGui::GetCursorPosY() - contentTop;
     ImGui::End();
 }
 

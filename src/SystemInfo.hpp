@@ -40,6 +40,17 @@ struct SystemInfo {
     void DetectGPU(const char* deviceName, uint32_t vendorID, uint32_t apiVersion);
 };
 
+// This process's current working set (physical RAM actually resident, not
+// committed/virtual size — the number Task Manager's "Memory" column shows),
+// for the debug HUD (GUIController). Live, not cached like SystemInfo above
+// — call it fresh each time it's displayed. Windows/K32GetProcessMemoryInfo
+// only (kernel32, no extra link dependency); returns 0 on any other target.
+// Isolated in its own translation unit (SystemInfo.cpp) rather than living
+// next to GUIController's own code specifically so <windows.h> never reaches
+// GUIController.cpp — its CreateWindowA/CreateWindow macros collide with
+// GUIController::CreateWindow.
+uint64_t GetProcessMemoryUsageBytes();
+
 } // namespace Volcano
 
 #endif

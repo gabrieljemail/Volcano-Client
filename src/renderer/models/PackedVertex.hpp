@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <array>
 #include <glm/glm.hpp>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 
 namespace Volcano {
 

@@ -202,6 +202,9 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     constexpr int32_t LoginPlay = 0x31;                // LOGIN
     constexpr int32_t KeepAlive = 0x2C;                // KEEP_ALIVE
     constexpr int32_t ChunkDataAndUpdateLight = 0x2D;  // LEVEL_CHUNK_WITH_LIGHT
+    // FORGET_LEVEL_CHUNK (protocol.json "unload_chunk"): chunkZ (i32), then
+    // chunkX (i32) — Z first on the wire.
+    constexpr int32_t UnloadChunk = 0x25;
     constexpr int32_t SynchronizePlayerPosition = 0x48;// PLAYER_POSITION (also every later teleport)
     constexpr int32_t SetCenterChunk = 0x5E;           // SET_CHUNK_CACHE_CENTER
     constexpr int32_t Disconnect = 0x20;               // DISCONNECT

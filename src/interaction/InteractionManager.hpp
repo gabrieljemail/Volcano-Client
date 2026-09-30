@@ -148,6 +148,20 @@ private:
     };
     std::optional<MiningState> mining;
 
+    // Rate-limits repeats for actions that have no natural per-tick pacing
+    // of their own — instant/instabuild block breaking (BeginMining's
+    // instant branch bypasses the mining/ticksRequired timer entirely) and
+    // repeated block placement while SecondaryTriggerHold is held. Without
+    // this, holding the button would repeat once per render frame instead
+    // of at Minecraft's own ~20/sec tick rate, same as vanilla's real
+    // rightClickDelay. Real digging (BeginMining's non-instant branch) needs
+    // none of this — ContinueMining's own ticksRequired timer already paces
+    // it correctly even when a high Efficiency level pushes ticksRequired
+    // down near zero.
+    static constexpr std::chrono::milliseconds REPEAT_ACTION_DELAY{50};
+    std::chrono::steady_clock::time_point lastInstantBreakTime{};
+    std::chrono::steady_clock::time_point lastPlaceTime{};
+
     // Reach distance, in blocks.
     // Synced with server NBT attributes.
     float reachDistance = 3.0f;
@@ -192,9 +206,13 @@ private:
     AttackType ClassifyAttack(float strength, const TickLoop::MovementSnapshot& movement, bool targetIsLiving) const;
 
     // Starts mining `target`. canInstabuild or a hardness-0 block (flowers,
-    // torches, ...) dispatches an instant BreakBlockEvent. An unbreakable
-    // block (bedrock, or one never resolved from a real state id) does
-    // nothing. Otherwise sends StartDigging and arms `mining` with the real
+    // torches, ...) dispatches an instant BreakBlockEvent, rate-limited by
+    // lastInstantBreakTime/REPEAT_ACTION_DELAY since PrimaryTriggerHold
+    // calls this again every frame the button stays down (that branch never
+    // arms `mining`, so there's no ticksRequired timer to pace it
+    // otherwise). An unbreakable block (bedrock, or one never resolved from
+    // a real state id) does nothing. Otherwise sends StartDigging and arms
+    // `mining` with the real
     // tick count (BlockRegistry::MapStateIdBreakTicks) for ContinueMining.
     void BeginMining(const TargetedBlock& target);
 
@@ -214,11 +232,21 @@ private:
 
     // Secondary is a use, not just a click — split the same way Jump/
     // JumpHold are, but three ways: an instant item (a block, a bucket)
-    // only ever needs Start; a continuous one (food, a shield, a bow) needs
-    // Hold to keep going and Release to know when it stopped early.
+    // only ever needs Start plus Hold's own repeat (see DispatchUse); a
+    // continuous one (food, a shield, a bow) needs Hold to keep going and
+    // Release to know when it stopped early.
     void SecondaryTriggerStart();
     void SecondaryTriggerHold();
     void SecondaryTriggerRelease();
+
+    // The click dispatch SecondaryTriggerStart/Hold share: block-entity
+    // interact, block place, or a bare use-item, in that priority order —
+    // see SecondaryTriggerStart's own comment for why. Hold only calls this
+    // while a block is targeted (placing/using against something, not an
+    // entity or empty air), rate-limited by lastPlaceTime/
+    // REPEAT_ACTION_DELAY for the same reason BeginMining's instant branch
+    // is: nothing else paces a repeat while the button stays down.
+    void DispatchUse();
 
     // Resolves the camera's look ray against blocks/entities within reach
     // and updates targetedBlock/targetedEntityId (and GlobalState::

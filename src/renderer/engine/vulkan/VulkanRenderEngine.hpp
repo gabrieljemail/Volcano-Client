@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include "../RenderEngine.hpp"
+#include "../passes/HiZBuildPass.hpp"
 
 namespace Volcano::Engine::Vulkan {
 
@@ -30,6 +31,7 @@ public:
     void WaitIdle() override;
 
     void ToggleWindowMode() override;
+    void ApplyWindowSettings() override;
 
 private:
     uint32_t currentFrame = 0;
@@ -37,6 +39,12 @@ private:
     uint32_t maxFramesInFlight = 2;
     bool initialized = false;
     bool guiAttached = false;
+
+    // Not one of RenderEngine's own passes — see its own comment for why
+    // (compute can't run inside this engine's single render pass instance).
+    // Created/destroyed alongside CreatePasses()/DestroyPasses(); recorded
+    // directly from SubmitFrame, after EndMainPass.
+    Passes::HiZBuildPass hizBuildPass;
 
     // Built-in passes, in draw order — see RenderEngine::AddPass for names.
     void RegisterBuiltInPasses();

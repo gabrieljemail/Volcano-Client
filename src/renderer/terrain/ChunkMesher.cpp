@@ -6,7 +6,9 @@
 #include "../VulkanInit.hpp"
 #include "../BiomeColors.hpp"
 #include "../../Logger.hpp"
+#include "../../Config.hpp"
 #include <glm/ext/matrix_transform.hpp>
+#include <algorithm>
 #include <vector>
 #include <cstring>
 #include <iostream>
@@ -21,11 +23,57 @@ static SlabBuffer vertexSlab;
 static SlabBuffer indexSlab;
 static bool slabsInitialized = false;
 
+// Scales this mesher's base slab size by how many chunk columns
+// Graphics.RenderDistance actually loads — (2*RD+1)^2, the same square-view
+// accounting vanilla's own simulation distance uses — rather than a single
+// fixed budget that's only right for whatever distance it happened to be
+// tuned at. Every factor lives in settings.json (Graphics.SlabSize.*) rather
+// than being hardcoded, since the right numbers depend entirely on the
+// machine: this is a single VkDeviceMemory allocation out of the
+// host-visible heap SlabBuffer maps persistently (CreateBuffer's isUMA
+// flag), which on an integrated/UMA GPU is real system RAM, and on a
+// discrete GPU without resizable BAR is often capped in the low hundreds of
+// MB regardless of total VRAM — scaling too aggressively risks that
+// allocation failing outright (SlabBuffer::Init now throws a readable error
+// instead of crashing on that, but a smaller increase that stays reliable
+// beats a bigger one that doesn't). If it's still failing, lower
+// baseSizeMBKey and/or maxScalePercent in settings.json.
+//
+// baseSizeMBKey: the base size in MB (floor — never allocates less than
+// this regardless of render distance). ReferenceRenderDistance: the render
+// distance that base size is considered "right" for; scale is 1.0 there.
+// MaxScalePercent: hard cap on how far render distance can scale the base
+// size up (percent, not a fraction — ConfigValue has no float type, same
+// convention as InteractionManagerConfig's alpha settings).
+static uint64_t SlabSizeForRenderDistance(const std::string& baseSizeMBKey, uint32_t defaultBaseSizeMB) {
+    Config* config = Config::Active();
+    uint64_t baseSize = (config
+        ? std::get<uint32_t>(config->Get(baseSizeMBKey, uint32_t{defaultBaseSizeMB}))
+        : defaultBaseSizeMB) * 1024ull * 1024ull;
+    uint32_t renderDistance = config
+        ? std::get<uint32_t>(config->Get("Graphics.RenderDistance", uint32_t{8}))
+        : 8;
+    uint32_t referenceRenderDistance = config
+        ? std::get<uint32_t>(config->Get("Graphics.SlabSize.ReferenceRenderDistance", uint32_t{4}))
+        : 4;
+    uint32_t maxScalePercent = config
+        ? std::get<uint32_t>(config->Get("Graphics.SlabSize.MaxScalePercent", uint32_t{200}))
+        : 200;
+
+    double columns = (2.0 * renderDistance + 1.0) * (2.0 * renderDistance + 1.0);
+    double referenceColumns = (2.0 * referenceRenderDistance + 1.0) * (2.0 * referenceRenderDistance + 1.0);
+    double scale = std::min(columns / referenceColumns, static_cast<double>(maxScalePercent) / 100.0);
+    double scaled = static_cast<double>(baseSize) * scale;
+    return std::max<uint64_t>(baseSize, static_cast<uint64_t>(scaled));
+}
+
 static void EnsureSlabsInitialized() {
     if (slabsInitialized) return;
 
-    vertexSlab.Init(ChunkMesher::DEFAULT_SLAB_SIZE, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    indexSlab.Init(ChunkMesher::DEFAULT_SLAB_SIZE, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    uint64_t slabSize = SlabSizeForRenderDistance("Graphics.SlabSize.CubicMB",
+        static_cast<uint32_t>(ChunkMesher::DEFAULT_SLAB_SIZE / (1024ull * 1024ull)));
+    vertexSlab.Init(slabSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    indexSlab.Init(slabSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     slabsInitialized = true;
 }
 
@@ -35,6 +83,27 @@ void ChunkMesher::Shutdown() {
     vertexSlab.Destroy();
     indexSlab.Destroy();
     slabsInitialized = false;
+}
+
+bool ChunkMesher::ReleaseMesh(const Mesh& mesh) {
+    if (!slabsInitialized) return false;
+    bool owned = false;
+    if (mesh.vertexBytes > 0 && mesh.vertexBuffer == vertexSlab.GetBuffer()) {
+        vertexSlab.Free(mesh.vertexOffset, mesh.vertexBytes);
+        owned = true;
+    }
+    if (mesh.indexBytes > 0 && mesh.indexBuffer == indexSlab.GetBuffer()) {
+        indexSlab.Free(mesh.indexOffset, mesh.indexBytes);
+        owned = true;
+    }
+    return owned;
+}
+
+SlabStats ChunkMesher::GetSlabStats() {
+    return SlabStats{
+        vertexSlab.GetUsed() + indexSlab.GetUsed(),
+        vertexSlab.GetCapacity() + indexSlab.GetCapacity()
+    };
 }
 
 // Faces: 0=Up, 1=Down, 2=North(-Z), 3=South(+Z), 4=East(+X), 5=West(-X)
@@ -244,16 +313,18 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, int
                 FaceTexture faceTexture = GetFaceTexture(cell.type, faceIndex, textureManager);
 
                 // Quad corners as (u, v) offsets from (x[u], x[v]); the winding
-                // order differs by normal sign so the merged quad still faces
-                // outward correctly (matches the per-face winding the old
-                // per-voxel table used). Which specific winding is "correct"
-                // no longer matters for visual correctness — see
-                // VulkanInit.cpp's terrain pipeline, which now disables
-                // backface culling entirely rather than relying on getting
-                // this exactly right for every axis/viewing angle.
+                // order differs by normal sign so the merged quad faces
+                // outward (CCW seen from outside). positiveCorners walks
+                // u then v, which is CCW around +axis only when u x v points
+                // along +axis — true for Y (Z x X = +Y) and Z (X x Y = +Z),
+                // but NOT for X, whose u/v were swapped above for upright
+                // wall textures (Z x Y = -X). That one-axis handedness flip
+                // is the "per-axis asymmetry" that made backface culling
+                // look inconsistent before; X faces swap winding to match.
                 static const int positiveCorners[4][2] = { {0,0}, {1,0}, {1,1}, {0,1} };
                 static const int negativeCorners[4][2] = { {0,0}, {0,1}, {1,1}, {1,0} };
-                const auto& corners = cell.normal > 0 ? positiveCorners : negativeCorners;
+                const bool handednessFlipped = (axis == 0);
+                const auto& corners = ((cell.normal > 0) != handednessFlipped) ? positiveCorners : negativeCorners;
 
                 uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
                 for (int c = 0; c < 4; c++) {
@@ -349,14 +420,12 @@ Mesh ChunkMesher::MeshChunkSection(const Chunk& chunk, const World& world, const
         if (vertexSlab.Allocate(vertices.data(), vertexBufferSize, sizeof(PackedVertex), vertexOffset)) {
             mesh.vertexBuffer = vertexSlab.GetBuffer();
             mesh.vertexOffset = vertexOffset;
+            mesh.vertexBytes = vertexBufferSize;
         } else {
-            // Slab full — every remesh (including an ordinary block edit,
-            // not just initial chunk load) bump-allocates a fresh region
-            // rather than reusing the section's old one (SlabBuffer never
-            // frees a sub-allocation — see its own comment), so a long
-            // session of heavy editing can eventually exhaust it. Logged
-            // rather than silently dropped so a section that stops updating
-            // is diagnosable instead of just looking broken.
+            // Slab genuinely full (replaced meshes are handed back via
+            // ReleaseMesh, so this means live geometry outgrew the slab —
+            // raise Graphics.SlabSize.CubicMB). Logged rather than silently
+            // dropped so a section that stops updating is diagnosable.
             Log::Error("[MESH] cube vertex slab full (chunk " + std::to_string(chunk.getX()) + ","
                 + std::to_string(chunk.getZ()) + ", section " + std::to_string(sectionY) + ") — section not updated.");
             mesh.vertexCount = 0;
@@ -367,10 +436,17 @@ Mesh ChunkMesher::MeshChunkSection(const Chunk& chunk, const World& world, const
         if (indexSlab.Allocate(indices.data(), indexBufferSize, sizeof(uint32_t), indexOffset)) {
             mesh.indexBuffer = indexSlab.GetBuffer();
             mesh.indexOffset = indexOffset;
+            mesh.indexBytes = indexBufferSize;
         } else {
             Log::Error("[MESH] cube index slab full (chunk " + std::to_string(chunk.getX()) + ","
                 + std::to_string(chunk.getZ()) + ", section " + std::to_string(sectionY) + ") — section not updated.");
             mesh.indexCount = 0;
+        }
+
+        // Half a mesh is useless — give back whichever half did fit.
+        if (mesh.vertexCount == 0 || mesh.indexCount == 0) {
+            ReleaseMesh(mesh);
+            mesh = Mesh{};
         }
     }
 

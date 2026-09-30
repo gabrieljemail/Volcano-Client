@@ -3,7 +3,7 @@
 #define MESH_H
 
 #include <cstdint>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 
 #include <array>
@@ -53,6 +53,12 @@ struct Mesh {
     VkBuffer indexBuffer = VK_NULL_HANDLE;
     VkDeviceSize indexOffset = 0;
     uint32_t indexCount = 0;
+
+    // Exact byte sizes of the slab regions above (0 if not slab-allocated),
+    // so the region can be handed back via SlabBuffer::Free when this mesh
+    // is replaced or removed — see ReleaseMeshSlabs in GlobalState.hpp.
+    VkDeviceSize vertexBytes = 0;
+    VkDeviceSize indexBytes = 0;
 
     glm::mat4 modelMatrix = glm::mat4(1.0f);
 };
