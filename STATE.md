@@ -1,6 +1,34 @@
 # Volcano Client State
 This document describes the current project state of Volcano Client. Bugs and feature descriptions are listed here, as well as testing sessions.
 
+## Milestones
+1. **Hello Triangle** — done.
+2. **Basic survival experience** — a mostly complete survival game. Requires: inventory functionality, players, item/falling block entity models, and more humanoid/quadruped entity models.
+3. **Working PvP experience.**
+4. **A client people can use daily.**
+
+## Roadmap
+Remaining work, roughly in milestone order. **(M2)** marks what milestone 2 needs.
+* [ ] Inventory functionality **(M2)**
+* [ ] Players **(M2)**
+* [ ] Item and falling block entity models **(M2)**
+* [ ] More humanoid and quadruped entity models **(M2)**
+* [ ] Chunk fade-in
+* [ ] Hand model (left/right side) and animation
+* [ ] Attack cooldown, with block break progress shown in the attack cooldown bar
+* [ ] Armor bar
+* [ ] Replace the health, hunger, and armor bars with their real icon textures
+* [ ] Lost-health flashing animation
+* [ ] Fix combat (knockback direction, see PvP notes)
+* [ ] Armor/equipment rendering on other entities
+* [ ] 3rd-person camera
+* [ ] Block entity interactions
+* [ ] Elytra rendering
+* [ ] Nametag and text display entity rendering
+* [ ] Sign rendering
+* [ ] TLS support with Mojang accounts
+* [ ] Automatic singleplayer server generator
+
 ## Current State
 Completion: **10% Complete.** (Estimate.)
 
@@ -22,6 +50,13 @@ Completion: **10% Complete.** (Estimate.)
 * Inventory UI and packet handling
 * Block selection
 * Tab list
+* Block breaking/placing with vanilla hold-to-repeat pacing
+* Settings screens (Video, Window, Controls), writing straight to settings.json and applied live
+* Window modes: windowed, borderless, exclusive fullscreen (VK_EXT_full_screen_exclusive when the driver has it)
+* Hi-Z occlusion culling of chunk sections (GPU depth pyramid, CPU test a couple of frames behind)
+* Buffered raw mouse input (Windows `GetRawInputBuffer`; GLFW raw motion on Linux)
+* Crash reporter: dialog + `crash-report.txt` with a symbolized stack trace
+* Platform layer (`src/platform/OS*`) for Windows and Linux
 
 #### Not implemented:
 * Sound effects
@@ -30,15 +65,11 @@ Completion: **10% Complete.** (Estimate.)
 * Smooth lighting/SSAO (LATE)
 * View bobbing
 * Water/lava rendering
-* Settings GUI
 * Resource pack reloading (server-pushed packs are currently ignored entirely)
 * Mod loading (LATE)
 * Right-click interaction with entities (Interact packet), blocking with shields, bows/tridents
 * Combat visuals: arm-swing animation, crit/sweep particles, hurt camera tilt, hit sounds (the events are tracked — `Entity::lastSwingTime`/`lastCritTime`/`lastHurtTime` — just not drawn)
-* Block breaking/placing (no Player Digging / Block Place packet handling)
 * Riding entities
-* Chunk fading
-* Hand model / hand-swing animation
 * Dynamic motion sampled animations
 * Nametags
 * Title/subtitle and a proper action bar (action-bar messages currently just land in chat)
@@ -77,6 +108,16 @@ Completion: **10% Complete.** (Estimate.)
 * **Holding left mouse reset the attack cooldown every frame**, so it could never charge. Attacks now happen on click only (`PrimaryActionPress`), like vanilla. -- *`InteractionManager.cpp`, `VolcanoClient.cpp`*
 * `PlayerAttributes` is now mutex-guarded, since the network thread writes server attribute values into it while the render thread reads it. -- *`PlayerAttributes.hpp/.cpp`*
 
+## Fixed since last update (2026-09-30)
+* **Slabs filled up and non-opaque blocks vanished.** `SlabBuffer` was bump-allocate-only, so every remesh leaked its old region. It now has a free list; replaced/removed meshes hand their space back after a 3-frame delay. -- *`SlabBuffer.hpp/.cpp`, `MeshingThread.cpp`*
+* **Chunks never unloaded.** The Unload Chunk packet (0x25) is now handled: the chunk leaves `World` and every render list. -- *`NetworkClient.cpp`, `MeshingThread.cpp`*
+* **Crash on close:** `Cleanup` double-destroyed staging and slab buffers through a global buffer list. Callers of `CreateBuffer` now own their buffers. -- *`VulkanInit.cpp`*
+* **ImGui assert when a frame was skipped** mid swapchain rebuild. -- *`RenderThread.cpp`, `GUIController.cpp`*
+* **FPS stuck at ~63:** `sleep_for` rounds to Windows' 15.6 ms tick; frame pacing now uses a high-resolution waitable timer, and Max FPS applies live. -- *`RenderThread.cpp`, `OSWindows.cpp`*
+* **Holding break/place cleared everything in reach:** repeat delay was 1 tick; now vanilla's 5 ticks (break) / 4 ticks (place), and a click no longer places twice. -- *`InteractionManager.cpp`*
+* Terrain backface culling re-enabled (X-axis faces had flipped winding). -- *`ChunkMesher.cpp`, `VulkanInit.cpp`*
+* Menu screens are vertically centered. -- *`GUIController.cpp`*
+
 ## PvP notes (2026-09-28)
 Built against vanilla 26.2's own code in `resources/26.2.zip` (`Player.attack`, `MultiPlayerGameMode.attack`, `ClientPacketListener`, `LpVec3`). **None of it has been tested against a live server yet.** Things to check first:
 * Sprint-hitting another player knocks them back further than a standing hit, and slows you down (you have to re-press sprint/W-tap for the next sprint hit to count).
@@ -98,15 +139,15 @@ Built against vanilla 26.2's own code in `resources/26.2.zip` (`Player.attack`, 
 [x] Eat lunch.
 [x] Take a shower.
 [ ] Re-create the splash screen and fix the scaling.
-[ ] Create an `src/gui/screens` directory and move screen classes there.
-[ ] Create an SettingsScreen class in `gui/screens` that displays links to other (future for now) options screens.
-[ ] Create a GraphicsSettingsScreen class in `gui/screens` that allows you to control graphics settings found in settings.json.
+[x] Create an `src/gui/screens` directory and move screen classes there.
+[x] Create an SettingsScreen class in `gui/screens` that displays links to other (future for now) options screens.
+[x] Create a GraphicsSettingsScreen class in `gui/screens` that allows you to control graphics settings found in settings.json.
 [ ] Pick an icon font (FontAwesome or Material) and drop it in `resources/fonts/` so `GUIController::Init` can merge its glyphs into the atlas — blocks a real heart/hunger icon HUD instead of the current labeled bars.
 [ ] Verify the new horizontal wall-collision snap (`TickLoop::FindWallContactCoordinate`) feels right in the real client — walk into a wall and watch for a "moved wrongly" kick, same test the old TODO asked for.
 [x] Commit `STATE.md` to git — it's currently untracked, so there's no history of it and it's one `git clean` away from gone.
 [x] Create `InteractionManager` (`src/interaction/`) — mainhand/offhand tracking (snapshotted from `GlobalState::inventory` each frame, not held as raw pointers into it — see its own comment on why), attack-cooldown bookkeeping, `PrimaryAction`/`SecondaryAction` mouse-button input actions (added mouse-button support to `InputHandler` itself, which had none before — see `MOUSE_BUTTON_LEFT`/`RIGHT`). `RayTraceSelection()` is a deliberate stub — that's the next task below — so `PrimaryTrigger`/`SecondaryTrigger` currently only manage the cooldown gate, nothing dispatches an attack/break/use/place yet.
 [x] Build the ray tracer: a block/entity raycast that resolves the camera's look ray against `state->world`/`state->entities` out to `InteractionManager::blockReachDistance`/`reachDistance`. Wire it into `InteractionManager::RayTraceSelection()` (for `PrimaryTrigger`/`SecondaryTrigger` to dispatch against, and the selection-outline renderer to draw) and into `GlobalState::lookingAtEntity` so the crosshair's attack-indicator variant actually swaps in on target.
-[~] Once the ray tracer exists: wire `InteractionManager::PrimaryTrigger`/`SecondaryTrigger` to actually attack the targeted entity / start breaking the targeted block, and use the held item / place a block against the targeted face, respectively. **Attacking is done** (`PrimaryTriggerStart` → `AttackEntity`); block breaking and secondary use/place are still stubs.
+[x] Once the ray tracer exists: wire `InteractionManager::PrimaryTrigger`/`SecondaryTrigger` to actually attack the targeted entity / start breaking the targeted block, and use the held item / place a block against the targeted face, respectively.
 [ ] Verify PvP live against the dev server — see "PvP notes" above.
 [ ] Verify the east/west entity-facing fix live (see Fixed, 2026-09-28).
 [ ] Fix chunk-boundary faces for real: give `renderList`/`nonCubicRenderList` a find-and-replace path (not just append) and `SlabBuffer` a way to free/reuse a chunk's old allocation, then have `MeshingThread` remesh a chunk's already-loaded neighbors whenever a new chunk lands next to them.

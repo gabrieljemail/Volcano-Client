@@ -17,6 +17,9 @@ struct Screen {
     std::string title;
     std::vector<GUIComponent*> components;
     bool closable = true; // whether Esc is allowed to dismiss this screen
+    // Columns for labeled controls (sliders, options, number fields). Plain
+    // buttons and text always span the full width, centered.
+    int columns = 1;
 
     // Escape hatch for content the generic TEXT/BUTTON/INPUT component stack
     // can't express — a slot grid with item icons (the inventory screen),

@@ -1,6 +1,8 @@
 #ifdef __linux__
 
+#include <cerrno>
 #include <csignal>
+#include <ctime>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -87,6 +89,23 @@ std::string OS::GetExecutablePath()
     return length > 0 ? std::string(path, static_cast<size_t>(length)) : "";
 }
 
+std::vector<std::string> OS::GetFallbackFontPaths()
+{
+    // Common distro locations; color-bitmap emoji fonts (NotoColorEmoji)
+    // can't be rasterized here, so only outline fonts are listed.
+    std::vector<std::string> paths;
+    for (const char* path : {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+        "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf" })
+    {
+        if (access(path, R_OK) == 0) paths.emplace_back(path);
+    }
+    return paths;
+}
+
 bool OS::IsDebuggerAttached()
 {
     std::ifstream status("/proc/self/status");
@@ -96,6 +115,13 @@ bool OS::IsDebuggerAttached()
         if (line.rfind("TracerPid:", 0) == 0) return std::atoi(line.c_str() + 10) != 0;
     }
     return false;
+}
+
+void OS::PreciseSleep(int64_t microseconds)
+{
+    if (microseconds <= 0) return;
+    timespec duration{ static_cast<time_t>(microseconds / 1000000), static_cast<long>((microseconds % 1000000) * 1000) };
+    while (nanosleep(&duration, &duration) == -1 && errno == EINTR) {}
 }
 
 std::string OS::CaptureStackTrace(int skipFrames)

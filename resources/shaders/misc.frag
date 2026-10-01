@@ -6,7 +6,15 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     float lightingEnabled;
     float brightnessFactor;
     float skyLightFactor;
-    float lightCurveBias;
+    float lightFalloff;
+    float shadeTop;
+    float shadeBottom;
+    float shadeNorthSouth;
+    float shadeEastWest;
+    vec4 fogColor;
+    vec4 cameraPosition;
+    float fogStart;
+    float fogEnd;
 } camera;
 
 layout(set = 1, binding = 0) uniform sampler2DArray textureArray;
@@ -16,6 +24,7 @@ layout(location = 1) flat in uint fragLayer;
 layout(location = 2) in float fragSkyLight;
 layout(location = 3) flat in uint fragBiomeTint;
 layout(location = 4) in float fragBlockLight;
+layout(location = 5) in vec3 fragViewOffset;
 
 layout(location = 0) out vec4 outColor;
 
@@ -26,9 +35,14 @@ layout(location = 0) out vec4 outColor;
 const vec3 BIOME_COLOR_PLAINS = vec3(145.0 / 255.0, 189.0 / 255.0, 89.0 / 255.0);
 const vec3 BIOME_COLOR_WATER = vec3(0x3F / 255.0, 0x76 / 255.0, 0xE4 / 255.0);
 
-// Same curve/constants as terrain.frag — duplicated, no GLSL include mechanism.
-float LightCurve(float rawLevel01, float bias) {
-    return 1.0 - (1.0 - rawLevel01) / (1.0 + bias * rawLevel01);
+// Same curve/constants/fog as terrain.frag — duplicated, no GLSL include mechanism.
+float LightCurve(float level, float falloff) {
+    return level / (1.0 + falloff * (1.0 - level));
+}
+
+float FogFactor(vec3 offset) {
+    float distance = max(length(offset.xz), abs(offset.y));
+    return clamp((distance - camera.fogStart) / max(camera.fogEnd - camera.fogStart, 0.001), 0.0, 1.0);
 }
 
 const float BRIGHTNESS_FLOOR = 0.05;
@@ -55,11 +69,12 @@ void main() {
     vec3 tint = fragBiomeTint == 1u ? BIOME_COLOR_PLAINS : (fragBiomeTint == 2u ? BIOME_COLOR_WATER : vec3(1.0));
 
     // Same skyLightFactor/gamma treatment as terrain.frag.
-    float skyBrightness = mix(BRIGHTNESS_FLOOR, BRIGHTNESS_CEILING, LightCurve(fragSkyLight, camera.lightCurveBias) * camera.skyLightFactor);
-    float blockBrightness = mix(BRIGHTNESS_FLOOR, BRIGHTNESS_CEILING, LightCurve(fragBlockLight, camera.lightCurveBias));
+    float skyBrightness = mix(BRIGHTNESS_FLOOR, BRIGHTNESS_CEILING, LightCurve(fragSkyLight, camera.lightFalloff) * camera.skyLightFactor);
+    float blockBrightness = mix(BRIGHTNESS_FLOOR, BRIGHTNESS_CEILING, LightCurve(fragBlockLight, camera.lightFalloff));
     float ambient = min(skyBrightness, AMBIENT_CEILING);
     float light = max(ambient, blockBrightness);
     light = camera.lightingEnabled > 0.5 ? mix(light, NotGamma(light), camera.brightnessFactor) : 1.0;
 
-    outColor = vec4(texColor.rgb * tint * light, texColor.a);
+    vec3 color = texColor.rgb * tint * light;
+    outColor = vec4(mix(color, camera.fogColor.rgb, FogFactor(fragViewOffset)), texColor.a);
 }

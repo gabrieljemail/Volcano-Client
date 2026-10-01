@@ -22,3 +22,5 @@ settings.json
 dist/
 logs/
 run/
+screenshots/
+crash-report*

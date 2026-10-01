@@ -274,7 +274,8 @@ void InteractionManager::Update(bool inputAllowed)
     // ImGui owns the mouse while a Screen/chat box is focused.
     if (!inputAllowed) return;
 
-    if (state->input->WasActivated("PrimaryActionPress"))
+    primaryPressedThisFrame = state->input->WasActivated("PrimaryActionPress");
+    if (primaryPressedThisFrame)
     {
         PrimaryTriggerStart();
     }
@@ -415,14 +416,16 @@ void InteractionManager::PrimaryTriggerHold()
 
 void InteractionManager::BeginMining(const TargetedBlock& target)
 {
+    // Holding: wait out vanilla's destroyDelay since the last break.
+    auto now = std::chrono::steady_clock::now();
+    if (!primaryPressedThisFrame && now - lastBreakTime < BREAK_REPEAT_DELAY) return;
+
     bool instabuild = state->canInstabuild.load(std::memory_order_relaxed);
     Block block = state->world->GetBlock(target.position.x, target.position.y, target.position.z);
 
     if (instabuild || block.breakTicks == 0)
     {
-        auto now = std::chrono::steady_clock::now();
-        if (now - lastInstantBreakTime < REPEAT_ACTION_DELAY) return;
-        lastInstantBreakTime = now;
+        lastBreakTime = now;
         BreakBlockEvent{ target.position, target.face }.Dispatch(state);
         return;
     }
@@ -440,6 +443,7 @@ void InteractionManager::ContinueMining()
 
     BreakBlockEvent{ mining->position, mining->face, /*sendStart=*/false }.Dispatch(state);
     mining.reset();
+    lastBreakTime = std::chrono::steady_clock::now();
 }
 
 void InteractionManager::CancelMining()
@@ -537,6 +541,8 @@ AttackType InteractionManager::ClassifyAttack(float strength, const TickLoop::Mo
 
 void InteractionManager::SecondaryTriggerStart()
 {
+    // Starts the repeat timer too, or this frame's Hold would place again.
+    lastPlaceTime = std::chrono::steady_clock::now();
     DispatchUse();
 }
 
@@ -555,7 +561,7 @@ void InteractionManager::SecondaryTriggerHold()
     if (!targetedBlock.has_value()) return;
 
     auto now = std::chrono::steady_clock::now();
-    if (now - lastPlaceTime < REPEAT_ACTION_DELAY) return;
+    if (now - lastPlaceTime < PLACE_REPEAT_DELAY) return;
     lastPlaceTime = now;
     DispatchUse();
 }

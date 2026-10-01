@@ -19,6 +19,14 @@ TextureManager::~TextureManager() {
     //
 }
 
+void TextureManager::Destroy()
+{
+    if (array.sampler != VK_NULL_HANDLE) vkDestroySampler(GetDevice(), array.sampler, nullptr);
+    if (array.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), array.view, nullptr);
+    if (array.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, array.image, array.allocation);
+    array = TextureArray{};
+}
+
 void TextureManager::CreateArrayImage(uint32_t layerCount)
 {
     VkImageCreateInfo imageInfo{};
@@ -26,7 +34,7 @@ void TextureManager::CreateArrayImage(uint32_t layerCount)
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
     imageInfo.extent = { TEXTURE_LAYER_SIZE, TEXTURE_LAYER_SIZE, 1 };
     imageInfo.mipLevels = TEXTURE_MIP_LEVELS;
-    imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -43,7 +51,7 @@ void TextureManager::CreateArrayImage(uint32_t layerCount)
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = array.image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = TEXTURE_MIP_LEVELS;

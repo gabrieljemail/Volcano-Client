@@ -28,12 +28,19 @@ struct SceneView {
     glm::vec3 skyColor{0.0f};
     float dayBrightness = 1.0f;
 
-    // Vanilla's Brightness slider (0=Moody, 1=Bright) and LightCurve's
-    // mid-range falloff bias — read from Graphics.Brightness/
-    // Graphics.LightCurveBias, forwarded into CameraUBO for terrain.frag's
-    // NotGamma/LightCurve (see CameraUBO's own comments).
+    // Vanilla's Brightness slider (0=Moody, 1=Bright) and the light curve's
+    // falloff (Graphics.Brightness / Graphics.LightFalloff).
     float brightnessFactor = 0.5f;
-    float lightCurveBias = 5.0f;
+    float lightFalloff = 3.0f;
+
+    // Sky gradient (zenith -> horizon; skyColor above is the horizon/fog
+    // color), sun direction (the moon is opposite), moon phase 0-7 (vanilla
+    // order, 0 = full), and fog range in blocks.
+    glm::vec3 skyTopColor{0.0f};
+    glm::vec3 sunDirection{0.0f, 1.0f, 0.0f};
+    int moonPhase = 0;
+    float fogStart = 0.0f;
+    float fogEnd = 0.0f;
 
     // Vanilla's per-face diffuse shading (Graphics.Shading.*), forwarded
     // into CameraUBO — see that struct's own comment.

@@ -29,6 +29,7 @@ public:
     static void DiscardFrame();
 
     static float GetFPS() { return fps; }
+    static float GetGUIScale() { return guiScale; }
     static float GetFrameTime() { return frameTime; }
 
     // API:
@@ -84,6 +85,12 @@ private:
     static ImGuiVulkanContext imguiContext;
     static bool initialized;
     static float fps;
+    // Current GUI scale (see ApplyGUIScale) and how many queued ImGui input
+    // events were already scaled for it.
+    static inline float guiScale = 1.0f;
+    static inline int scaledInputEvents = 0;
+    static void ApplyGUIScale();
+    static void AddTextShadows(ImDrawData* drawData);
     static float frameTime;
     static int frameCount;
     static float fpsTimer;
@@ -157,7 +164,10 @@ private:
     // ItemRegistry::ItemTypeInfo::hasTexture).
     static ImTextureID IconForItem(const ItemStack& item);
 
-    static void RenderComponent(GUI::GUIComponent* component);
+    static void RenderComponent(GUI::GUIComponent* component, float width = 240.0f, float labelWidth = 0.0f);
+    // Sliders, option buttons and number fields: drawn as "label | control" rows on screens.
+    static bool IsLabeledControl(GUI::GUIComponent* component);
+    static void DrawSideTooltip(const std::string& text, ImVec2 itemMin, ImVec2 itemMax, bool onLeft);
     static void RenderScreen(GUI::Screen& screen);
     static void RenderChatWindow();
     static void RenderChatInputBox();

@@ -21,7 +21,14 @@ public:
     static uint64_t GetProcessMemoryUsageBytes();
     static std::string GetCpuModel();
     static std::string GetExecutablePath();
+    // Installed system fonts for characters the UI font lacks (symbols, box
+    // drawing, emoji), in priority order. Only paths that exist.
+    static std::vector<std::string> GetFallbackFontPaths();
     static bool IsDebuggerAttached();
+
+    // Sleeps with sub-millisecond precision (std::this_thread::sleep_for
+    // rounds up to Windows' 15.6 ms scheduler tick, capping FPS at ~64).
+    static void PreciseSleep(int64_t microseconds);
 
     // Symbolized call stack of the calling thread, one frame per line.
     static std::string CaptureStackTrace(int skipFrames);

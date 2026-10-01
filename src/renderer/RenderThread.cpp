@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <chrono>
 #include <cmath>
@@ -11,6 +12,7 @@
 #include "gui/GUIController.hpp"
 #include "../TickLoop.hpp"
 #include "../interaction/InteractionManager.hpp"
+#include "../platform/OS.hpp"
 
 using namespace std;
 
@@ -75,7 +77,7 @@ void RenderThread::WaitForTargetFrame()
     // Add safety padding to make sure the scheduler doesn't make us oversleep.
     if (remaining > 2000)
     {
-        this_thread::sleep_for(microseconds(remaining - 1500)); // Time remaining - 1.5ms.
+        Platform::OS::PreciseSleep(remaining - 1500); // Time remaining - 1.5ms.
     }
 
     // Spin-wait the final microseconds.
@@ -148,6 +150,10 @@ void RenderThread::PollInputs()
     if (state->input->IsKeyPressed(GLFW_KEY_F11))
     {
         state->renderEngine->ToggleWindowMode();
+    }
+    if (state->input->IsKeyPressed(GLFW_KEY_F2))
+    {
+        state->renderEngine->RequestScreenshot();
     }
     // Picks up Window.* changes from a Settings screen (no-op otherwise).
     state->renderEngine->ApplyWindowSettings();
@@ -311,10 +317,13 @@ float DayBrightness(int64_t dayTimeTicks)
     return static_cast<float>((std::cos(TWO_PI * (t - 0.25)) + 1.0) * 0.5);
 }
 
-// Sampled between these two extremes by DayBrightness() above — no weather
-// tinting yet (see ISSUES.mdx; that needs particle rendering first).
-constexpr glm::vec3 SKY_COLOR_NIGHT(0.015f, 0.015f, 0.035f);
-constexpr glm::vec3 SKY_COLOR_DAY(0.52941f, 0.80784f, 0.92157f);
+// Sky gradient endpoints, blended by DayBrightness() above. Day values are
+// vanilla's plains sky (0x78A7FF) and its paler fog/horizon color. No
+// weather tinting yet.
+constexpr glm::vec3 SKY_TOP_NIGHT(0.004f, 0.004f, 0.016f);
+constexpr glm::vec3 SKY_TOP_DAY(0.471f, 0.655f, 1.0f);
+constexpr glm::vec3 SKY_HORIZON_NIGHT(0.02f, 0.02f, 0.05f);
+constexpr glm::vec3 SKY_HORIZON_DAY(0.753f, 0.847f, 1.0f);
 
 // C++ mirror of terrain.frag's NotGamma — see its own comment for the
 // curve's shape and where it comes from (the real notGamma(vec3) in
@@ -348,14 +357,30 @@ Engine::SceneView RenderThread::BuildSceneView()
     bool lightingEnabled = std::get<bool>(state->config->Get("Graphics.Lighting", true));
     float brightnessFactor = static_cast<float>(
         std::get<uint32_t>(state->config->Get("Graphics.Brightness", uint32_t{50}))) / 100.0f;
-    // See terrain.frag's LightCurve. A raw factor, not a 0-100 percentage,
-    // so unlike Brightness above it's stored/read as-is.
-    float lightCurveBias = static_cast<float>(
-        std::get<uint32_t>(state->config->Get("Graphics.LightCurveBias", uint32_t{5})));
+    // See terrain.frag's LightCurve: 3 = vanilla, 0 = linear.
+    float lightFalloff = static_cast<float>(
+        std::get<uint32_t>(state->config->Get("Graphics.LightFalloff", uint32_t{3})));
 
-    scene.dayBrightness = DayBrightness(state->dayTimeTicks.load());
+    int64_t dayTime = state->dayTimeTicks.load();
+    scene.dayBrightness = DayBrightness(dayTime);
     scene.brightnessFactor = brightnessFactor;
-    scene.lightCurveBias = lightCurveBias;
+    scene.lightFalloff = lightFalloff;
+
+    // Sun rises in the east (+X), is overhead at noon (6000), sets in the
+    // west; the moon is always opposite. Phase advances once per day.
+    constexpr double TWO_PI = 6.283185307179586;
+    int64_t timeOfDay = ((dayTime % 24000) + 24000) % 24000;
+    double sunAngle = TWO_PI * static_cast<double>(timeOfDay) / 24000.0;
+    scene.sunDirection = glm::vec3(static_cast<float>(std::cos(sunAngle)), static_cast<float>(std::sin(sunAngle)), 0.0f);
+    int64_t day = dayTime >= 0 ? dayTime / 24000 : (dayTime - 23999) / 24000;
+    scene.moonPhase = static_cast<int>(((day % 8) + 8) % 8);
+
+    // Vanilla's terrain fog: ends at the render distance, fading in over the
+    // last tenth of it (4-64 blocks).
+    float renderDistanceBlocks = static_cast<float>(
+        std::get<uint32_t>(state->config->Get("Graphics.RenderDistance", uint32_t{8}))) * 16.0f;
+    scene.fogEnd = renderDistanceBlocks;
+    scene.fogStart = renderDistanceBlocks - std::clamp(renderDistanceBlocks / 10.0f, 4.0f, 64.0f);
 
     // Vanilla's hardcoded per-face shade (LevelRenderer::getShade), stored
     // as a 0-100 percentage like Brightness above rather than a raw float —
@@ -374,7 +399,12 @@ Engine::SceneView RenderThread::BuildSceneView()
     float skyColorBrightness = lightingEnabled
         ? glm::mix(scene.dayBrightness, NotGamma(scene.dayBrightness), brightnessFactor)
         : scene.dayBrightness;
-    scene.skyColor = glm::mix(SKY_COLOR_NIGHT, SKY_COLOR_DAY, skyColorBrightness);
+    // skyColor is the horizon: the clear color, fog color and gradient base.
+    // The constants are sRGB (as picked); the swapchain is sRGB too, so
+    // shaders work in linear and the output gets encoded once on display.
+    auto toLinear = [](glm::vec3 srgb) { return glm::pow(srgb, glm::vec3(2.2f)); };
+    scene.skyColor = toLinear(glm::mix(SKY_HORIZON_NIGHT, SKY_HORIZON_DAY, skyColorBrightness));
+    scene.skyTopColor = toLinear(glm::mix(SKY_TOP_NIGHT, SKY_TOP_DAY, skyColorBrightness));
 
     scene.time = chrono::duration<float>(chrono::steady_clock::now() - startTime).count();
     scene.deltaTime = frameDeltaTime;

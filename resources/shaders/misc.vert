@@ -4,9 +4,22 @@ layout(push_constant) uniform PushConstants {
     mat4 model;
 } pc;
 
+// Full layout through cameraPosition (std140 offsets are sequential).
 layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 view;
     mat4 proj;
+    float lightingEnabled;
+    float brightnessFactor;
+    float skyLightFactor;
+    float lightFalloff;
+    float shadeTop;
+    float shadeBottom;
+    float shadeNorthSouth;
+    float shadeEastWest;
+    vec4 fogColor;
+    vec4 cameraPosition;
+    float fogStart;
+    float fogEnd;
 } camera;
 
 layout(location = 0) in vec3 inPosition;
@@ -18,6 +31,7 @@ layout(location = 1) flat out uint fragLayer;
 layout(location = 2) out float fragSkyLight;
 layout(location = 3) flat out uint fragBiomeTint;
 layout(location = 4) out float fragBlockLight;
+layout(location = 5) out vec3 fragViewOffset; // world position relative to the camera, for fog
 
 void main() {
     // See MiscVertex::Pack: textureLayer (0-15), blockLight (16-19), skyLight
@@ -29,6 +43,7 @@ void main() {
 
     vec4 worldPos = pc.model * vec4(inPosition, 1.0);
     gl_Position = camera.proj * camera.view * worldPos;
+    fragViewOffset = worldPos.xyz - camera.cameraPosition.xyz;
 
     fragUV = inUV;
     // Kept apart — see terrain.frag's own comment (misc.frag applies the

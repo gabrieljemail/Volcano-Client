@@ -1346,6 +1346,7 @@ void Init(GlobalState* state)
     swapchainBuilder.set_desired_extent(windowWidth, windowHeight);
     swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
     swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
+    swapchainBuilder.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT); // F2 screenshots
     FullscreenExclusive::ConfigureSwapchain(swapchainBuilder, window, g_windowMode == WindowMode::ExclusiveFullscreen);
     auto swapchainBuilderReturn = swapchainBuilder.build();
 
@@ -1449,7 +1450,8 @@ void Init(GlobalState* state)
     cameraBinding.binding = 0;
     cameraBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     cameraBinding.descriptorCount = 1;
-    cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    // Fragment too: terrain.frag/misc.frag read lighting and fog from it.
+    cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutBinding textureBinding{};
     textureBinding.binding = 0;
@@ -1624,8 +1626,10 @@ void RecreateSwapchain(int width, int height)
     {
         vkb::SwapchainBuilder swapchainBuilder{device, surface};
         swapchainBuilder.set_desired_extent(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+        swapchainBuilder.set_desired_format({ VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR });
         swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
         swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
+        swapchainBuilder.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT); // F2 screenshots
         if (previous) swapchainBuilder.set_old_swapchain(*previous);
         FullscreenExclusive::ConfigureSwapchain(swapchainBuilder, window, exclusive);
         return swapchainBuilder.build();

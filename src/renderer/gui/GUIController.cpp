@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <chrono>
 #include <imgui.h>
+#include <imgui_internal.h>
+#include <cfloat>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <GLFW/glfw3.h>
@@ -20,6 +22,7 @@
 #include "inventory/ItemRegistry.hpp"
 #include "TickLoop.hpp"
 #include "SystemInfo.hpp"
+#include "platform/OS.hpp"
 #include "renderer/VulkanInit.hpp"
 #include "renderer/terrain/ChunkMesher.hpp"
 #include "renderer/misc/NonCubicMesher.hpp"
@@ -75,9 +78,20 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
     ImFontConfig fontConfig;
-    fontConfig.OversampleH = 2;
-    fontConfig.OversampleV = 2;
+    fontConfig.OversampleH = 1; // This is a pixel font, so oversampling looks weird.
+    fontConfig.OversampleV = 1;
+    fontConfig.PixelSnapH = true; // whole-pixel glyph positions, also for the pixel font
     io.Fonts->AddFontFromFileTTF("resources/fonts/Minecraft.ttf", 16.0f, &fontConfig);
+
+    // System fonts merged in as fallbacks for characters Minecraft.ttf lacks
+    // (box drawing, symbols, emoji in chat); glyphs load on demand.
+    for (const std::string& path : Platform::OS::GetFallbackFontPaths())
+    {
+        ImFontConfig fallbackConfig;
+        fallbackConfig.MergeMode = true;
+        fallbackConfig.PixelSnapH = true;
+        io.Fonts->AddFontFromFileTTF(path.c_str(), 16.0f, &fallbackConfig);
+    }
 
     // TODO: once an icon font (FontAwesome/Material) lands in
     // resources/fonts/, merge its glyphs into the same atlas here with
@@ -140,13 +154,6 @@ void GUIController::Shutdown()
 {
     if (!initialized) return;
 
-    // Item icon descriptor sets are allocated from ImGuiVulkan's own
-    // descriptor pool (ImGui_ImplVulkan_AddTexture, via ImGuiContext's
-    // DescriptorPool — see ImGuiVulkan::Init's init_info.DescriptorPool),
-    // so destroying that pool below (inside ImGuiVulkan::Shutdown) already
-    // implicitly frees them; only the single-layer VkImageViews
-    // GetItemIcon() created are this class's own resources, destroyed
-    // after the descriptor sets referencing them no longer matter.
     ImGuiVulkan::Shutdown(imguiContext);
 
     for (auto& [layer, icon] : itemIconCache) {
@@ -188,7 +195,7 @@ ImTextureID GUIController::GetItemIcon(uint16_t textureLayer)
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = textureManager->array.image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB; // Matches TextureManager::CreateArrayImage's own format.
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM; // Matches TextureManager::CreateArrayImage's own format.
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = 1; // Icons are drawn small; no need for the world pass's full mip chain.
@@ -235,7 +242,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
     imageInfo.extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1 };
     imageInfo.mipLevels = 1;
     imageInfo.arrayLayers = 1;
-    imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -282,7 +289,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = icon.image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     if (vkCreateImageView(GetDevice(), &viewInfo, nullptr, &icon.view) != VK_SUCCESS) {
         Log::Error("GUIController: failed to create image view for " + path);
@@ -324,7 +331,43 @@ void GUIController::NewFrame()
 
     ImGui_ImplGlfw_NewFrame();
     ImGuiVulkan::NewFrame(imguiContext);
+    ApplyGUIScale();
     ImGui::NewFrame();
+
+    // Events left queued for a later frame (input trickling) are already
+    // scaled; ApplyGUIScale only touches newer ones.
+    scaledInputEvents = ImGui::GetCurrentContext()->InputEventsQueue.Size;
+}
+
+// Graphics.GUIScale: 0 = Auto, else an integer multiplier. The UI is laid
+// out at DisplaySize / scale and drawn at scale x density (fonts are
+// rasterized at that density too, so text stays crisp). Mouse positions
+// arrive in window pixels and are scaled down to match.
+void GUIController::ApplyGUIScale()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    uint32_t setting = std::get<uint32_t>(state->config->Get("Graphics.GUIScale", uint32_t{0}));
+
+    // Auto: the largest scale that keeps at least a 640x360 layout.
+    float scale = static_cast<float>(setting);
+    if (setting == 0)
+    {
+        scale = std::floor(std::min(io.DisplaySize.x / 640.0f, io.DisplaySize.y / 360.0f));
+    }
+    scale = std::max(1.0f, scale);
+    guiScale = scale;
+
+    io.DisplaySize = ImVec2(io.DisplaySize.x / scale, io.DisplaySize.y / scale);
+    io.DisplayFramebufferScale = ImVec2(io.DisplayFramebufferScale.x * scale, io.DisplayFramebufferScale.y * scale);
+
+    ImVector<ImGuiInputEvent>& events = ImGui::GetCurrentContext()->InputEventsQueue;
+    for (int i = std::min(scaledInputEvents, events.Size); i < events.Size; i++)
+    {
+        if (events[i].Type != ImGuiInputEventType_MousePos) continue;
+        if (events[i].MousePos.PosX == -FLT_MAX) continue; // "mouse unavailable" marker
+        events[i].MousePos.PosX /= scale;
+        events[i].MousePos.PosY /= scale;
+    }
 }
 
 void GUIController::Update(float deltaTime)
@@ -548,14 +591,145 @@ void GUIController::Render(VkCommandBuffer commandBuffer)
     }
 
     ImGui::Render();
+    AddTextShadows(ImGui::GetDrawData());
     ImGuiVulkan::RenderDrawData(imguiContext, commandBuffer);
 }
 
+// Vanilla-style text shadow on all UI text: a black copy 2 px down-right,
+// drawn right before the text it belongs to. Text is identified as font
+// atlas triangles not sampling the atlas' white pixel (solid shapes do);
+// anti-aliased lines are kept off the atlas (see ApplyVolcanoTheme).
+void GUIController::AddTextShadows(ImDrawData* drawData)
+{
+    constexpr float offset = 2.0f;
+    ImFontAtlas* atlas = ImGui::GetIO().Fonts;
+    ImVec2 white = atlas->TexUvWhitePixel;
+
+    for (ImDrawList* list : drawData->CmdLists)
+    {
+        ImVector<ImDrawIdx> newIndices;
+        newIndices.reserve(list->IdxBuffer.Size * 2);
+        auto isText = [&](const ImDrawVert& vertex) { return vertex.uv.x != white.x || vertex.uv.y != white.y; };
+
+        for (ImDrawCmd& cmd : list->CmdBuffer)
+        {
+            unsigned int newOffset = static_cast<unsigned int>(newIndices.Size);
+            const ImDrawIdx* indices = list->IdxBuffer.Data + cmd.IdxOffset;
+            bool fontCmd = cmd.UserCallback == nullptr && cmd.TexRef._TexData == atlas->TexData;
+
+            unsigned int i = 0;
+            while (i < cmd.ElemCount)
+            {
+                // A run of consecutive text triangles: shadows first, then the text.
+                unsigned int runEnd = i;
+                while (fontCmd && runEnd + 3 <= cmd.ElemCount
+                    && isText(list->VtxBuffer[cmd.VtxOffset + indices[runEnd]])
+                    && isText(list->VtxBuffer[cmd.VtxOffset + indices[runEnd + 1]])
+                    && isText(list->VtxBuffer[cmd.VtxOffset + indices[runEnd + 2]]))
+                {
+                    runEnd += 3;
+                }
+
+                if (runEnd == i)
+                {
+                    newIndices.push_back(indices[i++]);
+                    continue;
+                }
+
+                for (unsigned int k = i; k < runEnd; k++)
+                {
+                    ImDrawVert shadow = list->VtxBuffer[cmd.VtxOffset + indices[k]];
+                    shadow.pos.x += offset;
+                    shadow.pos.y += offset;
+                    shadow.col &= IM_COL32_A_MASK; // black, same alpha as the text
+                    newIndices.push_back(static_cast<ImDrawIdx>(list->VtxBuffer.Size - static_cast<int>(cmd.VtxOffset)));
+                    list->VtxBuffer.push_back(shadow);
+                }
+                for (unsigned int k = i; k < runEnd; k++) newIndices.push_back(indices[k]);
+                i = runEnd;
+            }
+
+            cmd.IdxOffset = newOffset;
+            cmd.ElemCount = static_cast<unsigned int>(newIndices.Size) - newOffset;
+        }
+
+        list->IdxBuffer.swap(newIndices);
+    }
+
+    drawData->TotalVtxCount = 0;
+    drawData->TotalIdxCount = 0;
+    for (ImDrawList* list : drawData->CmdLists)
+    {
+        drawData->TotalVtxCount += list->VtxBuffer.Size;
+        drawData->TotalIdxCount += list->IdxBuffer.Size;
+    }
+}
+
+// A tooltip beside [itemMin, itemMax] rather than under the cursor, so it
+// never covers neighboring settings. Clamped to the screen.
+void GUIController::DrawSideTooltip(const std::string& text, ImVec2 itemMin, ImVec2 itemMax, bool onLeft)
+{
+    constexpr float gap = 12.0f;
+    constexpr float maxWidth = 220.0f;
+    ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImVec2 padding = ImGui::GetStyle().WindowPadding;
+
+    // Measure first so the side and clamping are decided before drawing.
+    float wrapWidth = maxWidth - padding.x * 2.0f;
+    ImVec2 textSize = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrapWidth);
+    ImVec2 size(textSize.x + padding.x * 2.0f, textSize.y + padding.y * 2.0f);
+
+    // Preferred side, or the other one if it doesn't fit there.
+    float roomLeft = itemMin.x - gap;
+    float roomRight = display.x - itemMax.x - gap;
+    if (onLeft && roomLeft < size.x && roomRight > roomLeft) onLeft = false;
+    else if (!onLeft && roomRight < size.x && roomLeft > roomRight) onLeft = true;
+
+    float x = onLeft ? itemMin.x - gap - size.x : itemMax.x + gap;
+    float y = (itemMin.y + itemMax.y - size.y) * 0.5f;
+    x = std::clamp(x, 0.0f, std::max(0.0f, display.x - size.x));
+    y = std::clamp(y, 0.0f, std::max(0.0f, display.y - size.y));
+
+    ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    ImGui::Begin("##settingTooltip", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs
+        | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::End();
+}
+
+bool GUIController::IsLabeledControl(GUI::GUIComponent* component)
+{
+    GUI::GUIComponentType type = component->GetType();
+    return type == GUI::GUIComponentType::SLIDER || type == GUI::GUIComponentType::NUMBER
+        || type == GUI::GUIComponentType::OPTION;
+}
+
 // Render a single component the same way regardless of whether it lives in
-// a HUD window or a fullscreen Screen.
-void GUIController::RenderComponent(GUI::GUIComponent* component)
+// a HUD window or a fullscreen Screen. With labelWidth > 0, labeled controls
+// draw their label on the left and only the value in the control itself.
+void GUIController::RenderComponent(GUI::GUIComponent* component, float width, float labelWidth)
 {
     if (component == nullptr || !component->IsVisible()) return;
+
+    // Taller frames to match DrawStyledButton's height.
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+        ImVec2(ImGui::GetStyle().FramePadding.x, ImGui::GetStyle().FramePadding.y + 4.0f));
+
+    bool labeled = labelWidth > 0.0f && IsLabeledControl(component);
+    float controlWidth = width;
+    if (labeled)
+    {
+        float rowX = ImGui::GetCursorPosX();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(component->GetLabel().c_str());
+        ImGui::SameLine(rowX + labelWidth);
+        controlWidth = width - labelWidth;
+    }
+    std::string id = "##" + component->GetLabel();
 
     switch (component->GetType())
     {
@@ -565,7 +739,7 @@ void GUIController::RenderComponent(GUI::GUIComponent* component)
             break;
         }
         case GUI::GUIComponentType::BUTTON: {
-            if (DrawStyledButton(component->GetLabel(), ImVec2(240.0f, 0.0f)))
+            if (DrawStyledButton(component->GetLabel(), ImVec2(width, ImGui::GetFrameHeight())))
             {
                 component->Click();
                 Log::Debug("[DEBUG] Button named '" + component->GetLabel() + "' clicked.");
@@ -576,7 +750,7 @@ void GUIController::RenderComponent(GUI::GUIComponent* component)
             char* buffer = component->GetTextBuffer();
             if (buffer != nullptr)
             {
-                ImGui::SetNextItemWidth(240.0f);
+                ImGui::SetNextItemWidth(width);
                 ImGui::InputText(component->GetLabel().c_str(), buffer, component->GetTextBufferCapacity());
             }
             break;
@@ -584,10 +758,17 @@ void GUIController::RenderComponent(GUI::GUIComponent* component)
         case GUI::GUIComponentType::SLIDER: {
             auto* slider = static_cast<GUI::Slider*>(component);
             if (!slider->editing) slider->editValue = slider->GetValue();
-            std::string format = slider->GetLabel() + ": %d" + slider->GetSuffix();
-            ImGui::SetNextItemWidth(240.0f);
-            ImGui::SliderInt(("##" + slider->GetLabel()).c_str(), &slider->editValue,
-                slider->GetMin(), slider->GetMax(), format.c_str());
+            // printf-format text: escape '%' so "50%" survives.
+            auto escape = [](std::string text)
+            {
+                for (size_t i = text.find('%'); i != std::string::npos; i = text.find('%', i + 2)) text.insert(i, "%");
+                return text;
+            };
+            std::string format = (labeled ? "" : escape(slider->GetLabel()) + ": ") + "%d" + escape(slider->GetSuffix());
+            ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 6.0f); // thin grab, never covers the text
+            ImGui::SetNextItemWidth(controlWidth);
+            ImGui::SliderInt(id.c_str(), &slider->editValue, slider->GetMin(), slider->GetMax(), format.c_str());
+            ImGui::PopStyleVar();
             slider->editing = ImGui::IsItemActive();
             if (ImGui::IsItemDeactivatedAfterEdit())
             {
@@ -598,8 +779,8 @@ void GUIController::RenderComponent(GUI::GUIComponent* component)
         case GUI::GUIComponentType::NUMBER: {
             auto* input = static_cast<GUI::NumberInput*>(component);
             if (!input->editing) input->editValue = input->GetValue();
-            ImGui::SetNextItemWidth(240.0f);
-            ImGui::InputInt(input->GetLabel().c_str(), &input->editValue, 0, 0);
+            ImGui::SetNextItemWidth(controlWidth);
+            ImGui::InputInt(labeled ? id.c_str() : input->GetLabel().c_str(), &input->editValue, 0, 0);
             input->editing = ImGui::IsItemActive();
             if (ImGui::IsItemDeactivatedAfterEdit())
             {
@@ -609,13 +790,34 @@ void GUIController::RenderComponent(GUI::GUIComponent* component)
         }
         case GUI::GUIComponentType::OPTION: {
             auto* option = static_cast<GUI::OptionButton*>(component);
-            if (DrawStyledButton(option->GetDisplayText() + "##" + option->GetLabel(), ImVec2(240.0f, 0.0f)))
+            if (!labeled)
             {
-                option->Click();
+                if (DrawStyledButton(option->GetDisplayText() + id, ImVec2(controlWidth, ImGui::GetFrameHeight())))
+                {
+                    option->Click();
+                }
+                break;
+            }
+
+            // Dropdown listing every option, current one highlighted.
+            ImGui::SetNextItemWidth(controlWidth);
+            if (ImGui::BeginCombo(id.c_str(), option->GetValueText().c_str(), ImGuiComboFlags_HeightLarge))
+            {
+                const std::vector<std::string>& options = option->GetOptions();
+                size_t current = option->GetIndex();
+                for (size_t i = 0; i < options.size(); i++)
+                {
+                    bool selected = i == current;
+                    if (ImGui::Selectable(options[i].c_str(), selected)) option->Select(i);
+                    if (selected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
             }
             break;
         }
     }
+
+    ImGui::PopStyleVar();
 }
 
 // Draw the active Screen fullscreen, title first, then its components
@@ -627,6 +829,12 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     // frame), not the launch-time Window.Width/Height config — otherwise a
     // resize or F11 fullscreen leaves this covering only the old size.
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
+    // Keyboard/gamepad navigation only works in the focused window, so a
+    // newly opened screen takes focus (its first control gets it below).
+    static const GUI::Screen* lastScreen = nullptr;
+    bool screenJustOpened = lastScreen != &screen;
+    lastScreen = &screen;
+    if (screenJustOpened) ImGui::SetNextWindowFocus();
     // No window background — the engine's world passes draw the 3D scene
     // into this same render pass before GUIController::Render runs, so the
     // world shows through behind the screen's own components.
@@ -669,11 +877,77 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     }
     else
     {
-        constexpr float contentWidth = 240.0f;
+        // Labeled controls: label column as wide as this screen's longest
+        // label, laid out in screen.columns columns. Buttons/text span the
+        // middle on their own row.
+        constexpr float buttonWidth = 240.0f;
+        constexpr float controlWidth = 160.0f;
+        constexpr float columnGap = 16.0f;
+        constexpr float labelGap = 12.0f;
+
+        float labelWidth = 0.0f;
         for (GUI::GUIComponent* component : screen.components)
         {
-            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - contentWidth) * 0.5f);
-            RenderComponent(component);
+            if (IsLabeledControl(component))
+            {
+                labelWidth = std::max(labelWidth, ImGui::CalcTextSize(component->GetLabel().c_str()).x + labelGap);
+            }
+        }
+        int columns = std::max(1, screen.columns);
+        float cellWidth = labelWidth + controlWidth;
+        float gridLeft = (ImGui::GetWindowWidth() - (columns * cellWidth + (columns - 1) * columnGap)) * 0.5f;
+
+        int cell = 0; // position within the current run of labeled controls
+        bool first = true;
+        const GUI::GUIComponent* hovered = nullptr;
+        ImVec2 hoveredMin, hoveredMax;
+        bool hoveredOnLeft = false;
+        for (GUI::GUIComponent* component : screen.components)
+        {
+            float width = buttonWidth;
+            int column = 0;
+            if (IsLabeledControl(component))
+            {
+                column = cell % columns;
+                if (column == 0) ImGui::SetCursorPosX(gridLeft);
+                else ImGui::SameLine(gridLeft + column * (cellWidth + columnGap));
+                width = cellWidth;
+                cell++;
+            }
+            else
+            {
+                cell = 0;
+                if (component->GetType() == GUI::GUIComponentType::TEXT)
+                {
+                    width = ImGui::CalcTextSize(component->GetLabel().c_str()).x;
+                }
+                ImGui::SetCursorPosX((ImGui::GetWindowWidth() - width) * 0.5f);
+            }
+
+            ImVec2 cellMin = ImGui::GetCursorScreenPos();
+            RenderComponent(component, width, IsLabeledControl(component) ? labelWidth : 0.0f);
+            ImVec2 cellMax(cellMin.x + width, ImGui::GetItemRectMax().y);
+
+            if (!component->GetTooltip().empty() && ImGui::IsMouseHoveringRect(cellMin, cellMax))
+            {
+                hovered = component;
+                hoveredMin = cellMin;
+                hoveredMax = cellMax;
+                // Outer side: left for the left column of a multi-column grid.
+                hoveredOnLeft = columns > 1 && IsLabeledControl(component) && column == 0;
+            }
+
+            if (first && component->GetType() != GUI::GUIComponentType::TEXT)
+            {
+                if (screenJustOpened) ImGui::SetItemDefaultFocus();
+                first = false;
+            }
+        }
+
+        // Not while a dropdown is open; it would cover it.
+        if (hovered != nullptr && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
+        {
+            DrawSideTooltip(hovered->GetTooltip(), hoveredMin, hoveredMax, hoveredOnLeft);
         }
     }
 
@@ -1236,7 +1510,7 @@ void GUIController::RenderInventoryScreen()
     ImGui::Dummy(ImVec2(GRID_WIDTH, (y + SLOT_SIZE) - contentTop + 24.0f));
 }
 
-// Dark navy panels with a cyan border tint, laid on top of StyleColorsDark.
+// Dark navy panels with a orange border tint, laid on top of StyleColorsDark.
 // Called once at Init — component-level drawing (DrawStyledButton) pulls
 // its own hand-picked colors rather than reading these back, since ImGui's
 // built-in widget colors don't cover custom-drawn glow/border fills.
@@ -1246,23 +1520,24 @@ void GUIController::ApplyVolcanoTheme()
     style.WindowRounding = 8.0f;
     style.ChildRounding = 8.0f;
     style.PopupRounding = 8.0f;
-    style.FrameRounding = 6.0f;
-    style.GrabRounding = 6.0f;
-    style.WindowBorderSize = 1.0f;
-    style.FrameBorderSize = 1.0f;
+    style.FrameRounding = 8.0f;
+    style.GrabRounding = 8.0f;
+    style.WindowBorderSize = 2.0f;
+    style.FrameBorderSize = 2.0f;
+    // Keeps lines off the font atlas so AddTextShadows only shadows text.
+    style.AntiAliasedLinesUseTex = false;
 
     ImVec4* colors = style.Colors;
-    const ImVec4 panelDark  = ImVec4(0.04f, 0.06f, 0.10f, 0.96f);
-    const ImVec4 panelMid   = ImVec4(0.07f, 0.10f, 0.16f, 0.96f);
-    const ImVec4 panelLight = ImVec4(0.10f, 0.14f, 0.21f, 1.00f);
-    const ImVec4 cyan       = ImVec4(0.20f, 0.85f, 0.95f, 1.00f);
-    const ImVec4 cyanDim    = ImVec4(0.20f, 0.85f, 0.95f, 0.35f);
-    const ImVec4 cyanHover  = ImVec4(0.35f, 0.92f, 1.00f, 0.55f);
+    const ImVec4 panelDark  = ImVec4(0.040f, 0.040f, 0.040f, 1.000f);
+    const ImVec4 panelMid   = ImVec4(0.100f, 0.100f, 0.100f, 1.000f);
+    const ImVec4 panelLight = ImVec4(0.160f, 0.160f, 0.160f, 1.000f);
+    const ImVec4 orange     = ImVec4(1.000f, 0.710f, 0.063f, 1.000f); // #fbb510
+    const ImVec4 orangeDim  = ImVec4(0.957f, 0.353f, 0.043f, 1.000f); // #f45a0b
 
     colors[ImGuiCol_WindowBg]         = panelDark;
     colors[ImGuiCol_ChildBg]          = panelDark;
     colors[ImGuiCol_PopupBg]          = panelDark;
-    colors[ImGuiCol_Border]           = cyanDim;
+    colors[ImGuiCol_Border]           = panelLight;
     colors[ImGuiCol_BorderShadow]     = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
     colors[ImGuiCol_FrameBg]          = panelMid;
     colors[ImGuiCol_FrameBgHovered]   = panelLight;
@@ -1270,16 +1545,16 @@ void GUIController::ApplyVolcanoTheme()
     colors[ImGuiCol_TitleBg]          = panelDark;
     colors[ImGuiCol_TitleBgActive]    = panelDark;
     colors[ImGuiCol_TitleBgCollapsed] = panelDark;
-    colors[ImGuiCol_Button]           = panelMid;
-    colors[ImGuiCol_ButtonHovered]    = panelLight;
-    colors[ImGuiCol_ButtonActive]     = cyanDim;
-    colors[ImGuiCol_CheckMark]        = cyan;
-    colors[ImGuiCol_SliderGrab]       = cyan;
-    colors[ImGuiCol_SliderGrabActive] = cyanHover;
-    colors[ImGuiCol_Separator]        = cyanDim;
-    colors[ImGuiCol_SeparatorHovered] = cyanHover;
-    colors[ImGuiCol_Text]             = ImVec4(0.92f, 0.96f, 1.00f, 1.00f);
-    colors[ImGuiCol_TextDisabled]     = ImVec4(0.50f, 0.55f, 0.60f, 1.00f);
+    colors[ImGuiCol_Button]           = panelDark;
+    colors[ImGuiCol_ButtonHovered]    = orange;
+    colors[ImGuiCol_ButtonActive]     = orangeDim;
+    colors[ImGuiCol_CheckMark]        = orange;
+    colors[ImGuiCol_SliderGrab]       = orange;
+    colors[ImGuiCol_SliderGrabActive] = orangeDim;
+    colors[ImGuiCol_Separator]        = orangeDim;
+    colors[ImGuiCol_SeparatorHovered] = orangeDim;
+    colors[ImGuiCol_Text]             = ImVec4(0.950f, 0.950f, 0.950f, 1.000f);
+    colors[ImGuiCol_TextDisabled]     = ImVec4(0.600f, 0.600f, 0.600f, 1.000f);
 }
 
 // See header: flat-glow button drawn with ImDrawList so it doesn't depend
@@ -1291,33 +1566,26 @@ bool GUIController::DrawStyledButton(const std::string& label, ImVec2 size)
     if (size.y <= 0.0f) size.y = ImGui::GetFrameHeight() + 8.0f;
 
     ImVec2 pos = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton(label.c_str(), size);
-    bool hovered = ImGui::IsItemHovered();
+    // InvisibleButton's own return covers keyboard/gamepad activation too;
+    // IsItemClicked alone is mouse-only. Nav focus draws like hover.
+    bool clicked = ImGui::InvisibleButton(label.c_str(), size);
+    bool hovered = ImGui::IsItemHovered() || ImGui::IsItemFocused();
     bool active = ImGui::IsItemActive();
-    bool clicked = ImGui::IsItemClicked();
 
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImVec2 rectMax = ImVec2(pos.x + size.x, pos.y + size.y);
     constexpr float rounding = 6.0f;
 
+    // Only filled when active.
     ImU32 fill = active
-        ? IM_COL32(20, 60, 70, 255)
+        ? IM_COL32(244, 90, 11, 255)
         : hovered
-            ? IM_COL32(16, 48, 58, 255)
-            : IM_COL32(12, 32, 40, 235);
+            ? IM_COL32(16, 16, 16, 255)
+            : IM_COL32(16, 16, 16, 255);
+    // When not active but hovered, it's just the border.
     ImU32 border = (hovered || active)
-        ? IM_COL32(90, 235, 255, 255)
-        : IM_COL32(60, 170, 190, 160);
-
-    // Soft outer glow on hover/active — a slightly larger, low-alpha rect
-    // behind the button, since ImGui has no native blur/shadow primitive.
-    if (hovered || active)
-    {
-        drawList->AddRectFilled(
-            ImVec2(pos.x - 3.0f, pos.y - 3.0f),
-            ImVec2(rectMax.x + 3.0f, rectMax.y + 3.0f),
-            IM_COL32(60, 220, 255, active ? 60 : 35), rounding + 3.0f);
-    }
+        ? IM_COL32(244, 90, 11, 255)
+        : IM_COL32(32, 32, 32, 255);
 
     drawList->AddRectFilled(pos, rectMax, fill, rounding);
     drawList->AddRect(pos, rectMax, border, rounding, 0, 1.5f);

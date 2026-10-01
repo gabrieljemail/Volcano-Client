@@ -14,11 +14,15 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     float lightingEnabled;
     float brightnessFactor;
     float skyLightFactor;
-    float lightCurveBias;
+    float lightFalloff;
     float shadeTop;
     float shadeBottom;
     float shadeNorthSouth;
     float shadeEastWest;
+    vec4 fogColor;
+    vec4 cameraPosition;
+    float fogStart;
+    float fogEnd;
 } camera;
 
 layout(location = 0) in uvec3 packedData;
@@ -29,6 +33,7 @@ layout(location = 2) out float fragSkyLight;
 layout(location = 3) flat out uint fragBiomeTinted;
 layout(location = 4) out float fragBlockLight;
 layout(location = 5) out float fragFaceShade;
+layout(location = 6) out vec3 fragViewOffset; // world position relative to the camera, for fog
 
 // Vanilla's hardcoded per-face diffuse shading (LevelRenderer::getShade).
 // normalIndex matches ChunkMesher's FaceIndexFor: 0=Up, 1=Down, 2=North,
@@ -82,6 +87,7 @@ void main() {
     vec3 localPos = vec3(x, y, z);
     vec4 worldPos = pc.model * vec4(localPos, 1.0);
     gl_Position = camera.proj * camera.view * worldPos;
+    fragViewOffset = worldPos.xyz - camera.cameraPosition.xyz;
 
     fragUV = vec2(u, v);
     fragLayer = textureLayer;

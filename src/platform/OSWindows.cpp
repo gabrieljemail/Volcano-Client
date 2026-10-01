@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <psapi.h>
 #include <dbghelp.h>
+#include <timeapi.h>
 #include <intrin.h>
 #include <cstdio>
 #include <cstdlib>
@@ -97,9 +98,48 @@ std::string OS::GetExecutablePath()
     return std::string(path, length);
 }
 
+std::vector<std::string> OS::GetFallbackFontPaths()
+{
+    char windowsDir[MAX_PATH];
+    UINT length = GetWindowsDirectoryA(windowsDir, MAX_PATH);
+    std::string fonts = std::string(windowsDir, length) + "\\Fonts\\";
+
+    std::vector<std::string> paths;
+    for (const char* name : { "segoeui.ttf", "seguisym.ttf", "seguiemj.ttf" })
+    {
+        std::string path = fonts + name;
+        if (GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES) paths.push_back(path);
+    }
+    return paths;
+}
+
 bool OS::IsDebuggerAttached()
 {
     return IsDebuggerPresent() != FALSE;
+}
+
+void OS::PreciseSleep(int64_t microseconds)
+{
+    if (microseconds <= 0) return;
+
+    // High-resolution waitable timer (Windows 10 1803+); falls back to a
+    // 1 ms-period Sleep where unavailable.
+    thread_local HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr,
+        CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (timer)
+    {
+        LARGE_INTEGER due;
+        due.QuadPart = -microseconds * 10; // relative, in 100 ns units
+        if (SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0))
+        {
+            WaitForSingleObject(timer, INFINITE);
+            return;
+        }
+    }
+
+    static bool periodSet = (timeBeginPeriod(1), true);
+    (void)periodSet;
+    Sleep(static_cast<DWORD>(microseconds / 1000));
 }
 
 std::string OS::CaptureStackTrace(int skipFrames)

@@ -10,9 +10,10 @@
 
 namespace Volcano::GUI {
 
-// Vanilla-style "Label: Value" button that cycles through a list of options
-// on click. The option list can be filled lazily (e.g. monitor video modes,
-// which need GLFW running) via SetOptionProvider.
+// A choice from a fixed list of options: drawn as a dropdown on screens, or
+// a "Label: Value" button that cycles on click elsewhere. The option list
+// can be filled lazily (e.g. monitor video modes, which need GLFW running)
+// via SetOptionProvider.
 class OptionButton : public GUIComponent
 {
 public:
@@ -24,12 +25,23 @@ public:
 
     void SetOptionProvider(std::function<std::vector<std::string>()> provider) { optionProvider = std::move(provider); }
 
-    std::string GetDisplayText()
+    const std::vector<std::string>& GetOptions()
+    {
+        EnsureOptions();
+        return options;
+    }
+    size_t GetIndex() const { return getter(); }
+    void Select(size_t index) { if (index != getter()) setter(index); }
+
+    // Just the current option ("On"); GetDisplayText adds the label ("VSync: On").
+    std::string GetValueText()
     {
         EnsureOptions();
         size_t index = getter();
-        return GetLabel() + ": " + (index < options.size() ? options[index] : "?");
+        return index < options.size() ? options[index] : "?";
     }
+
+    std::string GetDisplayText() { return GetLabel() + ": " + GetValueText(); }
 
     void Click() override
     {

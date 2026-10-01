@@ -15,6 +15,9 @@
 #include "../../TextureManager.hpp"
 #include "../../models/CameraUBO.hpp"
 #include "../../models/SlabBuffer.hpp"
+#include "../../Screenshot.hpp"
+#include <utility>
+#include <vector>
 #include "../../gui/GUIController.hpp"
 #include "../../../GlobalState.hpp"
 #include "../../../Logger.hpp"
@@ -88,6 +91,12 @@ void VulkanRenderEngine::StopRendering()
     }
     hizBuildPass.Destroy();
     DestroyPasses();
+
+    if (screenshotBuffer.buffer != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(vmaAllocator, screenshotBuffer.buffer, screenshotBuffer.allocation);
+        screenshotBuffer = AllocatedBuffer{};
+    }
 }
 
 void VulkanRenderEngine::Shutdown()
@@ -178,6 +187,8 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
     RecordPasses(frame);
 
     EndMainPass(cmd);
+    bool capture = screenshotRequested.exchange(false);
+    if (capture) RecordScreenshotCopy(cmd);
     // Outside the render pass instance now (compute can't run inside one) —
     // see HiZBuildPass's own comment on why it isn't a normal RenderPass.
     hizBuildPass.Record(cmd, currentFrame, frame.viewProj);
@@ -185,6 +196,7 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
     SubmitCommandBuffer(cmd);
     PresentImage();
     NotifyFramePresented();
+    if (capture) FinishScreenshot();
 
     currentFrame = (currentFrame + 1) % maxFramesInFlight;
 }
@@ -219,8 +231,9 @@ void VulkanRenderEngine::BeginCommandBuffer(VkCommandBuffer cmd)
 void VulkanRenderEngine::UploadCamera(const SceneView& scene)
 {
     CameraUBO ubo{ scene.view, scene.proj, scene.lightingEnabled ? 1.0f : 0.0f,
-        scene.brightnessFactor, scene.dayBrightness, scene.lightCurveBias,
-        scene.shadeTop, scene.shadeBottom, scene.shadeNorthSouth, scene.shadeEastWest };
+        scene.brightnessFactor, scene.dayBrightness, scene.lightFalloff,
+        scene.shadeTop, scene.shadeBottom, scene.shadeNorthSouth, scene.shadeEastWest,
+        glm::vec4(scene.skyColor, 1.0f), glm::vec4(scene.cameraPosition, 1.0f), scene.fogStart, scene.fogEnd };
     std::memcpy(cameraUBOsMapped[currentFrame], &ubo, sizeof(ubo));
 }
 
@@ -261,6 +274,96 @@ void VulkanRenderEngine::EndMainPass(VkCommandBuffer cmd)
     vkCmdEndRenderPass(cmd);
     // vkEndCommandBuffer is NOT here: SubmitFrame still records HiZBuildPass
     // after the render pass ends — see its own vkEndCommandBuffer call.
+}
+
+void VulkanRenderEngine::RecordScreenshotCopy(VkCommandBuffer cmd)
+{
+    VkDeviceSize size = static_cast<VkDeviceSize>(swapchainExtent.width) * swapchainExtent.height * 4;
+    if (screenshotBuffer.buffer != VK_NULL_HANDLE && screenshotBuffer.info.size < size)
+    {
+        vmaDestroyBuffer(vmaAllocator, screenshotBuffer.buffer, screenshotBuffer.allocation);
+        screenshotBuffer = AllocatedBuffer{};
+    }
+    if (screenshotBuffer.buffer == VK_NULL_HANDLE)
+    {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = size;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo allocInfo{};
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+        allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        if (vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &screenshotBuffer.buffer,
+                &screenshotBuffer.allocation, &screenshotBuffer.info) != VK_SUCCESS)
+        {
+            Log::Error("Screenshot failed: couldn't allocate a readback buffer.");
+            screenshotBuffer = AllocatedBuffer{};
+            return;
+        }
+    }
+    screenshotExtent = swapchainExtent;
+
+    std::vector<VkImage> images = swapchain.get_images().value();
+    VkImage image = images[imageIndex];
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.imageExtent = { swapchainExtent.width, swapchainExtent.height, 1 };
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, screenshotBuffer.buffer, 1, &region);
+
+    // Back to present, and make the copy visible to the host read.
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = 0;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    VkMemoryBarrier hostBarrier{};
+    hostBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    hostBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    hostBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+        0, 1, &hostBarrier, 0, nullptr, 0, nullptr);
+}
+
+void VulkanRenderEngine::FinishScreenshot()
+{
+    if (screenshotBuffer.buffer == VK_NULL_HANDLE) return;
+
+    // A one-frame stall on F2 is fine.
+    vkWaitForFences(GetDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+    vmaInvalidateAllocation(vmaAllocator, screenshotBuffer.allocation, 0, VK_WHOLE_SIZE);
+
+    size_t pixelCount = static_cast<size_t>(screenshotExtent.width) * screenshotExtent.height;
+    std::vector<uint8_t> rgba(pixelCount * 4);
+    std::memcpy(rgba.data(), screenshotBuffer.info.pMappedData, rgba.size());
+
+    // Most Windows swapchains are BGRA; PNG wants RGBA. Alpha is forced
+    // opaque (the swapchain's alpha isn't meaningful).
+    VkFormat format = swapchain.image_format;
+    bool bgra = format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
+    for (size_t i = 0; i < pixelCount; i++)
+    {
+        if (bgra) std::swap(rgba[i * 4], rgba[i * 4 + 2]);
+        rgba[i * 4 + 3] = 255;
+    }
+
+    Screenshot::SaveAsync(std::move(rgba), screenshotExtent.width, screenshotExtent.height,
+        state->config->ResolvePath("screenshots"));
 }
 
 void VulkanRenderEngine::SubmitCommandBuffer(VkCommandBuffer cmd)

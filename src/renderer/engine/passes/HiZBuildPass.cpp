@@ -58,7 +58,7 @@ void HiZBuildPass::BeginFrame(uint32_t frameIndex)
 {
     // Periodic stats from the frames since the last log line.
     auto now = std::chrono::steady_clock::now();
-    if (now - lastLogTime >= std::chrono::seconds(2))
+    if (now - lastLogTime >= std::chrono::seconds(2) && occlusionSnapshot.tested > 0)
     {
         lastLogTime = now;
         Log::Info("[HIZ] occlusion: " + std::to_string(occlusionSnapshot.occluded) + " of "

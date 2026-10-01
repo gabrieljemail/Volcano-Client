@@ -91,6 +91,9 @@ public:
     // Settings screen change takes effect live.
     virtual void ApplyWindowSettings() = 0;
 
+    // F2: saves the next presented frame (HUD included) to screenshots/.
+    virtual void RequestScreenshot() = 0;
+
     // ---- Passes ----
 
     // Passes run in list order, all inside one render pass sharing one

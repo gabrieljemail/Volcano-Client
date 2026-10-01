@@ -32,6 +32,10 @@ public:
     // Static textures only for now — .mcmeta animation frames are ignored (frame 0 used).
     void LoadResourcePack(const std::string& resourcePackRoot);
 
+    // Frees the texture array. Must run after rendering stops and before
+    // the VMA allocator is destroyed (RenderEngine::Shutdown).
+    void Destroy();
+
     uint16_t GetLayerIndex(const std::string& textureName) const;
 
     // Same lookup as GetLayerIndex, without its "not found" log line — for

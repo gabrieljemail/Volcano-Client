@@ -29,6 +29,9 @@ public:
     void AddChild(GUIComponent* child) { children.push_back(child); }
     void RemoveChild(GUIComponent* ptr) { std::erase(children, ptr); if (ptr) delete ptr; }
     void SetLabel(const std::string& newLabel) { label = newLabel; }
+    // Shown beside the component on hover (see GUIController::RenderScreen).
+    void SetTooltip(const std::string& text) { tooltip = text; }
+    const std::string& GetTooltip() const { return tooltip; }
     void SetVisibile(bool visibility) { visible = visibility; }
     void SetParent(GUIComponent* newParent) { parent = newParent; parent->AddChild(this); }
 
@@ -54,6 +57,7 @@ private:
     GUIComponentType type;
     bool visible = true;
     std::string label;
+    std::string tooltip;
     std::vector<GUIComponent*> children;
     GUIComponent* parent = nullptr;
 };

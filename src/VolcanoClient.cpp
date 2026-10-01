@@ -537,6 +537,7 @@ int main(int argc, char** argv)
     // buffers MeshingThread writes into.
     meshingThread.Stop();
 
+    textureManager.Destroy();
     renderEngine.Shutdown();
 
     return 0;

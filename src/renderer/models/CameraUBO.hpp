@@ -21,8 +21,8 @@ struct CameraUBO {
     // block light stays constant, matching vanilla.
     float skyLightFactor = 1.0f;
 
-    // Shapes LightCurve's mid-range falloff — see terrain.frag. 0 = linear.
-    float lightCurveBias = 5.0f;
+    // LightCurve's falloff (Graphics.LightFalloff): 0 = linear, 3 = vanilla.
+    float lightFalloff = 3.0f;
 
     // Vanilla's hardcoded per-face diffuse shading (LevelRenderer::getShade)
     // — a flat multiplier by which cardinal direction a face points, giving
@@ -37,6 +37,14 @@ struct CameraUBO {
     float shadeBottom = 0.5f;
     float shadeNorthSouth = 0.8f;
     float shadeEastWest = 0.6f;
+
+    // Distance fog toward the horizon sky color (rgb; w unused), measured
+    // cylindrically from cameraPosition (xyz; w unused). std140 offsets 160,
+    // 176, 192, 196 — must match every shader that declares them.
+    glm::vec4 fogColor{0.0f};
+    glm::vec4 cameraPosition{0.0f};
+    float fogStart = 0.0f;
+    float fogEnd = 0.0f;
 };
 
 } // namespace Volcano

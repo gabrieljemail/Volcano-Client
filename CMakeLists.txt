@@ -48,6 +48,10 @@ list(APPEND SOURCES
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# 32-bit ImGui indices: GUIController::AddTextShadows appends vertices to
+# draw lists, which could overflow 16-bit indices on a busy frame.
+target_compile_definitions(${PROJECT_NAME} PRIVATE "ImDrawIdx=unsigned int")
+
 # Precompiled headers: vulkan.h and glm.hpp are both large, near-universally
 # included across src/renderer, and stable (no per-TU #define gates the way
 # vk_mem_alloc.h/stb_image.h need VMA_IMPLEMENTATION/STB_IMAGE_IMPLEMENTATION
@@ -102,7 +106,7 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
 # DbgHelp symbolizes crash stack traces on Windows; -rdynamic exports symbol
 # names so backtrace_symbols can on Linux.
 if(WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE Dbghelp)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Dbghelp Winmm)
 elseif(UNIX)
     target_link_options(${PROJECT_NAME} PRIVATE -rdynamic)
 endif()

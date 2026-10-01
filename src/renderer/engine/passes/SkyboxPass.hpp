@@ -2,20 +2,21 @@
 #ifndef VOLCANO_ENGINE_PASSES_SKYBOX_PASS_H
 #define VOLCANO_ENGINE_PASSES_SKYBOX_PASS_H
 
+#include <cstdint>
+#include <vector>
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 #include "../RenderPass.hpp"
 
 namespace Volcano::Engine::Passes {
 
-// The slowly rotating title-screen panorama — vanilla's CubeMap, drawn from
-// the six panorama_N.png faces under assets/minecraft/textures/gui/title/
-// background/. Runs first so everything else draws over it.
-//
-// Only draws while SceneView::menuBackground is set (the client isn't in a
-// play state yet / no chunks are loaded); in-game the sky stays the plain
-// clear color. If the faces can't be loaded the pass builds nothing and
-// Record() is a no-op, so the menu just shows the clear color.
+// The background cube, drawn first so everything else draws over it:
+// - in menus (SceneView::menuBackground), the slowly rotating title
+//   panorama — vanilla's CubeMap, from assets/minecraft/textures/gui/title/
+//   background/panorama_N.png;
+// - in game, the sky: a zenith-to-horizon gradient, the sun and moon
+//   (textures/environment/celestial/) on opposite sides, and a sunset glow.
+// A missing panorama falls back to a flat cube; the sky still works.
 class SkyboxPass : public RenderPass {
 public:
     static constexpr const char* NAME = "Skybox";
@@ -37,6 +38,12 @@ private:
     VkImageView cubeView = VK_NULL_HANDLE;
     VkSampler sampler = VK_NULL_HANDLE;
 
+    // Sun (layer 0) and the 8 moon phases (layers 1-8), all 32x32.
+    VkImage celestialImage = VK_NULL_HANDLE;
+    VmaAllocation celestialAllocation = VK_NULL_HANDLE;
+    VkImageView celestialView = VK_NULL_HANDLE;
+    VkSampler celestialSampler = VK_NULL_HANDLE;
+
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
@@ -45,6 +52,11 @@ private:
     VkPipeline pipeline = VK_NULL_HANDLE;
 
     bool LoadCubemap();
+    bool LoadCelestial();
+    // Uploads `layers` RGBA8 images of size x size into a new 2D array (or
+    // cube, if cube) image + view.
+    bool UploadLayers(const std::vector<const uint8_t*>& layers, uint32_t size, bool cube,
+                      VkImage& image, VmaAllocation& allocation, VkImageView& view);
     void CreateDescriptors();
     void CreatePipeline(const ShaderLibrary& shaders);
     void DestroyPipeline();
