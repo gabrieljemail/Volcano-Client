@@ -56,6 +56,11 @@ class Connection;
 // forward-declaration reason as TickLoop above.
 class InteractionManager;
 
+class AudioManager;
+class MusicController;
+class SoundRegistry;
+class ItemRenderer;
+
 // Defined in renderer/engine/RenderEngine.hpp — the abstraction layer every
 // non-renderer system talks to instead of Vulkan. Forward-declared for the
 // same reason as TickLoop above.
@@ -186,6 +191,10 @@ struct GlobalState {
     PlayerAttributes* attributes;
     TickLoop* tickLoop;
     InteractionManager* interaction;
+    AudioManager* audioManager{nullptr};
+    MusicController* musicController{nullptr};
+    SoundRegistry* soundRegistry{nullptr};
+    ItemRenderer* itemRenderer{nullptr}; // 3D item models (GUI icons now; hand and dropped items later).
 
     // The rendering engine (VulkanRenderEngine today). Owned by main();
     // set before its Init() runs. Use it to add/remove render passes, switch
@@ -209,6 +218,20 @@ struct GlobalState {
     // Player::getAttackStrengthScale/resetAttackStrengthTicker.
     std::atomic<uint32_t> attackStrengthTicker{0};
 
+    // Active block-break, published for the tick thread's crosshair
+    // indicator update. Written by the render thread (InteractionManager
+    // arms/clears mining); read by the tick thread (TickLoop::FixedStep).
+    // miningTicksRequired 0 = not mining; miningStartNs is steady_clock ns.
+    std::atomic<int32_t> miningTicksRequired{0};
+    std::atomic<int64_t> miningStartNs{0};
+
+    // Crosshair indicator fill (0..1, or < 0 = hidden): block-break progress
+    // while mining, else attack strength while recharging. Written by the
+    // tick thread once per tick (previous <- current, current <- new); read
+    // by the render thread, which lerps them by TickLoop::GetPartialTick().
+    std::atomic<float> crosshairProgressPrevious{-1.0f};
+    std::atomic<float> crosshairProgressCurrent{-1.0f};
+
     // Client-generated sequence number for the dig/place/use-item packets
     // (PlayerAction, BlockPlace, UseItem) — the server echoes it back in
     // Acknowledge Block Changes so a client that predicts block state
@@ -226,6 +249,11 @@ struct GlobalState {
     // only right now — mining-speed decisions read canInstabuild below
     // instead, since that's what vanilla itself actually checks.
     std::atomic<uint8_t> localGameMode{0};
+
+    // Name of the dimension the local player is in (e.g. "minecraft:the_nether").
+    // Written by the network thread on LoginPlay/Respawn, read by MusicController.
+    std::string currentDimension;
+    std::mutex currentDimensionMutex;
 
     // Whether the local player can insta-mine — from PlayS2C::
     // PlayerAbilities' flags byte (bit 0x08), NOT derived from localGameMode.
@@ -289,6 +317,18 @@ struct GlobalState {
     // written and read only from RecordPasses' own call chain, all on
     // RenderThread, so no mutex/atomic needed.
     uint64_t trianglesDrawn = 0;
+
+    // Smoothed per-stage timings in milliseconds, for the debug HUD. Each
+    // field has exactly one writer thread, so plain atomic stores suffice.
+    struct Timings
+    {
+        std::atomic<float> renderCpuMs{0.0f};  // RenderThread: frame work, excluding pacing and GPU waits
+        std::atomic<float> gpuWaitMs{0.0f};    // RenderThread: blocked on the fence / swapchain acquire
+        std::atomic<float> gpuMs{0.0f};        // GPU: command buffer start to end (timestamp queries); < 0 = unsupported
+        std::atomic<float> meshMs{0.0f};       // MeshingThread: per section (cube + non-cube)
+        std::atomic<uint32_t> meshQueue{0};    // MeshingThread: chunks still waiting to be meshed
+        std::atomic<float> waitRawMs{0.0f};    // Engine -> RenderThread: this frame's wait, unsmoothed
+    } timings;
 
     // Non-cubic meshes (transparent full cubes, partial-volume shapes, and
     // cross-shaped plants — see NonCubicMesher) for the engine's separate

@@ -2,6 +2,7 @@
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
+    float fade;
 } pc;
 
 // Full CameraUBO layout, even though this stage only reads the shade
@@ -32,8 +33,10 @@ layout(location = 1) flat out uint fragLayer;
 layout(location = 2) out float fragSkyLight;
 layout(location = 3) flat out uint fragBiomeTinted;
 layout(location = 4) out float fragBlockLight;
-layout(location = 5) out float fragFaceShade;
-layout(location = 6) out vec3 fragViewOffset; // world position relative to the camera, for fog
+layout(location = 5) out float fragAOMultiplier;
+layout(location = 6) out float fragFaceShade;
+layout(location = 7) out vec3 fragViewOffset; // world position relative to the camera, for fog
+layout(location = 8) out float fragChunkFade;
 
 // Vanilla's hardcoded per-face diffuse shading (LevelRenderer::getShade).
 // normalIndex matches ChunkMesher's FaceIndexFor: 0=Up, 1=Down, 2=North,
@@ -72,10 +75,14 @@ void main() {
     // Extract lighting
     uint blockLight = bitfieldExtract(word1, 16, 4);
     uint skyLight   = bitfieldExtract(word1, 20, 4);
-    
+
     // Extract texture layer (16 bits)
     uint textureLayer = bitfieldExtract(word1, 0, 16);
-    
+
+    // Extract AO
+    uint ao = bitfieldExtract(word0, 24, 2);
+    fragAOMultiplier = mix(1.0, 0.2, float(ao) / 3.0);
+
     // Extract UV coordinates (8 bits each). These are raw block-space tile
     // counts, not normalized 0-1 — a single-block face still spans exactly
     // one tile (0 or 1), while a greedy-meshed quad spanning multiple blocks
@@ -96,4 +103,5 @@ void main() {
     // actual light sources instead of the same flat brightness as daylight.
     fragSkyLight = float(skyLight) / 15.0;
     fragBlockLight = float(blockLight) / 15.0;
+    fragChunkFade = pc.fade;
 }

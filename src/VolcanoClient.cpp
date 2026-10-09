@@ -9,6 +9,9 @@
 #include "GlobalState.hpp"
 #include "InputHandler.hpp"
 #include "Logger.hpp"
+#include "audio/SoundRegistry.hpp"
+#include "audio/MusicController.hpp"
+#include "renderer/misc/ItemRenderer.hpp"
 #include "renderer/RenderThread.hpp"
 #include "renderer/engine/vulkan/VulkanRenderEngine.hpp"
 #include "renderer/SplashScreen.hpp"
@@ -33,6 +36,7 @@
 #include "TickLoop.hpp"
 #include "TickThread.hpp"
 #include "interaction/InteractionManager.hpp"
+#include "audio/AudioManager.hpp"
 #include <filesystem>
 #include <vector>
 using namespace std;
@@ -62,77 +66,6 @@ static void ParseServerAddress(const std::string& address, std::string& outHost,
     }
 }
 
-// Chunk generation function for 4-chunk view distance (2x2 grid)
-void GenerateChunks(Volcano::GlobalState& state, const Volcano::TextureManager& textureManager) {
-    Volcano::Log::Info("Generating 2x2 chunk grid...");
-
-    // Generate 2x2 chunk grid (chunks 0 and 1 in both axes)
-    for (int cx = 0; cx < 2; cx++) {
-        for (int cz = 0; cz < 2; cz++) {
-            // Built directly in World (not a local temporary) so TickLoop's
-            // collision checks have real block data to query after this
-            // function returns and the mesh-only view goes out of scope.
-            Volcano::Chunk& chunk = state.world->GetOrCreateChunk(cx, cz);
-
-            // Generate grass blocks for the top layer
-            uint16_t stoneVisual = Volcano::BlockRegistry::VisualIdForName("stone");
-            uint16_t dirtVisual = Volcano::BlockRegistry::VisualIdForName("dirt");
-            uint16_t grassVisual = Volcano::BlockRegistry::VisualIdForName("grass_block");
-            uint16_t logVisual = Volcano::BlockRegistry::VisualIdForName("oak_log");
-            uint16_t leavesVisual = Volcano::BlockRegistry::VisualIdForName("oak_leaves");
-
-            for (int x = 0; x < CHUNK_SIZE_X; x++) {
-                for (int z = 0; z < CHUNK_SIZE_Z; z++) {
-                    // Grass at y=1-3, dirt below, stone deeper
-                    chunk.setBlock(x, 0, z, stoneVisual);
-                    chunk.setBlock(x, 1, z, dirtVisual);
-                    chunk.setBlock(x, 2, z, dirtVisual);
-                    chunk.setBlock(x, 3, z, grassVisual);
-                }
-            }
-
-            // Add some variation - random trees
-            if (cx % 2 == 0 && cz % 2 == 0) {
-                int treeX = 7 + (cx * 7) % 9;
-                int treeZ = 7 + (cz * 7) % 9;
-                // Simple tree: log + leaves
-                for (int y = 4; y <= 6; y++) {
-                    chunk.setBlock(treeX, y, treeZ, logVisual);
-                }
-                // Leaves around the top
-                for (int lx = -1; lx <= 1; lx++) {
-                    for (int lz = -1; lz <= 1; lz++) {
-                        if (lx != 0 || lz != 0) {
-                            chunk.setBlock(treeX + lx, 6, treeZ + lz, leavesVisual);
-                        }
-                    }
-                }
-                chunk.setBlock(treeX, 7, treeZ, leavesVisual);
-            }
-
-            // One mesh per non-empty 16-tall section now (see
-            // ChunkMesher::MeshChunkSection) instead of one whole-column
-            // mesh — this debug generator only ever touches y=0-7, so only
-            // section 0 has anything to draw.
-            for (int sectionY = 0; sectionY < Volcano::SECTIONS_PER_CHUNK; sectionY++) {
-                if (chunk.IsSectionEmpty(sectionY)) continue;
-                Volcano::Mesh chunkMesh = Volcano::ChunkMesher::MeshChunkSection(chunk, *state.world, textureManager, sectionY);
-
-                // This debug generator ignores WORLD_MIN_Y (its blocks are
-                // placed as if y=0 were the world floor, not -64) — override
-                // MeshChunkSection's own model matrix the same way the old
-                // whole-column call here always did.
-                chunkMesh.modelMatrix = glm::translate(glm::mat4(1.0f),
-                    glm::vec3(cx * CHUNK_SIZE_X, sectionY * Volcano::SECTION_SIZE_Y, cz * CHUNK_SIZE_Z));
-
-                state.renderList.insert_or_assign(Volcano::SectionKey{ cx, cz, sectionY }, chunkMesh);
-            }
-        }
-    }
-
-    Volcano::Log::Info("Generated " + std::to_string(state.renderList.size()) + " chunk section meshes");
-}
-
 int main(int argc, char** argv)
 {
     Volcano::CrashReporter::Install();
@@ -145,36 +78,32 @@ int main(int argc, char** argv)
     Volcano::GlobalState state{};
     state.LoadSettings();
 
-    // No Vulkan/GLFW dependency — safe this early, and the debug overlay
-    // wants it available from the very first frame.
+    // No Vulkan/GLFW dependency. Save this early since the debug overlay
+    // wants it available from the start.
     state.systemInfo.DetectCPU();
 
-    // The rendering engine — everything below reaches the renderer through
-    // this (GlobalState::renderEngine), never through Vulkan directly. Init()
-    // creates the window/device/swapchain and every built-in render pass.
     Volcano::Engine::Vulkan::VulkanRenderEngine renderEngine(&state);
     state.renderEngine = &renderEngine;
     renderEngine.Init();
 
-    // Create the render thread (frame loop — see RunFrame below).
     Volcano::RenderThread renderer(&state);
-
-    // Shows resources/splash-screen.jpeg for one frame before the slow,
-    // synchronous startup work below (block/entity registries, texture
-    // atlas — collectively the ~15s the window would otherwise sit there
-    // frozen and undrawn) actually starts. Presents once and tears its own
-    // resources back down immediately — the compositor keeps showing that
-    // presented frame on its own, so nothing needs to stay alive or be
-    // re-drawn while the loading below blocks this thread.
     Volcano::SplashScreen::Show();
+
+    // Audio comes after the window/splash so the slow sound indexing and
+    // decoding below doesn't leave the user staring at nothing.
+    Volcano::AudioManager audioManager;
+    state.audioManager = &audioManager;
+    audioManager.Init();
+
+    Volcano::SoundRegistry soundRegistry("resources/minecraft/assets/minecraft/sounds");
+    soundRegistry.IndexSounds();
+    state.soundRegistry = &soundRegistry;
+
+    Volcano::MusicController musicController(&state, &soundRegistry);
+    state.musicController = &musicController;
 
     // Create the player.
     Volcano::Player player;
-    // GenerateChunks below plants its one tree at world (7, *, 7), with
-    // leaves spanning x/z 6-8 — (8, 5, 8) put the player's head inside that
-    // canopy. Spawn further into the 2x2 (32x32) chunk grid instead, clear
-    // of the tree, so movement/jumping aren't blocked by leaf collision.
-    player.SetPosition(glm::vec3(20.0f, 5.0f, 20.0f)); // Elevated to see the terrain
     state.player = &player;
 
     // Input handler - must be created before render thread starts
@@ -211,39 +140,24 @@ int main(int argc, char** argv)
     input.RegisterAction("ToggleLighting", InputActionTriggerType::PRESS, {GLFW_KEY_G});
     input.RegisterAction("ReloadShaders", InputActionTriggerType::PRESS, {GLFW_KEY_F9});
 
-    // Hotbar slot selection — vanilla's number-row bindings, key "1" for
-    // slot 0 through "9" for slot 8. One PRESS action per key rather than a
-    // single action with all nine triggers, since RenderThread::PollInputs
-    // needs to know WHICH slot was pressed, not just that some hotbar key
-    // was. GLFW_KEY_1..GLFW_KEY_9 are consecutive codepoints, so this can
-    // register all nine off one loop instead of nine near-identical lines.
+    // Hotbar slot selection.
     for (int slot = 0; slot < 9; slot++)
     {
         input.RegisterAction("Hotbar." + std::to_string(slot),
             InputActionTriggerType::PRESS, {static_cast<uint16_t>(GLFW_KEY_1 + slot)});
     }
 
-    // Mainhand/offhand interaction — read by InteractionManager::Update.
-    // Primary gets a PRESS and a HOLD action on the same button, like
-    // Jump/JumpHold: attacking only ever happens on the click itself
-    // (vanilla doesn't keep attacking while the button is held), while
-    // holding is what block breaking will need once it exists.
+    // Mainhand/offhand interaction.
     input.RegisterAction("PrimaryActionPress", InputActionTriggerType::PRESS, {MOUSE_BUTTON_LEFT});
     input.RegisterAction("PrimaryAction", InputActionTriggerType::HOLD, {MOUSE_BUTTON_LEFT});
 
-    // Secondary gets three actions on the same button — same pattern as
-    // Jump/JumpHold above — since "use item" isn't just a click: an instant
-    // item (a block, a bucket) only needs the press, but a continuous one
-    // (food, a shield, a bow) needs to know it's still held, and that it's
-    // been released, to know when to stop.
+    // Secondary gets three actions on the same button.
     input.RegisterAction("SecondaryAction", InputActionTriggerType::PRESS, {MOUSE_BUTTON_RIGHT});
     input.RegisterAction("SecondaryActionHold", InputActionTriggerType::HOLD, {MOUSE_BUTTON_RIGHT});
     input.RegisterAction("SecondaryActionRelease", InputActionTriggerType::RELEASE, {MOUSE_BUTTON_RIGHT});
 
     // Builds the protocol block-state-id -> texture mapping from
-    // minecraft-data + the vanilla blockstate/model JSON. Must happen before
-    // any chunk data is parsed or meshed (network/meshing threads start
-    // further below).
+    // minecraft-data + the vanilla blockstate/model JSON.
     Volcano::BlockRegistry::Init();
     Volcano::EntityRegistry::Init();
 
@@ -263,6 +177,13 @@ int main(int argc, char** argv)
     // backend against the engine's render pass.
     renderEngine.AttachTextures(textureManager);
     renderEngine.AttachGUI(&textureManager);
+
+    // Draws 3D item models (inventory icons for blocks and custom models).
+    // Needs the texture array attached above.
+    Volcano::ItemRenderer itemRenderer(&textureManager);
+    Volcano::Engine::ShaderLibrary itemShaders;
+    itemRenderer.Init(itemShaders);
+    state.itemRenderer = &itemRenderer;
 
     // World (placeholder — see the tick-loop plan) and attributes must exist
     // before GenerateChunks/TickLoop touch them.
@@ -514,6 +435,8 @@ int main(int argc, char** argv)
             }
         }
 
+        musicController.Tick();
+
         renderer.RunFrame();
     }
 
@@ -537,6 +460,7 @@ int main(int argc, char** argv)
     // buffers MeshingThread writes into.
     meshingThread.Stop();
 
+    itemRenderer.Shutdown();
     textureManager.Destroy();
     renderEngine.Shutdown();
 

@@ -63,8 +63,8 @@ static uint64_t SlabSizeForRenderDistance(const std::string& baseSizeMBKey, uint
         ? std::get<uint32_t>(config->Get("Graphics.SlabSize.ReferenceRenderDistance", uint32_t{4}))
         : 4;
     uint32_t maxScalePercent = config
-        ? std::get<uint32_t>(config->Get("Graphics.SlabSize.MaxScalePercent", uint32_t{200}))
-        : 200;
+        ? std::get<uint32_t>(config->Get("Graphics.SlabSize.MaxScalePercent", uint32_t{100}))
+        : 100;
 
     double columns = (2.0 * renderDistance + 1.0) * (2.0 * renderDistance + 1.0);
     double referenceColumns = (2.0 * referenceRenderDistance + 1.0) * (2.0 * referenceRenderDistance + 1.0);
@@ -78,6 +78,7 @@ static void EnsureSlabsInitialized() {
 
     uint64_t slabSize = SlabSizeForRenderDistance("Graphics.SlabSize.NonCubicMB",
         static_cast<uint32_t>(NonCubicMesher::DEFAULT_SLAB_SIZE / (1024ull * 1024ull)));
+    slabSize = SlabBuffer::AffordableSize(slabSize, 0.3, 4); // 4 slabs, 30% of the slab budget
     vertexSlab.Init(slabSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     indexSlab.Init(slabSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     translucentVertexSlab.Init(slabSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -358,10 +359,10 @@ static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const Chunk& c
         glm::vec3 p1 = center + half;
 
         std::array<glm::vec3, 4> corners = {
-            glm::vec3(p0.x, 0.0f, p0.z),
-            glm::vec3(p1.x, 0.0f, p1.z),
-            glm::vec3(p1.x, 1.0f, p1.z),
-            glm::vec3(p0.x, 1.0f, p0.z),
+            glm::vec3(p0.x, blockOrigin.y, p0.z),
+            glm::vec3(p1.x, blockOrigin.y, p1.z),
+            glm::vec3(p1.x, blockOrigin.y + 1.0f, p1.z),
+            glm::vec3(p0.x, blockOrigin.y + 1.0f, p0.z),
         };
         EmitQuad(vertices, indices, corners, glm::vec4(0.0f, 0.0f, 16.0f, 16.0f), layer, tint, light,
             /* verticalFace */ true);

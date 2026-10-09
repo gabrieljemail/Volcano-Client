@@ -93,16 +93,21 @@ glm::vec3 ReadLpVec3(PacketReader& reader)
                      static_cast<float>(unpack(packed >> 33) * s));
 }
 
-// Attribute ids as Update Attributes sends them — protocol.json's
-// entity_update_attributes key mapper, in id order. The names are the same
-// keys PlayerAttributes is read with elsewhere ("generic.attack_speed", ...).
-constexpr std::array<const char*, 31> ATTRIBUTE_NAMES = {
+// Attribute ids as Update Attributes sends them — the attribute registry in
+// id order (minecraft-data's attributes.json). NOT protocol.json's
+// entity_update_attributes key mapper: that list is stale and lacks
+// mining_efficiency/movement_efficiency/oxygen_bonus/sneaking_speed, which
+// shifted every id after 19 — movement_speed's id then read
+// mining_efficiency (base 0), zeroing ground acceleration. The names are the
+// same keys PlayerAttributes is read with elsewhere ("generic.attack_speed", ...).
+constexpr std::array<const char*, 35> ATTRIBUTE_NAMES = {
     "generic.armor", "generic.armor_toughness", "generic.attack_damage", "generic.attack_knockback",
     "generic.attack_speed", "player.block_break_speed", "player.block_interaction_range", "burning_time",
     "camera_distance", "explosion_knockback_resistance", "player.entity_interaction_range",
     "generic.fall_damage_multiplier", "generic.flying_speed", "generic.follow_range", "generic.gravity",
     "generic.jump_strength", "generic.knockback_resistance", "generic.luck", "generic.max_absorption",
-    "generic.max_health", "generic.movement_speed", "generic.safe_fall_distance", "generic.scale",
+    "generic.max_health", "player.mining_efficiency", "generic.movement_efficiency", "generic.movement_speed",
+    "generic.oxygen_bonus", "generic.safe_fall_distance", "generic.scale", "player.sneaking_speed",
     "zombie.spawn_reinforcements", "generic.step_height", "submerged_mining_speed", "sweeping_damage_ratio",
     "tempt_range", "water_movement_efficiency", "waypoint_transmit_range", "waypoint_receive_range",
 };
@@ -113,6 +118,37 @@ constexpr std::array<const char*, 31> ATTRIBUTE_NAMES = {
 float FixedDeltaToBlocks(int16_t delta)
 {
     return static_cast<float>(delta) / 4096.0f;
+}
+
+// Debug trace for entity position bugs. Turn on with "Debug.EntityTrace": true
+// in settings.json; each line is one entity update with the raw packet bytes,
+// the parsed numbers, the entity's position before/after, and the local
+// player's position and camera yaw at that moment.
+bool EntityTraceEnabled(GlobalState* state)
+{
+    static const bool enabled = std::get<bool>(state->config->Get("Debug.EntityTrace", false));
+    return enabled;
+}
+
+void TraceEntity(GlobalState* state, const char* label, int32_t packetId,
+                 const std::vector<uint8_t>& payload, uint32_t entityId,
+                 const std::string& parsed, glm::vec3 before, glm::vec3 after)
+{
+    if (!EntityTraceEnabled(state)) return;
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(3) << "[ENTDBG] " << label << " id=0x" << std::hex << packetId
+        << std::dec << " entity=" << entityId << " parsed{" << parsed << "} before=("
+        << before.x << "," << before.y << "," << before.z << ") after=("
+        << after.x << "," << after.y << "," << after.z << ")";
+    if (state->player)
+    {
+        glm::vec3 p = state->player->GetPosition();
+        oss << " player=(" << p.x << "," << p.y << "," << p.z << ") camYaw=" << state->player->camera.GetYaw();
+    }
+    oss << " hex=" << std::hex << std::setfill('0');
+    for (uint8_t byte : payload) oss << std::setw(2) << static_cast<int>(byte);
+    Log::Info(oss.str());
 }
 
 std::string FormatUuid(const std::array<uint8_t, 16>& uuid)
@@ -536,7 +572,11 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 reader.ReadBool();   // enableRespawnScreen
                 reader.ReadBool();   // doLimitedCrafting
                 reader.ReadVarInt(); // worldState.dimension
-                reader.ReadString(); // worldState.name
+                std::string dimensionName = reader.ReadString(); // worldState.name
+                {
+                    std::lock_guard<std::mutex> lock(state->currentDimensionMutex);
+                    state->currentDimension = dimensionName;
+                }
                 reader.ReadLong();   // worldState.hashedSeed
                 uint8_t gameMode = reader.ReadByte(); // worldState.gamemode — see GlobalState::localGameMode.
                 state->localGameMode.store(gameMode, std::memory_order_relaxed);
@@ -588,6 +628,10 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             try {
                 reader.ReadVarInt(); // dimension id — unused, the name below is enough for the log line.
                 std::string dimensionName = reader.ReadString();
+                {
+                    std::lock_guard<std::mutex> lock(state->currentDimensionMutex);
+                    state->currentDimension = dimensionName;
+                }
                 Log::Info("Respawn: switching to dimension " + dimensionName);
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Respawn (resetting world state anyway): ") + e.what());
@@ -653,45 +697,94 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
+        if (packetId == PlayS2C::OpenWindow) {
+            try {
+                int32_t windowId = reader.ReadVarInt();
+                int32_t windowType = reader.ReadVarInt();
+                std::string title = PlainText(ReadTextComponent(reader));
+                Log::Info("Open window id=" + std::to_string(windowId) + " type=" + std::to_string(windowType)
+                    + " title=\"" + title + "\"");
+                if (windowId != 0) {
+                    std::lock_guard<std::mutex> lock(state->inventory.mutex);
+                    state->inventory.OpenServerWindow(windowId, windowType, std::move(title));
+                }
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Open Window: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::CloseWindow) {
+            try {
+                int32_t windowId = reader.ReadVarInt();
+                std::lock_guard<std::mutex> lock(state->inventory.mutex);
+                Log::Info("Server closed window id=" + std::to_string(windowId)
+                    + " (active=" + std::to_string(state->inventory.activeWindowId) + ")");
+                if (windowId == state->inventory.activeWindowId)
+                    state->inventory.CloseServerWindow();
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Close Window: ") + e.what());
+            }
+            continue;
+        }
+
         if (packetId == PlayS2C::SetContainerContent) {
             try {
                 int32_t windowId = reader.ReadVarInt();
-                reader.ReadVarInt(); // stateId — unused; this client never sends Click Container Slot, so there's no revision number to echo back.
+                int32_t stateId = reader.ReadVarInt();
                 int32_t itemCount = reader.ReadVarInt();
 
-                if (windowId != 0) {
-                    // Not the player's own inventory — this client can't open a
-                    // server-side container (chest, furnace, ...) yet (see
-                    // PacketIds.hpp's own note), so there's nothing to apply
-                    // this to. Nothing else in this packet is needed either.
-                    continue;
-                }
-
-                bool appliedAll = true;
+                bool activeContainer = false;
                 {
                     std::lock_guard<std::mutex> lock(state->inventory.mutex);
-                    for (int32_t i = 0; i < itemCount; i++) {
-                        ParsedSlot slot = ReadItemStack(reader);
-                        state->inventory.SetSlot(i, slot.item);
-                        if (!slot.complete) {
-                            appliedAll = false;
-                            Log::Info("Set Container Content: slot " + std::to_string(i)
-                                + " carries item data components this client doesn't decode yet — "
-                                + std::to_string(itemCount - i - 1) + " remaining slot(s) in this packet "
-                                + "not applied; a later Set Container Slot update will still catch up "
-                                + "individual changes.");
-                            break;
+                    activeContainer = windowId != 0 && windowId == state->inventory.activeWindowId;
+                }
+                if (windowId != 0 && !activeContainer) continue;
+
+                bool appliedAll = true;
+                std::vector<ItemStack> items;
+                items.reserve(static_cast<size_t>(std::max(itemCount, 0)));
+                for (int32_t i = 0; i < itemCount; i++) {
+                    ParsedSlot slot = ReadItemStack(reader);
+                    items.push_back(slot.item);
+                    if (!slot.complete) {
+                        appliedAll = false;
+                        Log::Info("Set Container Content: slot " + std::to_string(i)
+                            + " carries item data components this client doesn't decode yet — "
+                            + std::to_string(itemCount - i - 1) + " remaining slot(s) in this packet "
+                            + "not applied; a later Set Container Slot update will still catch up "
+                            + "individual changes.");
+                        break;
+                    }
+                }
+                ItemStack cursorItem;
+                if (appliedAll) cursorItem = ReadItemStack(reader).item;
+                {
+                    std::lock_guard<std::mutex> lock(state->inventory.mutex);
+                    if (windowId == 0) {
+                        state->inventory.playerStateId = stateId;
+                        for (size_t i = 0; i < items.size(); i++)
+                            state->inventory.SetSlot(static_cast<int32_t>(i), items[i]);
+                        if (appliedAll) state->inventory.carriedItem = cursorItem;
+                    } else if (windowId == state->inventory.activeWindowId) {
+                        state->inventory.activeWindowStateId = stateId;
+                        if (appliedAll) {
+                            state->inventory.SetWindowContents(items, cursorItem);
+                        } else {
+                            // An item with data components cut the parse
+                            // short. Still size the container from the
+                            // packet's slot count (so its layout and click
+                            // indices stay right) and apply the slots that
+                            // did parse; later Set Container Slot packets
+                            // fill in the rest.
+                            constexpr int32_t PLAYER_SLOTS = 36;
+                            size_t containerCount = itemCount > PLAYER_SLOTS ? static_cast<size_t>(itemCount - PLAYER_SLOTS) : 0;
+                            state->inventory.containerSlots.assign(containerCount, ItemStack{});
+                            for (size_t i = 0; i < items.size(); i++)
+                                state->inventory.SetWindowSlot(static_cast<int32_t>(i), items[i]);
                         }
                     }
                 }
-                // carriedItem: Slot — trailing field. Only safe to read (and
-                // only worth reading) if every array entry above parsed
-                // cleanly; this client has no cursor-held-item state to put
-                // it in anyway (no interactive inventory yet), so it's read
-                // and discarded purely to leave the reader's position
-                // correct for symmetry with the rest of this file's handlers
-                // — nothing after this in RunPlayLoop's loop actually needs it.
-                if (appliedAll) ReadItemStack(reader);
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Set Container Content: ") + e.what());
             }
@@ -701,20 +794,24 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         if (packetId == PlayS2C::SetContainerSlot) {
             try {
                 int32_t windowId = reader.ReadVarInt();
-                reader.ReadVarInt(); // stateId — unused, see Set Container Content's own comment.
+                int32_t stateId = reader.ReadVarInt();
                 int32_t slotIndex = reader.ReadShort(); // i16 per protocol.json's packet_set_slot — NOT a varint, unlike every index/count field around it.
                 // Last field in this packet, so ParsedSlot::complete doesn't
                 // matter here the way it does for Set Container Content's
                 // array — nothing reads past it either way.
                 ParsedSlot slot = ReadItemStack(reader);
 
-                // windowId -1/-2 are vanilla's "cursor item"/"any open
-                // window" sentinels, not the player's own inventory — this
-                // client has no cursor-held-item state, so both fall through
-                // and are ignored the same as any other non-zero windowId.
-                if (windowId == 0) {
-                    std::lock_guard<std::mutex> lock(state->inventory.mutex);
+                std::lock_guard<std::mutex> lock(state->inventory.mutex);
+                if (windowId == -1 && slotIndex == -1) {
+                    state->inventory.carriedItem = slot.item;
+                } else if (windowId == -2) {
                     state->inventory.SetSlot(slotIndex, slot.item);
+                } else if (windowId == 0) {
+                    state->inventory.playerStateId = stateId;
+                    state->inventory.SetSlot(slotIndex, slot.item);
+                } else if (windowId == state->inventory.activeWindowId) {
+                    state->inventory.activeWindowStateId = stateId;
+                    state->inventory.SetWindowSlot(slotIndex, slot.item);
                 }
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Set Container Slot: ") + e.what());
@@ -794,6 +891,32 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             double y = reader.ReadDouble();
             double z = reader.ReadDouble();
 
+            // Trailing fields: velocity, rotation, and "relative" flags. A
+            // flagged axis is an offset from where the client already is,
+            // not an absolute position (vanilla: PositionMoveRotation::
+            // calculateAbsolute) — treating it as absolute teleports the
+            // player to the wrong place.
+            double deltaX = 0.0, deltaY = 0.0, deltaZ = 0.0;
+            float syncYaw = 0.0f, syncPitch = 0.0f;
+            int32_t relativeFlags = 0;
+            try {
+                deltaX = reader.ReadDouble();
+                deltaY = reader.ReadDouble();
+                deltaZ = reader.ReadDouble();
+                syncYaw = reader.ReadFloat();
+                syncPitch = reader.ReadFloat();
+                relativeFlags = reader.ReadInt();
+            } catch (const std::exception&) {
+                // Shorter packet than expected: treat everything as absolute.
+            }
+
+            glm::vec3 clientPosition = state->player ? state->player->GetPosition() : glm::vec3(0.0f);
+            double serverX = x, serverY = y, serverZ = z;
+            if (relativeFlags & 0x1) x += clientPosition.x;
+            if (relativeFlags & 0x2) y += clientPosition.y;
+            if (relativeFlags & 0x4) z += clientPosition.z;
+            double offX = x - clientPosition.x, offY = y - clientPosition.y, offZ = z - clientPosition.z;
+
             PacketWriter confirm;
             confirm.WriteVarInt(teleportId);
             connection.SendPacket(PlayC2S::ConfirmTeleportation, confirm.Data());
@@ -827,8 +950,14 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             {
                 std::ostringstream oss;
                 oss << "[NET] Synchronized player position: ("
-                    << x << ", " << y << ", " << z << ")";
+                    << x << ", " << y << ", " << z << ")"
+                    << " | client was off by (" << offX << ", " << offY << ", " << offZ << ")"
+                    << " | server sent (" << serverX << ", " << serverY << ", " << serverZ << ")"
+                    << " velocity (" << deltaX << ", " << deltaY << ", " << deltaZ << ")"
+                    << " relative flags 0x" << std::hex << relativeFlags;
                 Log::Info(oss.str());
+                (void)syncYaw;
+                (void)syncPitch;
             }
             continue;
         }
@@ -861,6 +990,35 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 state->networkInbox.pendingUnloads.emplace_back(chunkX, chunkZ);
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse unload chunk packet: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::MultiBlockChange) {
+            try {
+                int64_t packed = reader.ReadLong();
+                int32_t sectionX = static_cast<int32_t>(packed >> 42);
+                int32_t sectionZ = static_cast<int32_t>((packed << 22) >> 42);
+                int32_t sectionY = static_cast<int32_t>((packed << 44) >> 44);
+
+                int32_t count = reader.ReadVarInt();
+                std::vector<PendingBlockEdit> edits;
+                edits.reserve(static_cast<size_t>(std::max(count, 0)));
+                for (int32_t i = 0; i < count; i++) {
+                    int64_t record = static_cast<int64_t>(reader.ReadVarLong());
+                    PendingBlockEdit edit;
+                    edit.position = glm::ivec3(
+                        sectionX * 16 + static_cast<int32_t>((record >> 8) & 15),
+                        sectionY * 16 + static_cast<int32_t>(record & 15),
+                        sectionZ * 16 + static_cast<int32_t>((record >> 4) & 15));
+                    edit.block = BlockRegistry::ResolveStateId(static_cast<int32_t>(record >> 12));
+                    edits.push_back(edit);
+                }
+
+                std::lock_guard lock(state->networkInbox.mutex);
+                for (const PendingBlockEdit& edit : edits) state->networkInbox.pendingBlockEdits.push_back(edit);
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse multi block change packet: ") + e.what());
             }
             continue;
         }
@@ -905,19 +1063,23 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 reader.ReadByte(); // pitch, unused.
                 int8_t yawByte = static_cast<int8_t>(reader.ReadByte());
                 reader.ReadByte(); // headYaw, unused.
-                reader.ReadVarInt(); // objectData, unused.
+                int32_t objectData = reader.ReadVarInt(); // falling_block: block state id.
 
                 Entity entity;
                 entity.id = entityId;
                 entity.type = entityType;
                 entity.position = entity.previousPosition = glm::vec3(
                     static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
+                TraceEntity(state, "SPAWN", packetId, payload, entityId,
+                    "type=" + std::to_string(entityType), glm::vec3(0.0f), entity.position);
                 entity.yaw = entity.previousYaw = AngleByteToRadians(yawByte);
                 entity.lastUpdateTime = std::chrono::steady_clock::now();
 
                 const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entityType);
                 if (info) {
                     entity.boundingBox = glm::vec2(info->width, info->height);
+                    if (info->name == "falling_block") entity.blockStateId = objectData;
+                    else if (info->name == "tnt") entity.blockStateId = BlockRegistry::DefaultStateIdForName("tnt");
                 }
 
                 // Other players (the dedicated Spawn Player packet is long
@@ -952,10 +1114,10 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         if (packetId == PlayS2C::RelEntityMove || packetId == PlayS2C::EntityMoveLook) {
             try {
                 uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
-                glm::vec3 delta(
-                    FixedDeltaToBlocks(reader.ReadShort()),
-                    FixedDeltaToBlocks(reader.ReadShort()),
-                    FixedDeltaToBlocks(reader.ReadShort()));
+                int16_t rawX = reader.ReadShort();
+                int16_t rawY = reader.ReadShort();
+                int16_t rawZ = reader.ReadShort();
+                glm::vec3 delta(FixedDeltaToBlocks(rawX), FixedDeltaToBlocks(rawY), FixedDeltaToBlocks(rawZ));
 
                 bool hasRotation = (packetId == PlayS2C::EntityMoveLook);
                 int8_t yawByte = hasRotation ? static_cast<int8_t>(reader.ReadByte()) : 0;
@@ -964,8 +1126,13 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
                 std::lock_guard lock(state->entitiesMutex);
                 if (Entity* entity = state->FindEntity(entityId)) {
+                    glm::vec3 before = entity->position;
                     entity->previousPosition = entity->position;
                     entity->position += delta;
+                    TraceEntity(state, "MOVE", packetId, payload, entityId,
+                        "rawShorts=" + std::to_string(rawX) + "," + std::to_string(rawY) + "," + std::to_string(rawZ)
+                            + " delta=" + std::to_string(delta.x) + "," + std::to_string(delta.y) + "," + std::to_string(delta.z),
+                        before, entity->position);
                     if (hasRotation) {
                         entity->previousYaw = entity->yaw;
                         entity->yaw = AngleByteToRadians(yawByte);
@@ -1010,8 +1177,12 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
                 std::lock_guard lock(state->entitiesMutex);
                 if (Entity* entity = state->FindEntity(entityId)) {
+                    glm::vec3 before = entity->position;
                     entity->previousPosition = entity->position;
                     entity->position = newPosition;
+                    TraceEntity(state, "TELEPORT", packetId, payload, entityId,
+                        "pos=" + std::to_string(newPosition.x) + "," + std::to_string(newPosition.y) + "," + std::to_string(newPosition.z),
+                        before, entity->position);
                     entity->previousYaw = entity->yaw;
                     entity->yaw = AngleByteToRadians(yawByte);
                     entity->lastUpdateTime = std::chrono::steady_clock::now();
@@ -1047,6 +1218,9 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             try {
                 int32_t entityId = reader.ReadVarInt();
                 glm::vec3 velocity = ReadLpVec3(reader);
+                TraceEntity(state, "MOTION", packetId, payload, static_cast<uint32_t>(entityId),
+                    "velocity=" + std::to_string(velocity.x) + "," + std::to_string(velocity.y) + "," + std::to_string(velocity.z),
+                    glm::vec3(0.0f), glm::vec3(0.0f));
                 if (entityId == state->localEntityId.load()) {
                     state->localMotion.Push({ LocalMotionEvent::Kind::SetVelocity, velocity });
                 }
@@ -1530,6 +1704,68 @@ void SendHeldItemSlot(GlobalState* state, uint8_t slot)
         connection->QueuePacket(PlayC2S::SetHeldItem, writer.Data());
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Failed to send held item slot: ") + e.what());
+    }
+}
+
+namespace {
+
+void WriteHashedSlot(PacketWriter& writer, const ItemStack& item)
+{
+    writer.WriteVarInt(item.itemId);
+    writer.WriteVarInt(item.count);
+    writer.WriteVarInt(0); // No component hashes are tracked by ItemStack yet.
+    writer.WriteVarInt(0); // No removed components.
+}
+
+void WriteOptionalHashedSlot(PacketWriter& writer, const ItemStack& item)
+{
+    bool present = !item.IsEmpty();
+    writer.WriteBool(present);
+    if (present) WriteHashedSlot(writer, item);
+}
+
+}
+
+void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+                        uint8_t button, const ItemStack& slotItem, const ItemStack& carriedItem)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) return;
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(windowId);
+        writer.WriteVarInt(stateId);
+        writer.WriteShort(static_cast<int16_t>(slot));
+        uint8_t mouseButton = button;
+        writer.WriteBytes(&mouseButton, 1);
+        writer.WriteVarInt(0); // Mode 0: ordinary slot click.
+        bool slotClicked = slot >= 0;
+        writer.WriteVarInt(slotClicked ? 1 : 0);
+        if (slotClicked) {
+            writer.WriteShort(static_cast<int16_t>(slot));
+            WriteOptionalHashedSlot(writer, slotItem);
+        }
+        WriteOptionalHashedSlot(writer, carriedItem);
+        connection->QueuePacket(PlayC2S::WindowClick, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send inventory click: ") + e.what());
+    }
+}
+
+void SendInventoryClose(GlobalState* state, int32_t windowId)
+{
+    if (windowId == 0) return;
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) return;
+    Log::Info("Sending close window id=" + std::to_string(windowId));
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(windowId);
+        connection->QueuePacket(PlayC2S::CloseWindow, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to close inventory window: ") + e.what());
     }
 }
 

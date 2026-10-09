@@ -62,6 +62,10 @@ struct Entity {
     glm::vec2 boundingBox{0.6f, 1.8f}; // width, height.
     glm::vec3 color{0.8f, 0.2f, 0.2f};
 
+    // Protocol block-state id for block-shaped entities (falling_block's
+    // spawn objectData, tnt's fixed block). -1 for everything else.
+    int32_t blockStateId = -1;
+
     // Set by the Damage Event packet. The hit flash lasts vanilla's 10-tick
     // hurtTime — see IsHurt.
     std::chrono::steady_clock::time_point lastHurtTime{};

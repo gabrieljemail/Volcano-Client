@@ -3,6 +3,7 @@
 #define VOLCANO_WORLD_H
 
 #include <cstdint>
+#include <algorithm>
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
@@ -49,6 +50,12 @@ public:
     {
         std::unique_lock lock(mutex);
         chunks.erase(ChunkKey(chunkX, chunkZ));
+    }
+
+    bool HasChunk(int chunkX, int chunkZ) const
+    {
+        std::shared_lock lock(mutex);
+        return chunks.find(ChunkKey(chunkX, chunkZ)) != chunks.end();
     }
 
     // Drops every chunk — used when returning to the connect screen after a
@@ -172,10 +179,8 @@ public:
         return SetBlock(ChunkOf(worldPosition), LocalOf(worldPosition), newBlock);
     }
 
-    // Overwrites light for every section present in `update` and returns
-    // those sections for remeshing (light is baked into the mesh). Neighbor
-    // chunks aren't invalidated, so light bleeding across a chunk edge
-    // stays stale until their own update arrives.
+    // Applies changed light sections and invalidates meshes that sample their
+    // boundary values, including adjacent chunk columns and vertical sections.
     std::vector<SectionKey> ApplyLightUpdate(const PendingLightUpdate& update)
     {
         std::vector<SectionKey> dirty;
@@ -185,6 +190,13 @@ public:
         if (it == chunks.end()) return dirty;
 
         Chunk& chunk = it->second;
+        auto addDirty = [&](int chunkX, int chunkZ, int sectionY)
+        {
+            if (sectionY < 0 || sectionY >= SECTIONS_PER_CHUNK) return;
+            SectionKey key{chunkX, chunkZ, sectionY};
+            if (std::find(dirty.begin(), dirty.end(), key) == dirty.end()) dirty.push_back(key);
+        };
+
         for (int section = 0; section < SECTIONS_PER_CHUNK; section++)
         {
             const std::vector<uint8_t>& sky = update.skyLight[static_cast<size_t>(section)];
@@ -192,16 +204,48 @@ public:
             if (sky.size() < 2048 && block.size() < 2048) continue;
 
             int baseY = section * SECTION_SIZE_Y;
+            bool changed = false;
+            bool lowerEdgeChanged = false, upperEdgeChanged = false;
+            bool westEdgeChanged = false, eastEdgeChanged = false;
+            bool northEdgeChanged = false, southEdgeChanged = false;
             for (int i = 0; i < 4096; i++)
             {
                 int x = i % 16, y = baseY + i / 256, z = (i / 16) % 16;
                 auto nibble = [i](const std::vector<uint8_t>& data) {
                     return (i % 2 == 0) ? (data[static_cast<size_t>(i / 2)] & 0x0Fu) : (data[static_cast<size_t>(i / 2)] >> 4);
                 };
-                if (sky.size() >= 2048) chunk.setSkyLight(x, y, z, static_cast<uint8_t>(nibble(sky)));
-                if (block.size() >= 2048) chunk.setBlockLight(x, y, z, static_cast<uint8_t>(nibble(block)));
+                LightSample previous = chunk.getLightSample(x, y, z);
+                uint8_t newSky = sky.size() >= 2048 ? static_cast<uint8_t>(nibble(sky)) : previous.sky;
+                uint8_t newBlock = block.size() >= 2048 ? static_cast<uint8_t>(nibble(block)) : previous.block;
+                if (newSky == previous.sky && newBlock == previous.block) continue;
+
+                changed = true;
+                if (y == baseY) lowerEdgeChanged = true;
+                if (y == baseY + SECTION_SIZE_Y - 1) upperEdgeChanged = true;
+                if (x == 0) westEdgeChanged = true;
+                if (x == CHUNK_SIZE_X - 1) eastEdgeChanged = true;
+                if (z == 0) northEdgeChanged = true;
+                if (z == CHUNK_SIZE_Z - 1) southEdgeChanged = true;
+                if (sky.size() >= 2048) chunk.setSkyLight(x, y, z, newSky);
+                if (block.size() >= 2048) chunk.setBlockLight(x, y, z, newBlock);
             }
-            dirty.push_back({ update.chunkX, update.chunkZ, section });
+            if (!changed) continue;
+
+            addDirty(update.chunkX, update.chunkZ, section);
+            if (lowerEdgeChanged) addDirty(update.chunkX, update.chunkZ, section - 1);
+            if (upperEdgeChanged) addDirty(update.chunkX, update.chunkZ, section + 1);
+
+            auto addNeighbor = [&](int neighborX, int neighborZ)
+            {
+                if (chunks.find(ChunkKey(neighborX, neighborZ)) == chunks.end()) return;
+                addDirty(neighborX, neighborZ, section);
+                if (lowerEdgeChanged) addDirty(neighborX, neighborZ, section - 1);
+                if (upperEdgeChanged) addDirty(neighborX, neighborZ, section + 1);
+            };
+            if (westEdgeChanged) addNeighbor(update.chunkX - 1, update.chunkZ);
+            if (eastEdgeChanged) addNeighbor(update.chunkX + 1, update.chunkZ);
+            if (northEdgeChanged) addNeighbor(update.chunkX, update.chunkZ - 1);
+            if (southEdgeChanged) addNeighbor(update.chunkX, update.chunkZ + 1);
         }
         return dirty;
     }

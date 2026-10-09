@@ -1,4 +1,5 @@
 #include "NetworkThread.hpp"
+#include "../CrashReporter.hpp"
 #include "../Logger.hpp"
 #include <chrono>
 #include <memory>
@@ -15,7 +16,7 @@ NetworkThread::~NetworkThread() = default;
 
 void NetworkThread::Start()
 {
-    worker = std::jthread([this](std::stop_token st) { ThreadEntry(st); });
+    worker = std::jthread([this](std::stop_token st) { CrashReporter::InstallForThread(); ThreadEntry(st); });
 }
 
 void NetworkThread::RequestStop()

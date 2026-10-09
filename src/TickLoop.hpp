@@ -11,30 +11,6 @@
 
 namespace Volcano {
 
-// Fixed-timestep client-side simulation: gravity, jump, and friction-based
-// walk-speed movement, resolved via axis-separated AABB collision. Horizontal
-// collision also auto-steps sub-0.6-block obstructions — see MoveAxis/TryStepUp.
-//
-// Tick() runs on RenderThread, once per frame — back to pre-networking
-// behavior. An earlier version ran it on a dedicated TickThread instead
-// (fixing a position-report cadence issue), but sharing few logical cores
-// with MeshingThread's own unyielding bursts made that thread's scheduling
-// gaps cause visible hitching. TickThread now only reads position/grounded/
-// horizontalCollision to build packets; it never writes movement state.
-//
-// Not vanilla-exact in every respect: sprint/sneak speed is a client-side
-// multiplier rather than a server-synced attribute modifier, there's no
-// non-solid block special-casing (water, ladders, etc.), and ground
-// friction/acceleration use default block slipperiness rather than reading
-// it per-block — see the plan's scope note. Sprinting itself is a real
-// state now (see UpdateSprinting), since the server has to be told about it
-// for sprint-knockback hits to work — TickThread reports it via
-// GetMovementSnapshot() every time it changes.
-//
-// Velocity changes that come from outside the simulation — knockback from
-// the server, explosion pushes, the slowdown from landing a sprint hit —
-// arrive through GlobalState::localMotion and are applied at the top of
-// Tick(); see DrainLocalMotion.
 class TickLoop {
 public:
     static constexpr float FIXED_DT = 1.0f / 20.0f;
@@ -102,6 +78,10 @@ public:
     // (not cached) since FixedStep() only advances at a fixed 20Hz. Use this
     // for the camera, not Player::GetPosition() directly.
     glm::vec3 GetRenderPosition() const;
+
+    // 0..1 fraction of the current fixed tick elapsed (same alpha
+    // GetRenderPosition mixes by), for render-side interpolation.
+    float GetPartialTick() const;
 
     // Re-caches position from state->player after MeshingThread applies the
     // server's spawn, resets velocity/grounded, re-arms lastTickTime. Only
@@ -188,34 +168,24 @@ private:
     // fixed step" are no longer the same method the way Advance()/Tick()
     // used to be.
     void FixedStep(bool inputAllowedNow);
-    bool AabbOverlapsSolid(glm::vec3 center) const;
+
+    // Plays the footstep for the block under the player's feet. Called from
+    // FixedStep once enough distance and time have passed since the last one.
+    void PlayStepSound();
+
+    // Advances GlobalState's crosshair indicator prev/current pair one tick.
+    void UpdateCrosshairProgress();
+    int ticksSinceStepSound = 0;
     void MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float delta);
-    std::optional<float> TryStepUp(glm::vec3 position, glm::vec3 tentative) const;
 
-    // Exact landing height for a downward move that collided: the topmost
-    // solid-box surface (BlockRegistry::GetCollisionBoxes, not a stepped
-    // probe like TryStepUp's own snap) under the player's horizontal
-    // footprint, within [blockedY, clearY] — i.e. whatever was actually in
-    // the way. Analytic rather than stepped specifically because a stepped
-    // search quantizes to its own step size and can land short of the true
-    // surface by a fraction of that step; that gap used to be harmless
-    // (nothing read it precisely) but isn't once the server's own strict
-    // collision check cross-references the reported Y against the reported
-    // onGround flag every tick — see MoveAxis's own comment.
-    float FindGroundContactHeight(float worldX, float worldZ, float clearY, float blockedY) const;
+    // How far a move of `delta` along `axis` (0/1/2) can go before the
+    // player's AABB hits a collision box — vanilla's Shapes.collide. Returns
+    // a value between 0 and `delta`; anything short of `delta` means blocked.
+    double SweepAxis(glm::vec3 position, int axis, double delta) const;
 
-    // Horizontal analogue of FindGroundContactHeight, for a sideways move
-    // that collided and couldn't be resolved by stepping up: the coordinate
-    // along `axis` (0 = X, 2 = Z) that leaves the player flush against the
-    // nearest blocking collision box, rather than frozen wherever the
-    // blocked move left them. `position` is the player's current
-    // (known-clear) center and `blockedCoord` the axis coordinate the
-    // refused move targeted; the direction of travel is taken from the two.
-    // Exact for the same reason FindGroundContactHeight is — the server
-    // cross-references reported position against its own collision every
-    // tick, and an arbitrary gap from the contact surface is what it
-    // rejects.
-    float FindWallContactCoordinate(int axis, glm::vec3 position, float blockedCoord) const;
+    // Float rounding of a double contact coordinate that never ends up past
+    // the contact surface. See the definition.
+    static float RoundTowardOrigin(double target, bool movingPositive);
 };
 
 } // namespace Volcano

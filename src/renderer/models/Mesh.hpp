@@ -3,6 +3,7 @@
 #define MESH_H
 
 #include <cstdint>
+#include <chrono>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 
@@ -61,6 +62,7 @@ struct Mesh {
     VkDeviceSize indexBytes = 0;
 
     glm::mat4 modelMatrix = glm::mat4(1.0f);
+    std::chrono::steady_clock::time_point fadeStart{};
 };
 
 }; // namespace Volcano

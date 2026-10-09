@@ -42,6 +42,12 @@ public:
     // Allocates the backing buffer. `usage` should include every usage bit the
     // buffer will ever be bound with (e.g. vertex and/or index buffer bits).
     void Init(VkDeviceSize capacity, VkBufferUsageFlags usage);
+
+    // Caps one slab's size so all slabs together stay within a share of the
+    // RAM currently free: slabs are host-visible, i.e. real system memory.
+    // `share` is this mesher's fraction of the total slab budget (cubic and
+    // non-cubic shares sum to 1); `slabCount` is how many slabs split it.
+    static VkDeviceSize AffordableSize(VkDeviceSize wanted, double share, uint32_t slabCount);
     void Destroy();
 
     // Copies `size` bytes from `data` into the slab, honoring `alignment` for

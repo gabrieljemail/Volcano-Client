@@ -18,7 +18,11 @@ class OS
 public:
     using CrashHandler = void (*)(const std::string& reason);
 
+    // Private (committed) bytes of this process. Not the working set, which
+    // Windows trims under memory pressure and reads absurdly low.
     static uint64_t GetProcessMemoryUsageBytes();
+    // Physical RAM the system could hand out right now.
+    static uint64_t GetAvailablePhysicalMemoryBytes();
     static std::string GetCpuModel();
     static std::string GetExecutablePath();
     // Installed system fonts for characters the UI font lacks (symbols, box
@@ -50,6 +54,10 @@ public:
     // Adds all raw motion since the last call to dx/dy. Call right before
     // glfwPollEvents, on the window's thread.
     static void ReadBufferedRawMouse(double& dx, double& dy);
+
+    // Loads a dynamic link library (DLL) or shared object (SO) by path, with the extension.
+    // Returns `false` if the library failed to load or was the wrong type for this platform.
+    static bool LoadObject(const std::string& path);
 };
 
 } // namespace Volcano::Platform

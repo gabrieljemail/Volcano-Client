@@ -12,9 +12,9 @@ namespace Volcano {
 // A secondary-trigger click on a block entity (chest, furnace, sign, ...)
 // while not sneaking — see InteractionManager::SecondaryTriggerStart.
 //
-// Stub: vanilla uses the same use-item-on packet as placing, so the server
-// already opens/toggles the block; this client just has no container screen
-// to show when it does. Unlike PlaceBlockEvent, nothing is predicted locally.
+// Vanilla uses the same use-item-on packet as placing; the server decides
+// whether to open/toggle the block and responds with the appropriate window.
+// Unlike PlaceBlockEvent, nothing is predicted locally.
 struct BlockEntityInteractEvent {
     glm::ivec3 position;
     glm::ivec3 face;

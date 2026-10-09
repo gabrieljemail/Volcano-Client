@@ -4,6 +4,8 @@
 
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
+#include <algorithm>
+#include <chrono>
 #include "../RenderPass.hpp"
 #include "../../VulkanInit.hpp"
 #include "../../models/Mesh.hpp"
@@ -31,7 +33,19 @@ protected:
     {
         VkDeviceSize offsets[] = {mesh.vertexOffset};
         vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer, offsets);
-        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &mesh.modelMatrix);
+        struct PushConstants
+        {
+            glm::mat4 model;
+            float fade;
+        } push{mesh.modelMatrix, 1.0f};
+        if (mesh.fadeStart.time_since_epoch().count() != 0)
+        {
+            constexpr float FADE_SECONDS = 0.75f;
+            float elapsed = std::chrono::duration<float>(
+                std::chrono::steady_clock::now() - mesh.fadeStart).count();
+            push.fade = std::clamp(elapsed / FADE_SECONDS, 0.0f, 1.0f);
+        }
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
 
         if (mesh.indexCount > 0)
         {

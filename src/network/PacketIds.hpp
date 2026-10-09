@@ -122,6 +122,12 @@ namespace PlayC2S { // Play state, serverbound (client -> server)
     // sends when it forces a slot change — same field, opposite direction.
     constexpr int32_t SetHeldItem = 0x35;
 
+    // Inventory management: window_click carries the player inventory slot,
+    // button/mode, changed-slot hashes, and cursor item; close_window closes
+    // the local player inventory window (window 0).
+    constexpr int32_t WindowClick = 0x12;
+    constexpr int32_t CloseWindow = 0x13;
+
     // Empty-bodied ack a real client sends once it's finished loading the
     // world around the player (see NetworkClient::RunPlayLoop's worldReady
     // edge trigger) — 0x2C per this client's own bundled protocol.json
@@ -222,6 +228,13 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     // off to World::SetBlock on the main thread.
     constexpr int32_t BlockUpdate = 0x08;
 
+    // MULTI_BLOCK_CHANGE (0x54 per protocol.json) — many blocks in one chunk
+    // section changed at once (explosions, fills, ...). Fields: section
+    // position (one packed long: x 22 bits, z 22, y 20, all signed), then a
+    // varint-counted array of records: stateId << 12 | localX << 8 |
+    // localZ << 4 | localY.
+    constexpr int32_t MultiBlockChange = 0x54;
+
     // GAME_EVENT — ID read the same way as BlockUpdate above, from this
     // client's own bundled protocol.json's play.toClient.types.packet
     // mapper: 0x26 game_state_change -> packet_game_state_change. Fields:
@@ -316,16 +329,15 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     constexpr int32_t PlayerInfoRemove = 0x45;         // PLAYER_INFO_REMOVE
     constexpr int32_t PlayerInfoUpdate = 0x46;         // PLAYER_INFO_UPDATE
 
-    // Inventory sync — IDs read the same way as the entity/tab-list IDs
-    // above, from this client's own bundled protocol.json's play.toClient.
-    // types.packet mapper: 0x12 window_items, 0x14 set_slot, 0x69
-    // held_item_slot. windowId 0 (used by both SetContainerContent and
-    // SetContainerSlot) is always the player's own inventory — this client
-    // never opens a server-side container (chest, furnace, ...) since it
-    // can't interact with blocks yet, so any other windowId is ignored.
+    // Inventory sync — IDs read from this client's bundled protocol.json's
+    // play.toClient.types.packet mapper. Window 0 is the player inventory;
+    // OpenWindow establishes the nonzero active server window used by the
+    // matching content and slot updates.
     constexpr int32_t SetContainerContent = 0x12; // WINDOW_ITEMS — full inventory resync (e.g. right after spawn).
     constexpr int32_t SetContainerSlot = 0x14;    // SET_SLOT — one slot changed (e.g. picking something up).
     constexpr int32_t SetHeldItem = 0x69;         // HELD_ITEM_SLOT (clientbound) — server forces the selected hotbar slot.
+    constexpr int32_t OpenWindow = 0x3B;           // OPEN_WINDOW — server opens a container GUI.
+    constexpr int32_t CloseWindow = 0x11;          // CLOSE_WINDOW — server closes a container GUI.
 
     // UPDATE_TIME — ID read the same way as the entity/tab-list IDs above,
     // from this client's own bundled protocol.json's play.toClient.types.

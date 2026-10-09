@@ -101,6 +101,15 @@ void SendRespawnRequest(GlobalState* state);
 // SendChatMessage above; in practice always called from the render thread.
 void SendHeldItemSlot(GlobalState* state, uint8_t slot);
 
+// Reports one predicted player-inventory click and its resulting slot/cursor
+// state. `stateId` is the latest revision received from the server.
+void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+                        uint8_t button, const ItemStack& slotItem, const ItemStack& carriedItem);
+
+// Closes an open server container window. Opening the player's own inventory
+// with E is local-only and does not send a packet.
+void SendInventoryClose(GlobalState* state, int32_t windowId);
+
 // Interaction packets — one function per wire packet (not per gameplay
 // event; see src/interaction/events/*.hpp for the higher-level "what does
 // an attack/break/place/use actually do" objects that call these). Same

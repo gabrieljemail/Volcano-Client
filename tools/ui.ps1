@@ -50,12 +50,12 @@ public static class W {
 
     // Press + release with the real scancode; arrows/nav keys get the
     // extended flag so GLFW doesn't read them as numpad keys.
-    public static void Tap(byte vk, bool extended)
+    public static void Tap(byte vk, bool extended, int holdMs = 80)
     {
         byte scan = (byte)MapVirtualKey(vk, 0);
         uint ext = extended ? 0x1u : 0u;
         keybd_event(vk, scan, ext, UIntPtr.Zero);
-        System.Threading.Thread.Sleep(80); // held across a few frames
+        System.Threading.Thread.Sleep(holdMs); // held across a few frames
         keybd_event(vk, scan, ext | 0x2u, UIntPtr.Zero);
         System.Threading.Thread.Sleep(80);
     }
@@ -100,13 +100,18 @@ switch ($Action)
             Up = @(0x26, $true); Down = @(0x28, $true); Left = @(0x25, $true); Right = @(0x27, $true)
             Tab = @(0x09, $false); Space = @(0x20, $false); Enter = @(0x0D, $false); Esc = @(0x1B, $false)
             F2 = @(0x71, $false); F3 = @(0x72, $false); F11 = @(0x7A, $false)
+            W = @(0x57, $false); A = @(0x41, $false); S = @(0x53, $false); D = @(0x44, $false)
+            Shift = @(0x10, $false); Ctrl = @(0x11, $false)
         }
         [W]::SetForegroundWindow($h) | Out-Null
         Start-Sleep -Milliseconds 150
-        foreach ($name in ($Arg -split '\s+' | Where-Object { $_ }))
+        # "Name" taps; "Name:1500" holds the key for 1500 ms.
+        foreach ($item in ($Arg -split '\s+' | Where-Object { $_ }))
         {
+            $name, $holdMs = $item -split ':'
             if (-not $table.ContainsKey($name)) { Write-Output "unknown key: $name"; continue }
-            [W]::Tap([byte]$table[$name][0], [bool]$table[$name][1])
+            $hold = if ($holdMs) { [int]$holdMs } else { 80 }
+            [W]::Tap([byte]$table[$name][0], [bool]$table[$name][1], $hold)
         }
     }
     'keys'

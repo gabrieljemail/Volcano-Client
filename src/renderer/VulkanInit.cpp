@@ -48,6 +48,18 @@ static uint32_t DesiredBufferCount()
     return std::get<uint32_t>(g_globalState->config->Get("Graphics.BufferCount", uint32_t{2}));
 }
 
+// Settings every swapchain build shares. UNORM, not sRGB: textures are UNORM
+// too and all lighting math is in gamma space, like vanilla.
+static void ConfigureSwapchainBuilder(vkb::SwapchainBuilder& builder, uint32_t width, uint32_t height, bool exclusive)
+{
+    builder.set_desired_extent(width, height);
+    builder.set_desired_format({ VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR });
+    builder.set_desired_present_mode(DesiredPresentMode());
+    builder.set_desired_min_image_count(DesiredBufferCount());
+    builder.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT); // F2 screenshots
+    FullscreenExclusive::ConfigureSwapchain(builder, window, exclusive);
+}
+
 static void FramebufferSizeCallback(GLFWwindow* /*win*/, int width, int height)
 {
     if (!g_globalState) return;
@@ -278,7 +290,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     VkPushConstantRange pushRange{};
     pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushRange.offset = 0;
-    pushRange.size = sizeof(glm::mat4);
+    pushRange.size = sizeof(glm::mat4) + sizeof(float);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1343,11 +1355,7 @@ void Init(GlobalState* state)
 
     // Create the swapchain.
     vkb::SwapchainBuilder swapchainBuilder{device, surface};
-    swapchainBuilder.set_desired_extent(windowWidth, windowHeight);
-    swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
-    swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
-    swapchainBuilder.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT); // F2 screenshots
-    FullscreenExclusive::ConfigureSwapchain(swapchainBuilder, window, g_windowMode == WindowMode::ExclusiveFullscreen);
+    ConfigureSwapchainBuilder(swapchainBuilder, windowWidth, windowHeight, g_windowMode == WindowMode::ExclusiveFullscreen);
     auto swapchainBuilderReturn = swapchainBuilder.build();
 
     if (!swapchainBuilderReturn)
@@ -1625,13 +1633,8 @@ void RecreateSwapchain(int width, int height)
     auto buildSwapchain = [&](bool exclusive, const vkb::Swapchain* previous)
     {
         vkb::SwapchainBuilder swapchainBuilder{device, surface};
-        swapchainBuilder.set_desired_extent(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
-        swapchainBuilder.set_desired_format({ VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR });
-        swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
-        swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
-        swapchainBuilder.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT); // F2 screenshots
+        ConfigureSwapchainBuilder(swapchainBuilder, static_cast<uint32_t>(width), static_cast<uint32_t>(height), exclusive);
         if (previous) swapchainBuilder.set_old_swapchain(*previous);
-        FullscreenExclusive::ConfigureSwapchain(swapchainBuilder, window, exclusive);
         return swapchainBuilder.build();
     };
 

@@ -25,6 +25,8 @@ layout(location = 2) in float fragSkyLight;
 layout(location = 3) flat in uint fragBiomeTint;
 layout(location = 4) in float fragBlockLight;
 layout(location = 5) in vec3 fragViewOffset;
+layout(location = 6) in float fragChunkFade;
+layout(location = 7) in float fragFoliageHeight;
 
 layout(location = 0) out vec4 outColor;
 
@@ -66,7 +68,9 @@ void main() {
     // no near-zero-alpha texels to begin with.
     if (texColor.a < 0.01) discard;
 
-    vec3 tint = fragBiomeTint == 1u ? BIOME_COLOR_PLAINS : (fragBiomeTint == 2u ? BIOME_COLOR_WATER : vec3(1.0));
+    vec3 tint = (fragBiomeTint == 1u || fragBiomeTint == 3u)
+        ? BIOME_COLOR_PLAINS
+        : (fragBiomeTint == 2u ? BIOME_COLOR_WATER : vec3(1.0));
 
     // Same skyLightFactor/gamma treatment as terrain.frag.
     float skyBrightness = mix(BRIGHTNESS_FLOOR, BRIGHTNESS_CEILING, LightCurve(fragSkyLight, camera.lightFalloff) * camera.skyLightFactor);
@@ -75,6 +79,8 @@ void main() {
     float light = max(ambient, blockBrightness);
     light = camera.lightingEnabled > 0.5 ? mix(light, NotGamma(light), camera.brightnessFactor) : 1.0;
 
-    vec3 color = texColor.rgb * tint * light;
-    outColor = vec4(mix(color, camera.fogColor.rgb, FogFactor(fragViewOffset)), texColor.a);
+    float foliageShade = fragBiomeTint == 3u ? mix(0.55, 1.0, smoothstep(0.0, 1.0, fragFoliageHeight)) : 1.0;
+    vec3 color = texColor.rgb * tint * light * foliageShade;
+    vec3 foggedColor = mix(color, camera.fogColor.rgb, FogFactor(fragViewOffset));
+    outColor = vec4(mix(camera.fogColor.rgb, foggedColor, fragChunkFade), texColor.a);
 }

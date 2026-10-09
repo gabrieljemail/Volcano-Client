@@ -45,7 +45,7 @@ struct SceneView {
     // Vanilla's per-face diffuse shading (Graphics.Shading.*), forwarded
     // into CameraUBO — see that struct's own comment.
     float shadeTop = 1.0f;
-    float shadeBottom = 0.5f;
+    float shadeBottom = 0.4f;
     float shadeNorthSouth = 0.8f;
     float shadeEastWest = 0.6f;
 

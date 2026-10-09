@@ -36,9 +36,46 @@ void VulkanRenderEngine::Init()
     RegisterBuiltInPasses();
     CreatePasses();
     hizBuildPass.Create(shaders);
+    CreateTimestampPool();
 
     Log::Info(std::string("[INFO] Render engine initialized (") + GetBackendName() + ", "
         + std::to_string(passes.size()) + " passes).");
+}
+
+void VulkanRenderEngine::CreateTimestampPool()
+{
+    state->timings.gpuMs = -1.0f; // "n/a" until a sample arrives
+
+    uint32_t familyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(GetPhysicalDevice(), &familyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> families(familyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(GetPhysicalDevice(), &familyCount, families.data());
+
+    uint32_t validBits = graphicsQueueFamilyIndex < familyCount ? families[graphicsQueueFamilyIndex].timestampValidBits : 0;
+    if (validBits == 0) return;
+    timestampMask = validBits >= 64 ? ~0ull : ((1ull << validBits) - 1);
+    timestampMsPerTick = static_cast<double>(physicalDevice.properties.limits.timestampPeriod) / 1.0e6;
+
+    VkQueryPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    poolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    poolInfo.queryCount = 3 * 2;
+    if (vkCreateQueryPool(GetDevice(), &poolInfo, nullptr, &timestampPool) != VK_SUCCESS) timestampPool = VK_NULL_HANDLE;
+}
+
+// Call after the slot's fence wait. GPU time is smoothed like the CPU timers.
+void VulkanRenderEngine::ReadTimestamps(uint32_t slot)
+{
+    if (timestampPool == VK_NULL_HANDLE || !timestampPending[slot]) return;
+    timestampPending[slot] = false;
+
+    uint64_t ticks[2];
+    if (vkGetQueryPoolResults(GetDevice(), timestampPool, slot * 2, 2, sizeof(ticks), ticks,
+            sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) return;
+
+    float ms = static_cast<float>(((ticks[1] - ticks[0]) & timestampMask) * timestampMsPerTick);
+    float previous = state->timings.gpuMs.load();
+    state->timings.gpuMs.store(previous < 0.0f ? ms : previous + (ms - previous) * 0.05f);
 }
 
 void VulkanRenderEngine::RegisterBuiltInPasses()
@@ -92,6 +129,12 @@ void VulkanRenderEngine::StopRendering()
     hizBuildPass.Destroy();
     DestroyPasses();
 
+    if (timestampPool != VK_NULL_HANDLE)
+    {
+        vkDestroyQueryPool(GetDevice(), timestampPool, nullptr);
+        timestampPool = VK_NULL_HANDLE;
+    }
+
     if (screenshotBuffer.buffer != VK_NULL_HANDLE)
     {
         vmaDestroyBuffer(vmaAllocator, screenshotBuffer.buffer, screenshotBuffer.allocation);
@@ -126,7 +169,9 @@ bool VulkanRenderEngine::BeginFrame()
     }
 
     // Have the CPU wait until this frame slot's previous submission is done.
+    auto waitStart = std::chrono::steady_clock::now();
     vkWaitForFences(GetDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+    ReadTimestamps(currentFrame);
 
     VkResult result = vkAcquireNextImageKHR(
         GetDevice(),
@@ -136,6 +181,8 @@ bool VulkanRenderEngine::BeginFrame()
         VK_NULL_HANDLE,
         &imageIndex
     );
+    state->timings.waitRawMs.store(
+        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count());
 
     // The swapchain is stale (surface no longer matches — a resize/fullscreen
     // toggle that outran the framebuffer-size callback, or a minimized
@@ -173,6 +220,11 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
     renderFrameCounter++;
 
     BeginCommandBuffer(cmd);
+    if (timestampPool != VK_NULL_HANDLE)
+    {
+        vkCmdResetQueryPool(cmd, timestampPool, currentFrame * 2, 2);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, currentFrame * 2);
+    }
     UploadCamera(scene);
     BeginMainPass(cmd, scene);
 
@@ -192,6 +244,11 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
     // Outside the render pass instance now (compute can't run inside one) —
     // see HiZBuildPass's own comment on why it isn't a normal RenderPass.
     hizBuildPass.Record(cmd, currentFrame, frame.viewProj);
+    if (timestampPool != VK_NULL_HANDLE)
+    {
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, currentFrame * 2 + 1);
+        timestampPending[currentFrame] = true;
+    }
     vkEndCommandBuffer(cmd);
     SubmitCommandBuffer(cmd);
     PresentImage();

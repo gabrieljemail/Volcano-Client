@@ -24,8 +24,10 @@ layout(location = 1) flat in uint fragLayer;
 layout(location = 2) in float fragSkyLight;
 layout(location = 3) flat in uint fragBiomeTinted;
 layout(location = 4) in float fragBlockLight;
-layout(location = 5) in float fragFaceShade;
-layout(location = 6) in vec3 fragViewOffset;
+layout(location = 5) in float fragAOMultiplier;
+layout(location = 6) in float fragFaceShade;
+layout(location = 7) in vec3 fragViewOffset;
+layout(location = 8) in float fragChunkFade;
 
 layout(location = 0) out vec4 outColor;
 
@@ -73,6 +75,9 @@ void main() {
     float ambient = min(skyBrightness, AMBIENT_CEILING);
     float light = max(ambient, blockBrightness);
 
+    // Apply AO to lighting.
+    light *= fragAOMultiplier;
+
     // Final = (1-γ)*moody + γ*bright — vanilla's gamma blend. Fullbright
     // skips this entirely rather than blending toward γ=0.
     light = camera.lightingEnabled > 0.5 ? mix(light, NotGamma(light), camera.brightnessFactor) : 1.0;
@@ -81,5 +86,6 @@ void main() {
     // for why the branch lives there and not here) — a plain multiply, no
     // branching in this stage at all.
     vec3 color = texColor.rgb * tint * light * fragFaceShade;
-    outColor = vec4(mix(color, camera.fogColor.rgb, FogFactor(fragViewOffset)), texColor.a);
+    vec3 foggedColor = mix(color, camera.fogColor.rgb, FogFactor(fragViewOffset));
+    outColor = vec4(mix(camera.fogColor.rgb, foggedColor, fragChunkFade), texColor.a);
 }

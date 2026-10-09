@@ -18,6 +18,7 @@ enum class ShapeKind {
     Golem,     // Iron golem's own blocky proportions — GolemModel.hpp.
     Pig,       // Real vanilla-derived pig proportions — PigModel.hpp.
     Cow,       // Real vanilla-derived cow proportions — CowModel.hpp.
+    Block,     // A textured block cube (falling_block, tnt) — Entity::blockStateId picks the block.
 };
 
 // One entity type's static metadata, straight from minecraft-data's

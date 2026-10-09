@@ -183,8 +183,8 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
     // floor, bit SECTION_COUNT+1 the one above the ceiling).
     std::vector<uint64_t> skyLightMask = ReadBitSet(reader);
     std::vector<uint64_t> blockLightMask = ReadBitSet(reader);
-    ReadBitSet(reader); // Empty Sky Light Mask — sections here are all-zero; already the case if never written.
-    ReadBitSet(reader); // Empty Block Light Mask — same reasoning.
+    std::vector<uint64_t> emptySkyLightMask = ReadBitSet(reader);
+    std::vector<uint64_t> emptyBlockLightMask = ReadBitSet(reader);
 
     constexpr int LIGHT_SECTION_COUNT = SECTION_COUNT + 2;
 
@@ -215,6 +215,23 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
             uint8_t value = (i % 2 == 0) ? (nibbles[static_cast<size_t>(i / 2)] & 0x0Fu)
                                           : (nibbles[static_cast<size_t>(i / 2)] >> 4);
             chunk->applyBlockLight(i % 16, sectionBaseY + i / 256, (i / 16) % 16, value);
+        }
+    }
+
+    for (int bit = 0; bit < LIGHT_SECTION_COUNT; bit++) {
+        int section = bit - 1;
+        if (section < 0 || section >= SECTION_COUNT) continue;
+        bool emptySky = BitSetTest(emptySkyLightMask, bit);
+        bool emptyBlock = BitSetTest(emptyBlockLightMask, bit);
+        if (!emptySky && !emptyBlock) continue;
+
+        int sectionBaseY = section * 16;
+        for (int i = 0; i < 4096; i++) {
+            int x = i % 16;
+            int z = (i / 16) % 16;
+            int y = sectionBaseY + i / 256;
+            if (emptySky) chunk->setSkyLight(x, y, z, 0);
+            if (emptyBlock) chunk->setBlockLight(x, y, z, 0);
         }
     }
 

@@ -1,4 +1,5 @@
 #include "MeshingThread.hpp"
+#include "../../CrashReporter.hpp"
 #include "ChunkMesher.hpp"
 #include "models/ChunkSection.hpp"
 #include "../misc/NonCubicMesher.hpp"
@@ -30,6 +31,9 @@ SectionMeshTiming MeshAndUpsertSection(GlobalState* state, const TextureManager*
     auto cubeDone = std::chrono::steady_clock::now();
     NonCubicMesher::ChunkMeshes nonCubicMeshes =
         NonCubicMesher::MeshChunkSection(chunk, *state->world, *textureManager, key.sectionY);
+    mesh.fadeStart = chunk.GetFadeStart();
+    nonCubicMeshes.cutout.fadeStart = chunk.GetFadeStart();
+    nonCubicMeshes.translucent.fadeStart = chunk.GetFadeStart();
     auto meshDone = std::chrono::steady_clock::now();
 
     // A section that came back with nothing to draw (e.g. the last block in
@@ -60,10 +64,16 @@ SectionMeshTiming MeshAndUpsertSection(GlobalState* state, const TextureManager*
     // genuinely empty one (both end up with vertexCount 0) — nothing more
     // to do with it at this level.
 
-    return {
+    SectionMeshTiming timing{
         std::chrono::duration<double, std::milli>(cubeDone - meshStart).count(),
         std::chrono::duration<double, std::milli>(meshDone - cubeDone).count()
     };
+
+    // Smoothed for the debug HUD.
+    float total = static_cast<float>(timing.cubeMs + timing.nonCubicMs);
+    float previous = state->timings.meshMs.load();
+    state->timings.meshMs.store(previous + (total - previous) * 0.05f);
+    return timing;
 }
 
 } // namespace
@@ -85,7 +95,7 @@ MeshingThread::~MeshingThread() = default;
 
 void MeshingThread::Start()
 {
-    worker = std::jthread([this](std::stop_token st) { ThreadEntry(st); });
+    worker = std::jthread([this](std::stop_token st) { CrashReporter::InstallForThread(); ThreadEntry(st); });
 }
 
 void MeshingThread::RequestStop()
@@ -143,15 +153,24 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                 }
             }
 
-            while (!state->networkInbox.pendingLightUpdates.empty())
+            size_t lightUpdatesToProcess = state->networkInbox.pendingLightUpdates.size();
+            std::vector<PendingLightUpdate> deferredLightUpdates;
+            for (size_t i = 0; i < lightUpdatesToProcess; i++)
             {
                 PendingLightUpdate update = std::move(state->networkInbox.pendingLightUpdates.front());
                 state->networkInbox.pendingLightUpdates.pop_front();
+                if (!state->world->HasChunk(update.chunkX, update.chunkZ))
+                {
+                    deferredLightUpdates.push_back(std::move(update));
+                    continue;
+                }
                 for (const SectionKey& key : state->world->ApplyLightUpdate(update))
                 {
                     state->networkInbox.dirtySections.push_back(key);
                 }
             }
+            for (PendingLightUpdate& update : deferredLightUpdates)
+                state->networkInbox.pendingLightUpdates.push_back(std::move(update));
 
             while (!state->networkInbox.pendingUnloads.empty())
             {
@@ -175,6 +194,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                 state->networkInbox.chunks.pop();
             }
             queueDepth = state->networkInbox.chunks.size();
+            state->timings.meshQueue.store(static_cast<uint32_t>(queueDepth));
             if (state->networkInbox.spawnPosition.has_value())
             {
                 spawnPosition = state->networkInbox.spawnPosition;
@@ -242,15 +262,19 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             if (dirtyChunk != nullptr)
             {
                 SectionMeshTiming timing = MeshAndUpsertSection(state, textureManager, *dirtyChunk, *dirtySection);
-                Log::Info("[MESH] section (" + std::to_string(dirtySection->chunkX) + ","
-                    + std::to_string(dirtySection->chunkZ) + "," + std::to_string(dirtySection->sectionY) + "): "
-                    + std::to_string(timing.cubeMs) + "ms cube + " + std::to_string(timing.nonCubicMs) + "ms non-cube");
+                if (Log::MeshEventsEnabled())
+                {
+                    Log::Info("[MESH] section (" + std::to_string(dirtySection->chunkX) + ","
+                        + std::to_string(dirtySection->chunkZ) + "," + std::to_string(dirtySection->sectionY) + "): "
+                        + std::to_string(timing.cubeMs) + "ms cube + " + std::to_string(timing.nonCubicMs) + "ms non-cube");
+                }
             }
         }
         else if (chunk)
         {
             int chunkX = chunk->getX();
             int chunkZ = chunk->getZ();
+            chunk->SetFadeStart(std::chrono::steady_clock::now());
 
             // Meshed section-by-section before InsertChunk below places this
             // chunk itself into World, but that's fine — ChunkMesher only
@@ -275,10 +299,13 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             // actually expensive to mesh, or just backed up behind
             // queueDepth others in this single-threaded queue (see this
             // loop's own comment on why there's no parallelism here yet).
-            Log::Info("[MESH] chunk (" + std::to_string(chunkX) + "," + std::to_string(chunkZ) + "): "
-                + std::to_string(totalCubeMs) + "ms cube + " + std::to_string(totalNonCubicMs) + "ms non-cube, "
-                + std::to_string(meshedSections) + "/" + std::to_string(SECTIONS_PER_CHUNK) + " sections, "
-                + std::to_string(queueDepth) + " queued");
+            if (Log::MeshEventsEnabled())
+            {
+                Log::Info("[MESH] chunk (" + std::to_string(chunkX) + "," + std::to_string(chunkZ) + "): "
+                    + std::to_string(totalCubeMs) + "ms cube + " + std::to_string(totalNonCubicMs) + "ms non-cube, "
+                    + std::to_string(meshedSections) + "/" + std::to_string(SECTIONS_PER_CHUNK) + " sections, "
+                    + std::to_string(queueDepth) + " queued");
+            }
 
             // worldReady must be the last write of this transition — see
             // its comment in GlobalState.hpp for why RenderThread relies on

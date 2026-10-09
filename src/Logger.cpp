@@ -51,4 +51,10 @@ void Debug(const std::string& message)
     }
 }
 
+bool MeshEventsEnabled()
+{
+    Config* config = Config::Active();
+    return config != nullptr && std::get<bool>(config->Get("Debug.LogMeshEvents", false));
+}
+
 } // namespace Volcano::Log

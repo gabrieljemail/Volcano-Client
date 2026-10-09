@@ -1,6 +1,7 @@
 #include "InteractionManager.hpp"
 #include "../Logger.hpp"
 #include "../inventory/ItemRegistry.hpp"
+#include "../inventory/ToolStats.hpp"
 #include "../renderer/entity/models/EntityRegistry.hpp"
 #include "../renderer/terrain/models/BlockRegistry.hpp"
 #include "../network/NetworkClient.hpp"
@@ -141,9 +142,9 @@ std::optional<TargetedBlock> RaycastBlocks(GlobalState* state, const glm::vec3& 
     for (float traveled = 0.0f; traveled <= maxDistance; )
     {
         Block block = state->world->GetBlock(cell.x, cell.y, cell.z);
-        if (block.hasCollision())
+        BlockRegistry::CollisionBoxes shape = BlockRegistry::GetSelectionBoxes(block);
+        if (shape.count > 0)
         {
-            BlockRegistry::CollisionBoxes shape = BlockRegistry::GetCollisionBoxes(block);
             glm::vec3 blockOrigin(cell);
 
             std::optional<RayHit> closest;
@@ -422,18 +423,67 @@ void InteractionManager::BeginMining(const TargetedBlock& target)
 
     bool instabuild = state->canInstabuild.load(std::memory_order_relaxed);
     Block block = state->world->GetBlock(target.position.x, target.position.y, target.position.z);
+    int32_t breakTicks = BreakTicksFor(block);
 
-    if (instabuild || block.breakTicks == 0)
+    if (instabuild || breakTicks == 0)
     {
         lastBreakTime = now;
         BreakBlockEvent{ target.position, target.face }.Dispatch(state);
         return;
     }
-    if (block.breakTicks < 0) return; // Unbreakable (bedrock, ...), or not resolved from a real state id.
+    if (breakTicks < 0) return; // Unbreakable (bedrock, ...), or not resolved from a real state id.
 
     SendPlayerAction(state, DigStatus::StartDigging, target.position, target.face);
     SendArmAnimation(state, Hand::Main);
-    mining = MiningState{ target.position, target.face, block.breakTicks, std::chrono::steady_clock::now() };
+    mining = MiningState{ target.position, target.face, breakTicks, std::chrono::steady_clock::now() };
+    PublishMining();
+}
+
+void InteractionManager::PublishMining()
+{
+    if (mining.has_value())
+    {
+        state->miningStartNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            mining->startTime.time_since_epoch()).count(), std::memory_order_relaxed);
+        state->miningTicksRequired.store(mining->ticksRequired, std::memory_order_relaxed);
+    }
+    else
+    {
+        state->miningTicksRequired.store(0, std::memory_order_relaxed);
+    }
+}
+
+// Vanilla's destroy progress per tick: speed / hardness / (30 if the held
+// tool can harvest the block, else 100), where speed is the tool's tier
+// speed on its own block type (1 otherwise) and a fifth of that in the air.
+// Not modeled yet: Efficiency, Haste/Mining Fatigue, underwater penalty.
+int32_t InteractionManager::BreakTicksFor(const Block& block) const
+{
+    if (block.breakTicks <= 0) return block.breakTicks; // Unbreakable or instant.
+
+    const BlockRegistry::BreakInfo& info = BlockRegistry::GetBreakInfo(block.breakInfoId);
+    if (info.hardness <= 0.0f) return block.breakTicks;
+
+    float speed = 1.0f;
+    bool canHarvest = !info.requiresTool;
+    if (!mainhand.IsEmpty())
+    {
+        if (const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(mainhand.itemId))
+        {
+            ToolStats tool = ToolStatsForItem(item->name);
+            if (tool.toolClass != BlockRegistry::ToolClass::None && tool.toolClass == info.toolClass) speed = tool.speed;
+        }
+        if (info.requiresTool)
+        {
+            canHarvest = std::find(info.harvestToolIds.begin(), info.harvestToolIds.end(),
+                static_cast<uint16_t>(mainhand.itemId)) != info.harvestToolIds.end();
+        }
+    }
+    if (!state->tickLoop->IsGrounded()) speed /= 5.0f;
+
+    float damage = speed / info.hardness / (canHarvest ? 30.0f : 100.0f);
+    if (damage >= 1.0f) return 0;
+    return std::max(1, static_cast<int32_t>(std::ceil(1.0f / damage)));
 }
 
 void InteractionManager::ContinueMining()
@@ -443,6 +493,7 @@ void InteractionManager::ContinueMining()
 
     BreakBlockEvent{ mining->position, mining->face, /*sendStart=*/false }.Dispatch(state);
     mining.reset();
+    PublishMining();
     lastBreakTime = std::chrono::steady_clock::now();
 }
 
@@ -451,6 +502,7 @@ void InteractionManager::CancelMining()
     if (!mining.has_value()) return;
     SendPlayerAction(state, DigStatus::CancelDigging, mining->position, mining->face);
     mining.reset();
+    PublishMining();
 }
 
 void InteractionManager::AttackEntity(uint32_t entityId)
@@ -584,7 +636,10 @@ void InteractionManager::DispatchUse()
         bool sneaking = state->tickLoop->IsSneaking();
         InteractEntityEvent{ *targetedEntityId, hand, sneaking }.Dispatch(state);
     }
-    else if (targetedBlock.has_value() && state->world->HasBlockEntity(targetedBlock->position)
+    else if (targetedBlock.has_value()
+        && (state->world->HasBlockEntity(targetedBlock->position)
+            || state->world->GetBlock(targetedBlock->position.x, targetedBlock->position.y,
+                                      targetedBlock->position.z).isCraftingTable)
         && !(state->tickLoop->IsSneaking() && !mainhand.IsEmpty()))
     {
         // Vanilla: sneaking with something in hand places against the block

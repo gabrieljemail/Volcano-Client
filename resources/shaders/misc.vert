@@ -2,6 +2,7 @@
 
 layout(push_constant) uniform PushConstants {
     mat4 model;
+    float fade;
 } pc;
 
 // Full layout through cameraPosition (std140 offsets are sequential).
@@ -32,6 +33,8 @@ layout(location = 2) out float fragSkyLight;
 layout(location = 3) flat out uint fragBiomeTint;
 layout(location = 4) out float fragBlockLight;
 layout(location = 5) out vec3 fragViewOffset; // world position relative to the camera, for fog
+layout(location = 6) out float fragChunkFade;
+layout(location = 7) out float fragFoliageHeight;
 
 void main() {
     // See MiscVertex::Pack: textureLayer (0-15), blockLight (16-19), skyLight
@@ -50,4 +53,6 @@ void main() {
     // exact same curve/bloom-cap logic).
     fragSkyLight = float(skyLight) / 15.0;
     fragBlockLight = float(blockLight) / 15.0;
+    fragChunkFade = pc.fade;
+    fragFoliageHeight = clamp(1.0 - inUV.y, 0.0, 1.0);
 }

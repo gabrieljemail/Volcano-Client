@@ -17,17 +17,14 @@ public:
     // that chunk meshes are bump-allocated from.
     static constexpr uint64_t DEFAULT_SLAB_SIZE = 256ull * 1024 * 1024; // 256 MB
 
-    // `world` lets the greedy sweep see across chunk boundaries (see
-    // GreedyMeshAxis's own comment) instead of treating every neighboring
-    // chunk as solid air — without it, two adjacent chunks with solid
-    // terrain at their shared edge each assume the other side is air and
-    // both emit a face there, producing exactly-coincident duplicate
-    // geometry (visible as constant z-fighting/flicker at chunk seams).
-    // `chunk` itself doesn't need to already be inserted into `world` for
-    // this call.
-    //
-    // Meshes one 16-tall vertical slice (sectionY 0..SECTIONS_PER_CHUNK-1 —
-    // see ChunkSection.hpp) instead of the whole 384-tall column, so a
+    // A helper function to compute vertex AO when meshing chunks for smooth lighting.
+    static uint8_t ComputeVertexAO(const Chunk& chunk, const World& world,
+        int u, int v, int n,                // Axes.
+        int cornerU, int cornerV,           // Corner (0-3).
+        int blockU, int blockV, int blockN  // Solid block position.
+    );
+
+    // Meshes one 16-tall vertical slice instead of the whole 384-tall column, so a
     // single block edit only costs re-sweeping ~16x16x16, not the entire
     // column. Callers should skip calling this for a section
     // Chunk::IsSectionEmpty reports as empty.

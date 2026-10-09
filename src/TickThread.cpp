@@ -1,4 +1,5 @@
 #include "TickThread.hpp"
+#include "CrashReporter.hpp"
 #include "Logger.hpp"
 #include "TickLoop.hpp"
 #include "network/Connection.hpp"
@@ -33,7 +34,7 @@ TickThread::~TickThread() = default; // jthread's own dtor requests stop + joins
 
 void TickThread::Start()
 {
-    worker = std::jthread([this](std::stop_token st) { ThreadEntry(st); });
+    worker = std::jthread([this](std::stop_token st) { CrashReporter::InstallForThread(); ThreadEntry(st); });
 }
 
 void TickThread::ThreadEntry(std::stop_token stopToken)

@@ -2,6 +2,7 @@
 #include <stb_image_write.h>
 
 #include "Screenshot.hpp"
+#include "../CrashReporter.hpp"
 #include "Logger.hpp"
 #include <chrono>
 #include <ctime>
@@ -32,6 +33,7 @@ std::string Screenshot::SaveAsync(std::vector<uint8_t> rgba, uint32_t width, uin
 
     std::thread([rgba = std::move(rgba), width, height, path]
     {
+        CrashReporter::InstallForThread();
         int stride = static_cast<int>(width) * 4;
         if (stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height), 4, rgba.data(), stride))
         {

@@ -129,12 +129,32 @@ uint16_t MapStateIdCollisionShape(int32_t stateId);
 // block-selection raycasting so both agree on the exact same shape.
 CollisionBoxes GetCollisionBoxes(const Block& block);
 
+// Outline/raycast geometry is distinct from physics collision: rendered
+// non-cube blocks without collision (e.g. torches) still need to be targetable.
+CollisionBoxes GetSelectionBoxes(const Block& block);
+
 // Ticks (1/20s) to hand-mine a block: ceil(hardness * (requiresTool ? 100 :
 // 30)), vanilla's own divisor for hasCorrectToolForDrops false/true. No held
 // item is checked yet, so tool-restricted blocks always get the "wrong tool"
 // 100 (exact hand-mining time; too slow once real tools exist). -1 means
 // unbreakable or out-of-range, 0 means instant (hardness 0.0).
 int32_t MapStateIdBreakTicks(int32_t stateId);
+
+// Which tool type mines a block fastest (blocks.json's "mineable/<tool>").
+enum class ToolClass : uint8_t { None, Pickaxe, Axe, Shovel, Hoe };
+
+// What a block's mining time depends on besides hardness, interned per block
+// (Block::breakInfoId).
+struct BreakInfo {
+    float hardness = 0.0f;
+    ToolClass toolClass = ToolClass::None;
+    bool requiresTool = false;            // Drops nothing and mines 3x slower without a valid tool.
+    std::vector<uint16_t> harvestToolIds; // Item ids that count as a valid tool when requiresTool.
+};
+
+// Look up a block's BreakInfo. Returns an empty default for id 0 or any
+// out-of-range id.
+const BreakInfo& GetBreakInfo(uint16_t breakInfoId);
 
 // Fully-resolved Block for a protocol state id (visual, non-cube visual,
 // collision shape and break ticks) — what chunk parsing and Block Update use.

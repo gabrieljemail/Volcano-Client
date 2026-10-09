@@ -27,8 +27,8 @@ public:
     // routing a packet's slot index) already has to handle "this slot has
     // nothing in it" as a normal case, so an invalid index reading the same
     // way keeps callers simple instead of needing a separate bounds check.
-    const ItemStack& Get(size_t index) const {
-        static const ItemStack empty{};
+    ItemStack& Get(size_t index) {
+        static ItemStack empty{};
         return index < slots.size() ? slots[index] : empty;
     }
 

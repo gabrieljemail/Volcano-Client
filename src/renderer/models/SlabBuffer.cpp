@@ -1,6 +1,8 @@
 #include "SlabBuffer.hpp"
 #include "../VulkanInit.hpp"
 #include "Logger.hpp"
+#include "platform/OS.hpp"
+#include <algorithm>
 #include <cstring>
 #include <iterator>
 #include <stdexcept>
@@ -8,24 +10,49 @@
 
 namespace Volcano {
 
+VkDeviceSize SlabBuffer::AffordableSize(VkDeviceSize wanted, double share, uint32_t slabCount)
+{
+    // Never plan to use more than 40% of what's free; 0 means the query failed.
+    constexpr double RAM_FRACTION = 0.4;
+    constexpr VkDeviceSize MIN_SLAB = 8ull * 1024 * 1024;
+
+    uint64_t available = Platform::OS::GetAvailablePhysicalMemoryBytes();
+    if (available == 0) return wanted;
+
+    double perSlab = static_cast<double>(available) * RAM_FRACTION * share / std::max(1u, slabCount);
+    VkDeviceSize capped = std::max<VkDeviceSize>(MIN_SLAB, std::min<VkDeviceSize>(wanted, static_cast<VkDeviceSize>(perSlab)));
+    if (capped < wanted) {
+        Log::Info("SlabBuffer: capping a " + std::to_string(wanted / (1024 * 1024)) + " MB slab to "
+            + std::to_string(capped / (1024 * 1024)) + " MB (" + std::to_string(available / (1024 * 1024))
+            + " MB RAM free).");
+    }
+    return capped;
+}
+
 void SlabBuffer::Init(VkDeviceSize capacityIn, VkBufferUsageFlags usage) {
     std::lock_guard<std::mutex> lock(mutex);
-    capacity = capacityIn;
     used = 0;
     freeRanges.clear();
     pendingFrees.clear();
 
-    buffer = CreateBuffer(capacity, usage, true /* isUMA: host-visible, sequential write */);
-    // CreateBuffer doesn't check vmaCreateBuffer's result itself, so a
-    // request too large for the host-visible heap (a real risk here now that
-    // this size scales with Graphics.RenderDistance — that heap is often
-    // capped hard, e.g. ~256 MB on a GPU without resizable BAR) silently
-    // leaves buffer.allocation null. Mapping that null allocation is what
-    // used to crash with an opaque VMA assertion instead of a readable
-    // error — catch it here instead.
-    if (buffer.buffer == VK_NULL_HANDLE || buffer.allocation == nullptr) {
-        throw std::runtime_error("[ERROR] SlabBuffer failed to allocate " + std::to_string(capacity)
-            + " bytes — try lowering Graphics.RenderDistance.");
+    // CreateBuffer doesn't report failure except through a null allocation.
+    // The host-visible heap can be small (low RAM, or capped without
+    // resizable BAR), so halve the request until it fits rather than failing.
+    constexpr VkDeviceSize MIN_CAPACITY = 8ull * 1024 * 1024;
+    capacity = capacityIn;
+    while (true) {
+        buffer = CreateBuffer(capacity, usage, true /* isUMA: host-visible, sequential write */);
+        if (buffer.buffer != VK_NULL_HANDLE && buffer.allocation != nullptr) break;
+
+        if (capacity <= MIN_CAPACITY) {
+            throw std::runtime_error("[ERROR] SlabBuffer couldn't allocate even " + std::to_string(MIN_CAPACITY)
+                + " bytes — the system is out of memory.");
+        }
+        capacity /= 2;
+    }
+    if (capacity != capacityIn) {
+        Log::Error("SlabBuffer: " + std::to_string(capacityIn / (1024 * 1024)) + " MB didn't fit; using "
+            + std::to_string(capacity / (1024 * 1024)) + " MB. Lower Graphics.SlabSize.* to silence this.");
     }
     vmaMapMemory(vmaAllocator, buffer.allocation, &mapped);
 

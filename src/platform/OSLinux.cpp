@@ -69,6 +69,18 @@ uint64_t OS::GetProcessMemoryUsageBytes()
     return residentPages * static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
 }
 
+uint64_t OS::GetAvailablePhysicalMemoryBytes()
+{
+    std::ifstream meminfo("/proc/meminfo");
+    std::string key;
+    uint64_t kilobytes = 0;
+    while (meminfo >> key >> kilobytes) {
+        if (key == "MemAvailable:") return kilobytes * 1024;
+        meminfo.ignore(256, '\n');
+    }
+    return 0;
+}
+
 std::string OS::GetCpuModel()
 {
     std::ifstream cpuinfo("/proc/cpuinfo");
@@ -174,6 +186,9 @@ bool OS::EnableBufferedRawMouse(GLFWwindow*)
 }
 
 void OS::ReadBufferedRawMouse(double&, double&)
+{}
+
+bool OS::LoadObject(const std::string& path)
 {}
 
 } // namespace Volcano::Platform

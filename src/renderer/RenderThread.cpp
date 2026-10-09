@@ -49,6 +49,7 @@ RenderThread::~RenderThread()
 void RenderThread::RunFrame()
 {
     WaitForTargetFrame();
+    auto workStart = chrono::steady_clock::now();
     UpdateDeltaTime();
     PollInputs();
     DrawFrame();
@@ -57,6 +58,18 @@ void RenderThread::RunFrame()
     // press/release edges above — only clear them now that both have
     // had their chance, not before.
     state->input->EndFrame();
+
+    // Everything above except pacing, split into real CPU work and time
+    // blocked on the GPU (fence/acquire, reported by the engine).
+    float totalMs = chrono::duration<float, std::milli>(chrono::steady_clock::now() - workStart).count();
+    float waitMs = state->timings.waitRawMs.load();
+    constexpr float smoothing = 0.05f;
+    auto smooth = [](std::atomic<float>& field, float sample)
+    {
+        field.store(field.load() + (sample - field.load()) * smoothing);
+    };
+    smooth(state->timings.renderCpuMs, std::max(0.0f, totalMs - waitMs));
+    smooth(state->timings.gpuWaitMs, waitMs);
 }
 
 void RenderThread::Shutdown()
@@ -91,7 +104,7 @@ void RenderThread::WaitForTargetFrame()
         // In the future, we can replace yield() with a no-op like a useless while loop.
         // However, yield() resets the execution timer to fit all of our operations, while
         // the no-op method does not and might cause the timer to interrupt mid-frame.
-        // Ideally, we want to keep interrupts off-frame.
+        // Ideally, we want to keep interrupts off-frame, except for inputs.
         this_thread::yield();
     }
 }
@@ -105,15 +118,6 @@ void RenderThread::UpdateDeltaTime()
 
 void RenderThread::PollInputs()
 {
-    // Dispatches the KeyCallback/CursorPosCallback that feed InputHandler's
-    // state, plus window-manager events (resize, focus, close). Used to run
-    // in main()'s own separate loop, on the same (GLFW-owning) thread as
-    // this one now was a *different* thread — see the class comment. Polling
-    // here, immediately before this frame's input is read below, keeps the
-    // latency-minimizing order intact: capture as late as possible,
-    // immediately before the frame that uses it.
-    // Raw mouse is drained first, in one batch, before the message loop
-    // would otherwise dispatch it one WM_INPUT at a time.
     state->input->PollRawMouse();
     glfwPollEvents();
 
@@ -384,10 +388,10 @@ Engine::SceneView RenderThread::BuildSceneView()
 
     // Vanilla's hardcoded per-face shade (LevelRenderer::getShade), stored
     // as a 0-100 percentage like Brightness above rather than a raw float —
-    // Config has no float alternative (see ConfigValue). Defaults match
-    // vanilla exactly: Up=100, Down=50, North/South=80, East/West=60.
+    // Config has no float alternative (see ConfigValue). Face defaults are
+    // Up=100, Down=40, North/South=80, East/West=60.
     scene.shadeTop = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.Top", uint32_t{100}))) / 100.0f;
-    scene.shadeBottom = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.Bottom", uint32_t{50}))) / 100.0f;
+    scene.shadeBottom = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.Bottom", uint32_t{40}))) / 100.0f;
     scene.shadeNorthSouth = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.NorthSouth", uint32_t{80}))) / 100.0f;
     scene.shadeEastWest = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.EastWest", uint32_t{60}))) / 100.0f;
 

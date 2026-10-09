@@ -61,9 +61,12 @@ void HiZBuildPass::BeginFrame(uint32_t frameIndex)
     if (now - lastLogTime >= std::chrono::seconds(2) && occlusionSnapshot.tested > 0)
     {
         lastLogTime = now;
-        Log::Info("[HIZ] occlusion: " + std::to_string(occlusionSnapshot.occluded) + " of "
-            + std::to_string(occlusionSnapshot.tested) + " in-frustum section draws culled last frame (terrain + non-cubic)"
-            + (occlusionSnapshot.valid ? "" : " [no snapshot yet]"));
+        if (Log::MeshEventsEnabled())
+        {
+            Log::Info("[HIZ] occlusion: " + std::to_string(occlusionSnapshot.occluded) + " of "
+                + std::to_string(occlusionSnapshot.tested) + " in-frustum section draws culled last frame (terrain + non-cubic)"
+                + (occlusionSnapshot.valid ? "" : " [no snapshot yet]"));
+        }
     }
     occlusionSnapshot.tested = 0;
     occlusionSnapshot.occluded = 0;

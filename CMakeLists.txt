@@ -102,6 +102,24 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
     "C:/Apps/Libraries/ImGui/backends"
 )
 
+# --- OPENAL ---
+if(WIN32)
+    target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
+        "C:/Apps/Libraries/OpenAL/include"
+    )
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(OPENAL_LIBRARY "C:/Apps/Libraries/OpenAL/libs/Win64/OpenAL32.lib")
+    else()
+        set(OPENAL_LIBRARY "C:/Apps/Libraries/OpenAL/libs/Win32/OpenAL32.lib")
+    endif()
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        "${OPENAL_LIBRARY}"
+    )
+elseif(UNIX)
+    find_package(OpenAL REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE OpenAL::OpenAL ${CMAKE_DL_LIBS})
+endif()
+
 # --- PLATFORM LIBRARIES (src/platform) ---
 # DbgHelp symbolizes crash stack traces on Windows; -rdynamic exports symbol
 # names so backtrace_symbols can on Linux.
@@ -142,8 +160,12 @@ if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(${PROJECT_NAME} PRIVATE
         -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions
         $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
-        $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-gcodeview> $<$<NOT:$<CONFIG:Release>>:-O0>
+        -g -gcodeview
+        $<$<NOT:$<CONFIG:Release>>:-O0>
     )
+    # Release keeps debug info (no effect on speed) so crash reports name
+    # real functions; the PDB just has to sit next to the exe.
+    target_link_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release>:-Wl,/DEBUG>)
 else()
     # -march=native only makes sense for a Debug build run on the same
     # machine that built it — a Release build is meant to run on other
@@ -183,6 +205,7 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 #    for iterating on the Configuration/Play packet exchange against a real
 #    server without needing the full client. Not part of the shipped app.
 # =============================================================================
+#[[
 add_executable(NetDiag
     tools/netdiag_main.cpp
     src/Logger.cpp
@@ -243,3 +266,4 @@ add_custom_command(TARGET NetDiag POST_BUILD
         "C:/Apps/Libraries/OpenSSL/bin/libssl-4-x64.dll"
         $<TARGET_FILE_DIR:NetDiag>
 )
+]]

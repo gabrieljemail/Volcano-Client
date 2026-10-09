@@ -9,8 +9,8 @@ namespace Volcano {
 // One inventory slot's contents — mirrors the protocol's Slot data
 // structure (a present flag, item id, and count) closely enough for this
 // client's needs; the data-components/NBT part of Slot (enchantments, custom
-// names, ...) isn't modeled yet since nothing parses inventory packets off
-// the wire yet either (see InventoryManager). A default-constructed
+// names, ...) isn't modeled yet (NetworkClient currently decodes item id and
+// count only). A default-constructed
 // ItemStack is an empty slot — itemId 0 doubles as "no item" (item id 0 is
 // "minecraft:air" in minecraft-data's items.json, so this needs no separate
 // bool to stay in sync with count the way a real Slot's "Present" flag

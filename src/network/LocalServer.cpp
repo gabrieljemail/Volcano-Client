@@ -1,4 +1,5 @@
 #include "LocalServer.hpp"
+#include "../CrashReporter.hpp"
 #include "../Logger.hpp"
 #include <chrono>
 #include <cstring>
@@ -147,7 +148,7 @@ bool LocalServer::Start(const std::string& directory, const std::string& javaPat
         Log::Error("LocalServer: failed to create job object — server may survive a client crash");
     }
 
-    outputReaderThread = std::thread([this] { DrainOutputPipe(); });
+    outputReaderThread = std::thread([this] { CrashReporter::InstallForThread(); DrainOutputPipe(); });
     return true;
 }
 

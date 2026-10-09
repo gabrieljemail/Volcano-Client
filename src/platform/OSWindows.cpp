@@ -73,9 +73,16 @@ uint64_t OS::GetProcessMemoryUsageBytes()
     counters.cb = sizeof(counters);
     if (K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)))
     {
-        return static_cast<uint64_t>(counters.WorkingSetSize);
+        return static_cast<uint64_t>(counters.PrivateUsage);
     }
     return 0;
+}
+
+uint64_t OS::GetAvailablePhysicalMemoryBytes()
+{
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    return GlobalMemoryStatusEx(&status) ? static_cast<uint64_t>(status.ullAvailPhys) : 0;
 }
 
 std::string OS::GetCpuModel()
@@ -264,6 +271,9 @@ void OS::ReadBufferedRawMouse(double& dx, double& dy)
     rawMouseX = 0.0;
     rawMouseY = 0.0;
 }
+
+bool OS::LoadObject(const std::string& path)
+{}
 
 } // namespace Volcano::Platform
 

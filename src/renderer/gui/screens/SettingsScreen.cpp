@@ -139,6 +139,10 @@ Screen* CreateVideoScreen(GlobalState* state, Screen* settingsScreen)
         "Field of view in degrees. Higher shows more around you; lower zooms in."));
     screen->components.push_back(WithTooltip(MakeSlider(config, "FOV Effects", "Graphics.FOVEffects", 0, 20, 5),
         "How many degrees the view widens while sprinting. 0 turns the effect off."));
+    screen->components.push_back(WithTooltip(MakeSlider(config, "Hand Scale", "Graphics.HandScale", 25, 200, 100, "%"),
+        "Size of the held item and hand in first person."));
+    screen->components.push_back(WithTooltip(MakeToggle(config, "Left Handed", "Graphics.LeftHanded", false),
+        "Swaps your main hand and off hand. The held item and hand move to the left side."));
     screen->components.push_back(WithTooltip(MakeSlider(config, "Brightness", "Graphics.Brightness", 0, 100, 50, "%"),
         "Brightens dark areas like caves and night without washing out daylight."));
     screen->components.push_back(WithTooltip(MakeToggle(config, "Lighting", "Graphics.Lighting", true),

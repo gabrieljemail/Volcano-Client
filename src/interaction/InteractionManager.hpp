@@ -71,7 +71,7 @@ enum class AttackType : uint8_t {
 // state->entities (a cheap distance reject before a real ray/AABB test),
 // keeping whichever of the two the ray reaches first. A primary click on a
 // targeted entity attacks it (PrimaryTriggerStart/AttackEntity); block
-// breaking and the secondary use/place actions don't dispatch anything yet.
+// breaking and secondary use/place actions dispatch serverbound packets.
 class InteractionManager {
 public:
     explicit InteractionManager(GlobalState* globalState);
@@ -203,6 +203,9 @@ private:
     // or hardness-0 blocks break instantly; unbreakable ones do nothing;
     // anything else sends StartDigging and arms `mining` for ContinueMining.
     void BeginMining(const TargetedBlock& target);
+    // Ticks to break `block` with the held item: Block::breakTicks (bare
+    // hand) scaled by tool tier/type. -1 unbreakable, 0 instant.
+    int32_t BreakTicksFor(const Block& block) const;
 
     // Called every frame a hold continues targeting the same block/face
     // `mining` was armed for. Once enough real time has passed (ticksRequired
@@ -217,6 +220,10 @@ private:
     // crosshair moved off the block/face being mined, or an entity/nothing
     // is now targeted instead.
     void CancelMining();
+
+    // Mirrors `mining` into GlobalState::miningTicksRequired/miningStartNs
+    // for the tick thread's crosshair indicator.
+    void PublishMining();
 
     // Secondary is a use, not just a click — split the same way Jump/
     // JumpHold are, but three ways: an instant item (a block, a bucket)

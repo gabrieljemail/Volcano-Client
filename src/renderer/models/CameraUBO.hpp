@@ -34,7 +34,7 @@ struct CameraUBO {
     // South/East/West -> 0-5 mapping this must match (North and South share
     // shadeNorthSouth, East and West share shadeEastWest, same as vanilla).
     float shadeTop = 1.0f;
-    float shadeBottom = 0.5f;
+    float shadeBottom = 0.4f;
     float shadeNorthSouth = 0.8f;
     float shadeEastWest = 0.6f;
 

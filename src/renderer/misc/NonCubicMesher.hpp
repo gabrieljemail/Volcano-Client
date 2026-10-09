@@ -33,7 +33,7 @@ public:
     // per world than opaque terrain, so a smaller slab is enough. Raised
     // from 64 MB after it ran out mid-session. Shared by both the cutout and
     // translucent slab pairs.
-    static constexpr uint64_t DEFAULT_SLAB_SIZE = 128ull * 1024 * 1024; // 128 MB
+    static constexpr uint64_t DEFAULT_SLAB_SIZE = 32ull * 1024 * 1024; // 32 MB, x4 slabs
 
     // One chunk's output for each of the two non-cubic passes — see this
     // class's own comment for what goes in each.

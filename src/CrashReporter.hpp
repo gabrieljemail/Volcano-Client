@@ -19,6 +19,10 @@ public:
     // Call first thing in main().
     static void Install();
 
+    // std::set_terminate is per-thread on Windows: call this first thing in
+    // every thread you start, or an exception there loses its message.
+    static void InstallForThread();
+
     // Call right after Install(): if this process was launched to show a
     // report, shows it and returns true (main should then exit).
     static bool HandleReportMode(int argc, char** argv);

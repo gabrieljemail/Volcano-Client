@@ -37,6 +37,15 @@ public:
     void RequestScreenshot() override { screenshotRequested = true; }
 
 private:
+    // GPU frame time: two timestamps per frame slot (start/end of its
+    // command buffer), read back once that slot's fence has signaled.
+    VkQueryPool timestampPool = VK_NULL_HANDLE;
+    bool timestampPending[3]{};
+    double timestampMsPerTick = 0.0;
+    uint64_t timestampMask = 0;
+    void CreateTimestampPool();
+    void ReadTimestamps(uint32_t slot);
+
     // F2 capture: the swapchain image is copied into a host buffer after the
     // main pass, then read back once that frame's fence signals.
     std::atomic<bool> screenshotRequested{false};

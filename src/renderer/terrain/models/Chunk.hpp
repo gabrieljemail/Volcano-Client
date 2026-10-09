@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <chrono>
 #include <unordered_set>
 #include "Block.hpp"
 
@@ -45,6 +46,8 @@ public:
 
     int getX() const { return x; }
     int getZ() const { return z; }
+    void SetFadeStart(std::chrono::steady_clock::time_point time) { fadeStart = time; }
+    std::chrono::steady_clock::time_point GetFadeStart() const { return fadeStart; }
 
     Block getBlock(int bx, int by, int bz) const {
         if (bx < 0 || bx >= CHUNK_SIZE_X ||
@@ -149,6 +152,7 @@ public:
 
 private:
     int x, z; // Chunk coordinates
+    std::chrono::steady_clock::time_point fadeStart{};
     std::vector<Block> blocks;
     std::vector<uint8_t> skyLight;
     std::vector<uint8_t> blockLight;

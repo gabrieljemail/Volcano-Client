@@ -5,6 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <stb_image.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include "EntityRenderer.hpp"
@@ -16,6 +17,7 @@
 #include "models/GolemModel.hpp"
 #include "models/PigModel.hpp"
 #include "models/CowModel.hpp"
+#include "../terrain/models/BlockRegistry.hpp"
 #include "../VulkanInit.hpp"
 #include "../../Helpers.hpp"
 #include "../../Logger.hpp"
@@ -143,6 +145,13 @@ struct HumanoidDraw {
     const EntityModelMesh* mesh;
 };
 
+// Same snapshot-under-the-lock reasoning as HumanoidDraw.
+struct BlockDraw {
+    glm::vec3 position;
+    glm::vec4 hurtColor;
+    int32_t stateId;
+};
+
 VkPipeline g_humanoidPipeline = VK_NULL_HANDLE;
 VkPipelineLayout g_humanoidPipelineLayout = VK_NULL_HANDLE;
 VkDescriptorSetLayout g_textureSetLayout = VK_NULL_HANDLE;
@@ -266,12 +275,21 @@ void UploadCowMesh()
     UploadMesh(vertices, indices, g_cowVertexBuffer, g_cowIndexBuffer, g_cowIndexCount);
 }
 
+void UploadTexturedMesh(const std::vector<EntityJsonModel::Vertex>& vertices,
+    const std::vector<uint32_t>& indices, EntityModelMesh& out);
+
 void UploadJsonMesh(const std::string& modelPath, EntityModelMesh& out)
 {
     EntityJsonModel::ModelDef model = EntityJsonModel::Load(modelPath);
     std::vector<EntityJsonModel::Vertex> vertices;
     std::vector<uint32_t> indices;
     EntityJsonModel::BuildMesh(model, vertices, indices);
+    UploadTexturedMesh(vertices, indices, out);
+}
+
+void UploadTexturedMesh(const std::vector<EntityJsonModel::Vertex>& vertices,
+    const std::vector<uint32_t>& indices, EntityModelMesh& out)
+{
     out.indexCount = static_cast<uint32_t>(indices.size());
 
     VkDeviceSize vertexBytes = vertices.size() * sizeof(EntityJsonModel::Vertex);
@@ -309,15 +327,8 @@ void UploadJsonMesh(const std::string& modelPath, EntityModelMesh& out)
 // against g_textureSetLayout. Any size works (unlike TextureManager, which
 // only accepts exactly 16x16) — player/zombie skins are both 64x64 in this
 // resource pack, but nothing here assumes that.
-SkinTexture LoadSkinTexture(const std::string& path)
+SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height, const std::string& path)
 {
-    int width, height, channels;
-    uint8_t* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
-    if (!pixels)
-    {
-        throw std::runtime_error("[ERROR] EntityRenderer: failed to load skin texture: " + path);
-    }
-
     SkinTexture skin;
     VkDeviceSize imageBytes = static_cast<VkDeviceSize>(width) * height * 4;
 
@@ -338,7 +349,6 @@ SkinTexture LoadSkinTexture(const std::string& path)
     allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
     if (vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &skin.image.image, &skin.image.allocation, nullptr) != VK_SUCCESS)
     {
-        stbi_image_free(pixels);
         throw std::runtime_error("[ERROR] EntityRenderer: failed to allocate skin texture image: " + path);
     }
 
@@ -347,7 +357,6 @@ SkinTexture LoadSkinTexture(const std::string& path)
     vmaMapMemory(vmaAllocator, staging.allocation, &mapped);
     memcpy(mapped, pixels, static_cast<size_t>(imageBytes));
     vmaUnmapMemory(vmaAllocator, staging.allocation);
-    stbi_image_free(pixels);
 
     VkCommandBuffer cmd = BeginOneShotCommands();
     TransitionImageLayout(cmd, skin.image.image, 0, 1, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -418,6 +427,28 @@ SkinTexture LoadSkinTexture(const std::string& path)
     return skin;
 }
 
+SkinTexture LoadSkinTexture(const std::string& path)
+{
+    int width, height, channels;
+    uint8_t* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+    if (!pixels)
+    {
+        throw std::runtime_error("[ERROR] EntityRenderer: failed to load skin texture: " + path);
+    }
+
+    try
+    {
+        SkinTexture skin = CreateTextureFromPixels(pixels, width, height, path);
+        stbi_image_free(pixels);
+        return skin;
+    }
+    catch (...)
+    {
+        stbi_image_free(pixels);
+        throw;
+    }
+}
+
 // This client has no real skin fetching (no Mojang session-server lookup —
 // see NetworkClient's own comment on why it doesn't attempt signed chat/
 // online-mode auth either), so every player and mannequin uses the same
@@ -460,6 +491,118 @@ const EntityModelMesh* MeshForEntityType(const std::string& typeName)
 {
     if (typeName == "skeleton") return &g_skeletonMesh;
     return &g_humanoidMesh;
+}
+
+// Block-shaped entities (falling_block, tnt) reuse the humanoid textured
+// pipeline: one shared unit-cube mesh, plus a small per-block-state texture
+// with the six face tiles side by side (Up, Down, North, South, East, West —
+// BlockRegistry's face order). No tinting yet, so grass tops stay gray-green.
+constexpr size_t MAX_BLOCK_TEXTURES = 48;
+constexpr int BLOCK_TILE_SIZE = 16;
+
+EntityModelMesh g_blockMesh;
+std::unordered_map<int32_t, SkinTexture> g_blockTextures; // An entry with a null view means "no usable texture".
+
+void UploadBlockMesh()
+{
+    struct Face { glm::vec3 normal, right, up; };
+    constexpr std::array<Face, 6> faces = {{
+        { glm::vec3( 0, 1, 0), glm::vec3( 1, 0, 0), glm::vec3( 0, 0,-1) }, // Up
+        { glm::vec3( 0,-1, 0), glm::vec3( 1, 0, 0), glm::vec3( 0, 0, 1) }, // Down
+        { glm::vec3( 0, 0,-1), glm::vec3(-1, 0, 0), glm::vec3( 0, 1, 0) }, // North
+        { glm::vec3( 0, 0, 1), glm::vec3( 1, 0, 0), glm::vec3( 0, 1, 0) }, // South
+        { glm::vec3( 1, 0, 0), glm::vec3( 0, 0,-1), glm::vec3( 0, 1, 0) }, // East
+        { glm::vec3(-1, 0, 0), glm::vec3( 0, 0, 1), glm::vec3( 0, 1, 0) }, // West
+    }};
+
+    std::vector<EntityJsonModel::Vertex> vertices;
+    std::vector<uint32_t> indices;
+    const glm::vec3 center(0.0f, 0.5f, 0.0f);
+    for (size_t f = 0; f < faces.size(); f++)
+    {
+        const Face& face = faces[f];
+        float u0 = static_cast<float>(f) / 6.0f;
+        float u1 = static_cast<float>(f + 1) / 6.0f;
+        glm::vec3 faceCenter = center + face.normal * 0.5f;
+
+        uint32_t base = static_cast<uint32_t>(vertices.size());
+        vertices.push_back({ faceCenter - 0.5f * face.right - 0.5f * face.up, face.normal, { u0, 1.0f } });
+        vertices.push_back({ faceCenter + 0.5f * face.right - 0.5f * face.up, face.normal, { u1, 1.0f } });
+        vertices.push_back({ faceCenter + 0.5f * face.right + 0.5f * face.up, face.normal, { u1, 0.0f } });
+        vertices.push_back({ faceCenter - 0.5f * face.right + 0.5f * face.up, face.normal, { u0, 0.0f } });
+        indices.insert(indices.end(), { base, base + 1, base + 2, base, base + 2, base + 3 });
+    }
+    UploadTexturedMesh(vertices, indices, g_blockMesh);
+}
+
+// Texture name for one face of a block, falling back to non-cube visuals
+// (slabs, glass, plants) so they at least show something cube-shaped.
+std::string BlockFaceTextureName(const Block& block, int face)
+{
+    if (block.visualId != 0) return BlockRegistry::GetFaceTextureName(block.visualId, face);
+
+    const BlockRegistry::NonCubeVisual& visual = BlockRegistry::GetNonCubeVisual(block.nonCubeVisualId);
+    if (!visual.crossTexture.empty()) return visual.crossTexture;
+    for (const auto& element : visual.elements)
+    {
+        if (!element.faceTextures[static_cast<size_t>(face)].empty()) return element.faceTextures[static_cast<size_t>(face)];
+    }
+    for (const auto& element : visual.elements)
+    {
+        for (const std::string& name : element.faceTextures)
+        {
+            if (!name.empty()) return name;
+        }
+    }
+    return {};
+}
+
+// Builds (once per block state) and returns the face-strip texture, or
+// nullptr if the state has nothing drawable or the cache is full.
+const SkinTexture* BlockTextureFor(int32_t stateId)
+{
+    if (auto it = g_blockTextures.find(stateId); it != g_blockTextures.end())
+    {
+        return it->second.view != VK_NULL_HANDLE ? &it->second : nullptr;
+    }
+    if (g_blockTextures.size() >= MAX_BLOCK_TEXTURES) return nullptr;
+
+    Block block = BlockRegistry::ResolveStateId(stateId);
+    constexpr int stripWidth = BLOCK_TILE_SIZE * 6;
+    std::vector<uint8_t> strip(static_cast<size_t>(stripWidth) * BLOCK_TILE_SIZE * 4, 0);
+
+    bool anyFace = false;
+    for (int face = 0; face < 6; face++)
+    {
+        std::string name = BlockFaceTextureName(block, face);
+        if (name.empty()) continue;
+
+        int width, height, channels;
+        std::string path = "resources/minecraft/assets/minecraft/textures/block/" + name + ".png";
+        uint8_t* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+        if (!pixels) continue;
+
+        // Animated textures are tall strips; the first square frame is enough.
+        for (int y = 0; y < std::min(height, BLOCK_TILE_SIZE); y++)
+        {
+            for (int x = 0; x < std::min(width, BLOCK_TILE_SIZE); x++)
+            {
+                memcpy(&strip[(static_cast<size_t>(y) * stripWidth + face * BLOCK_TILE_SIZE + x) * 4],
+                    &pixels[(static_cast<size_t>(y) * width + x) * 4], 4);
+            }
+        }
+        stbi_image_free(pixels);
+        anyFace = true;
+    }
+
+    SkinTexture texture{};
+    if (anyFace)
+    {
+        texture = CreateTextureFromPixels(strip.data(), stripWidth, BLOCK_TILE_SIZE,
+            "block state " + std::to_string(stateId));
+    }
+    auto inserted = g_blockTextures.emplace(stateId, texture).first;
+    return inserted->second.view != VK_NULL_HANDLE ? &inserted->second : nullptr;
 }
 
 void CreateDescriptorLayoutAndPool()
@@ -508,11 +651,9 @@ void CreateDescriptorLayoutAndPool()
         throw std::runtime_error("[ERROR] Failed to create entity skin texture descriptor set layout.");
     }
 
-    // Sized generously (8, not 2) since this is a one-descriptor-per-
-    // distinct-skin pool for the life of the app — cheap to over-provision,
-    // and headroom for more humanoid-skinned types later without touching
-    // this again.
-    constexpr uint32_t MAX_SKIN_TEXTURES = 8;
+    // One descriptor per distinct skin, plus one per cached block-entity
+    // texture (see MAX_BLOCK_TEXTURES) — cheap to over-provision.
+    constexpr uint32_t MAX_SKIN_TEXTURES = 8 + static_cast<uint32_t>(MAX_BLOCK_TEXTURES);
     VkDescriptorPoolSize texturePoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_SKIN_TEXTURES };
     VkDescriptorPoolCreateInfo texturePoolInfo{};
     texturePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -931,6 +1072,7 @@ void EntityRenderer::Init(const Engine::ShaderLibrary& shaders)
     // there).
     UploadJsonMesh("resources/volcano/models/entity/humanoid.json", g_humanoidMesh);
     UploadJsonMesh("resources/volcano/models/entity/skeleton.json", g_skeletonMesh);
+    UploadBlockMesh();
     LoadSkins();
     CreateHumanoidPipeline(shaders);
 
@@ -1061,6 +1203,8 @@ void EntityRenderer::Shutdown()
     DestroySkin(g_steveSkin);
     DestroySkin(g_zombieSkin);
     DestroySkin(g_skeletonSkin);
+    for (auto& [stateId, texture] : g_blockTextures) DestroySkin(texture);
+    g_blockTextures.clear();
 
     // Destroying the pool frees every skin's descriptor set allocated from it.
     if (g_textureDescriptorPool != VK_NULL_HANDLE)
@@ -1074,7 +1218,7 @@ void EntityRenderer::Shutdown()
         g_textureSetLayout = VK_NULL_HANDLE;
     }
 
-    for (EntityModelMesh* mesh : { &g_humanoidMesh, &g_skeletonMesh })
+    for (EntityModelMesh* mesh : { &g_humanoidMesh, &g_skeletonMesh, &g_blockMesh })
     {
         if (mesh->vertexBuffer.buffer != VK_NULL_HANDLE)
         {
@@ -1125,6 +1269,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
     // resolved values rather than Entity pointers — see HumanoidDraw's own
     // comment for why that distinction is load-bearing here.
     std::vector<HumanoidDraw> humanoidVisible;
+    std::vector<BlockDraw> blockVisible;
     uint32_t cubeInstanceCount = 0;
     uint32_t quadrupedInstanceCount = 0;
     uint32_t golemInstanceCount = 0;
@@ -1196,6 +1341,13 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                 // (see SkinForEntityType) — fall back to the flat cube
                 // rather than silently dropping the entity.
                 shape = EntityRegistry::ShapeKind::Cube;
+            }
+
+            if (shape == EntityRegistry::ShapeKind::Block && entity->blockStateId >= 0)
+            {
+                blockVisible.push_back(BlockDraw{
+                    entity->InterpolatedPosition(now), HurtColorFor(*entity), entity->blockStateId });
+                continue;
             }
 
             GPUEntityInstance gpu{};
@@ -1313,9 +1465,32 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
     // fresh every frame right here on the render thread. See
     // EntityJsonModel.hpp's own comment on where a future animated pose
     // should be sampled from (here, not TickLoop).
-    if (!humanoidVisible.empty())
+    if (!humanoidVisible.empty() || !blockVisible.empty())
     {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_humanoidPipeline);
+
+        // Block entities: the shared cube mesh with each block state's own
+        // face-strip texture.
+        for (const BlockDraw& draw : blockVisible)
+        {
+            const SkinTexture* texture = BlockTextureFor(draw.stateId);
+            if (texture == nullptr) continue;
+
+            VkDeviceSize vertexOffset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &g_blockMesh.vertexBuffer.buffer, &vertexOffset);
+            vkCmdBindIndexBuffer(cmd, g_blockMesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+            VkDescriptorSet sets[] = { cameraSets[frameIndex], texture->descriptorSet };
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_humanoidPipelineLayout, 0, 2, sets, 0, nullptr);
+
+            PushConstants pc{};
+            pc.positionYaw = glm::vec4(draw.position, 0.0f);
+            pc.hurtColor = draw.hurtColor;
+            vkCmdPushConstants(cmd, g_humanoidPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+
+            vkCmdDrawIndexed(cmd, g_blockMesh.indexCount, 1, 0, 0, 0);
+            state->trianglesDrawn += g_blockMesh.indexCount / 3;
+        }
 
         for (const HumanoidDraw& draw : humanoidVisible)
         {

@@ -135,6 +135,32 @@ private:
     static StandaloneIcon crosshairIcon;
     static StandaloneIcon crosshairEntityIcon; // "Looking at an entity" variant — see GlobalState::lookingAtEntity.
 
+    // Vanilla GUI art (textures/gui/...). Same load/failure behavior as the
+    // crosshair: null if missing, and callers fall back to a flat rect.
+    static StandaloneIcon attackIndicatorBackgroundIcon; // sprites/hud/crosshair_attack_indicator_background.png (16x4)
+    static StandaloneIcon attackIndicatorProgressIcon;   // sprites/hud/crosshair_attack_indicator_progress.png (16x4)
+    static StandaloneIcon hotbarIcon;              // sprites/hud/hotbar.png (182x22)
+    static StandaloneIcon hotbarSelectionIcon;      // sprites/hud/hotbar_selection.png (24x23)
+    static StandaloneIcon slotHighlightBackIcon;    // sprites/container/slot_highlight_back.png (24x24)
+    static StandaloneIcon slotHighlightFrontIcon;   // sprites/container/slot_highlight_front.png (24x24)
+    static StandaloneIcon inventoryBackground;      // container/inventory.png (256x256 sheet, 176x166 used)
+    static StandaloneIcon craftingBackground;       // container/crafting_table.png
+    static StandaloneIcon furnaceBackground;        // container/furnace.png
+    static StandaloneIcon genericBackground;        // container/generic_54.png (chest-style grids)
+
+    // ImGui texture handle for a StandaloneIcon, or 0 if it failed to load.
+    static ImTextureID TextureOf(const StandaloneIcon& icon);
+
+    // Per-item 3D icons (blocks and custom models), rendered once by
+    // ItemRenderer. `resolved` means the lookup ran; `icon` is null when the
+    // item should use its flat 2D sprite instead. Keyed by item id.
+    struct ModelIcon {
+        bool resolved = false;
+        StandaloneIcon icon;
+    };
+    static std::unordered_map<uint16_t, ModelIcon> modelIconCache;
+    static ImTextureID ModelIconForItem(uint16_t itemId, const std::string& itemName);
+
     // Loads one standalone PNG (path) into a StandaloneIcon — image, view,
     // and an ImGui-registered descriptor set, uploaded via the same
     // staging-buffer-then-copy path TextureManager::UploadLayer uses (see
@@ -145,6 +171,8 @@ private:
     // Draws the centered crosshair every HUD frame — plain or the
     // "looking at an entity" variant, per GlobalState::lookingAtEntity.
     static void RenderCrosshair();
+    // Bar under the crosshair: block-break progress or attack recharge.
+    static void RenderAttackIndicator(const ImVec2& center);
 
     // Resolves (creating and caching on first use) the ImTextureID for one
     // texture-array layer, for drawing an item icon via ImDrawList::
@@ -182,16 +210,10 @@ private:
     static void RenderPlayerStatusBars();
     static void RenderHotbarAndArmor();
     static void RenderMovementStatePanel();
+    static void CloseInventoryWindow();
 
-    // The player's own inventory screen (armor + main inventory grid +
-    // hotbar), toggled by "E" (see Update()) the same way "Esc" toggles
-    // pauseScreen — set as inventoryScreen's Screen::customContent, so it
-    // gets OpenScreen/CloseScreen's usual HUD-hiding/cursor-release/
-    // Escape-to-close behavior for free. View-only: there's no Click
-    // Container Slot handling (or any other block/container interaction in
-    // this client yet), so slots aren't clickable — this just shows
-    // whatever NetworkClient's Set Container Content/Slot handlers have
-    // written into state->inventory.
+    // Player inventory and the currently open server container share this
+    // screen. Slot positions map back to protocol indices for click handling.
     static void RenderInventoryScreen();
     // Top-left corner of the (still-placeholder) hotbar, resolved fresh
     // every frame the same way every other HUD element is — see

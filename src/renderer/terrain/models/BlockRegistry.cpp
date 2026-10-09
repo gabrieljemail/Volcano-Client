@@ -47,6 +47,8 @@ struct BlockDef {
     float hardness = 0.0f;
     bool diggable = true;
     bool requiresTool = false; // harvestTools present and non-empty.
+    ToolClass toolClass = ToolClass::None;
+    std::vector<uint16_t> harvestToolIds;
 };
 
 // A block's decoded property values for one specific state id, always kept
@@ -95,6 +97,9 @@ std::vector<CollisionBoxes> g_collisionShapes;
 // than "instant", same fail-safe direction as g_stateIdToCollisionShape's
 // UNKNOWN default.
 std::vector<int32_t> g_stateIdToBreakTicks;
+std::vector<uint16_t> g_stateIdToBreakInfo;
+std::vector<BreakInfo> g_breakInfos; // Index 0 is the empty default.
+std::vector<uint8_t> g_stateIdIsCraftingTable;
 
 std::unordered_map<std::string, int32_t> g_nameToDefaultState;
 
@@ -825,6 +830,10 @@ void InitImpl() {
     g_nonCubeVisualTable.clear();
     g_modelCache.clear();
     g_stateIdToBreakTicks.clear();
+    g_stateIdToBreakInfo.clear();
+    g_breakInfos.clear();
+    g_breakInfos.push_back(BreakInfo{});
+    g_stateIdIsCraftingTable.clear();
     g_nameToDefaultState.clear();
     g_maxLoadedStateId = -1;
 
@@ -871,6 +880,22 @@ void InitImpl() {
             def.hardness = b.value("hardness", 0.0f);
             def.diggable = b.value("diggable", true);
             def.requiresTool = b.contains("harvestTools") && b["harvestTools"].is_object() && !b["harvestTools"].empty();
+            if (def.requiresTool) {
+                for (auto& [toolId, allowed] : b["harvestTools"].items()) {
+                    if (allowed.is_boolean() && allowed.get<bool>()) {
+                        def.harvestToolIds.push_back(static_cast<uint16_t>(std::stoi(toolId)));
+                    }
+                }
+            }
+
+            // "mineable/pickaxe", ... Blocks that need a tool but aren't
+            // tagged mineable (obsidian, ancient debris) are all pickaxe blocks.
+            std::string material = b.value("material", std::string());
+            if (material.find("mineable/pickaxe") != std::string::npos) def.toolClass = ToolClass::Pickaxe;
+            else if (material.find("mineable/axe") != std::string::npos) def.toolClass = ToolClass::Axe;
+            else if (material.find("mineable/shovel") != std::string::npos) def.toolClass = ToolClass::Shovel;
+            else if (material.find("mineable/hoe") != std::string::npos) def.toolClass = ToolClass::Hoe;
+            else if (def.requiresTool) def.toolClass = ToolClass::Pickaxe;
 
             if (b.contains("states") && b["states"].is_array()) {
                 for (const json& s : b["states"]) {
@@ -897,7 +922,15 @@ void InitImpl() {
 
     g_stateIdToVisual.assign(static_cast<size_t>(maxStateId) + 1, 0);
     g_stateIdToNonCubeVisual.assign(static_cast<size_t>(maxStateId) + 1, 0);
+    g_stateIdIsCraftingTable.assign(static_cast<size_t>(maxStateId) + 1, 0);
     g_maxLoadedStateId = maxStateId;
+
+    for (const BlockDef& def : blockDefs)
+    {
+        if (def.name != "crafting_table") continue;
+        for (int32_t stateId = def.minStateId; stateId <= def.maxStateId; stateId++)
+            g_stateIdIsCraftingTable[static_cast<size_t>(stateId)] = 1;
+    }
 
     // Independent of the visual resolution below — collision must not depend
     // on whether a block has drawable model geometry (see GetCollisionBoxes).
@@ -913,7 +946,19 @@ void InitImpl() {
     // hand-mining time from blocks.json's own hardness/diggable/harvestTools
     // fields, independent of the visual-resolution loop below.
     g_stateIdToBreakTicks.assign(static_cast<size_t>(maxStateId) + 1, -1);
+    g_stateIdToBreakInfo.assign(static_cast<size_t>(maxStateId) + 1, 0);
     for (const BlockDef& def : blockDefs) {
+        uint16_t breakInfoId = 0;
+        if (g_breakInfos.size() < 0xFFFF) {
+            BreakInfo info;
+            info.hardness = def.hardness;
+            info.toolClass = def.toolClass;
+            info.requiresTool = def.requiresTool;
+            info.harvestToolIds = def.harvestToolIds;
+            breakInfoId = static_cast<uint16_t>(g_breakInfos.size());
+            g_breakInfos.push_back(std::move(info));
+        }
+
         int32_t ticks;
         if (!def.diggable || def.hardness < 0.0f) {
             ticks = -1; // Unbreakable (bedrock, ...).
@@ -926,6 +971,7 @@ void InitImpl() {
         for (int32_t stateId = def.minStateId; stateId <= def.maxStateId; stateId++) {
             if (stateId < 0 || static_cast<size_t>(stateId) >= g_stateIdToBreakTicks.size()) continue;
             g_stateIdToBreakTicks[static_cast<size_t>(stateId)] = ticks;
+            g_stateIdToBreakInfo[static_cast<size_t>(stateId)] = breakInfoId;
         }
     }
 
@@ -1083,12 +1129,21 @@ int32_t MapStateIdBreakTicks(int32_t stateId) {
     return -1; // Out-of-range id — treat as unbreakable rather than guessing instant.
 }
 
+const BreakInfo& GetBreakInfo(uint16_t breakInfoId) {
+    static const BreakInfo empty;
+    return breakInfoId < g_breakInfos.size() ? g_breakInfos[breakInfoId] : empty;
+}
+
 Block ResolveStateId(int32_t stateId) {
     Block block;
     block.visualId = MapStateId(stateId);
     if (block.visualId == 0) block.nonCubeVisualId = MapStateIdNonCube(stateId);
     block.collisionShapeId = MapStateIdCollisionShape(stateId);
     block.breakTicks = MapStateIdBreakTicks(stateId);
+    if (stateId >= 0 && static_cast<size_t>(stateId) < g_stateIdToBreakInfo.size())
+        block.breakInfoId = g_stateIdToBreakInfo[static_cast<size_t>(stateId)];
+    if (stateId >= 0 && static_cast<size_t>(stateId) < g_stateIdIsCraftingTable.size())
+        block.isCraftingTable = g_stateIdIsCraftingTable[static_cast<size_t>(stateId)] != 0;
     return block;
 }
 
@@ -1110,6 +1165,29 @@ CollisionBoxes GetCollisionBoxes(const Block& block) {
         result.count = 1;
     }
     return result;
+}
+
+CollisionBoxes GetSelectionBoxes(const Block& block) {
+    CollisionBoxes boxes = GetCollisionBoxes(block);
+    if (boxes.count > 0) return boxes;
+
+    if (block.nonCubeVisualId != 0) {
+        const NonCubeVisual& visual = GetNonCubeVisual(block.nonCubeVisualId);
+        for (const NonCubeElement& element : visual.elements) {
+            if (boxes.count >= CollisionBoxes::MAX_BOXES) break;
+            boxes.boxes[static_cast<size_t>(boxes.count++)] = AABB{
+                element.from / 16.0f,
+                element.to / 16.0f
+            };
+        }
+
+        if (boxes.count == 0 && visual.shape == NonCubeShape::Cross) {
+            boxes.boxes[0] = AABB{ glm::vec3(0.375f, 0.0f, 0.375f), glm::vec3(0.625f, 1.0f, 0.625f) };
+            boxes.count = 1;
+        }
+    }
+
+    return boxes;
 }
 
 } // namespace Volcano::BlockRegistry

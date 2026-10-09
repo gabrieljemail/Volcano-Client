@@ -63,6 +63,11 @@ void CrashReporter::Install()
     Platform::OS::InstallNativeCrashHandler(OnNativeCrash);
 }
 
+void CrashReporter::InstallForThread()
+{
+    std::set_terminate(OnTerminate);
+}
+
 bool CrashReporter::HandleReportMode(int argc, char** argv)
 {
     if (argc < 3 || std::strcmp(argv[1], REPORT_FLAG) != 0) return false;

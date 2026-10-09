@@ -29,6 +29,9 @@ std::unordered_map<uint32_t, EntityTypeInfo> g_entitiesById;
 // pick up a shape. Anything not listed below keeps the flat placeholder cube.
 ShapeKind ClassifyShape(const std::string& name, const std::string& entityKind)
 {
+    // Inanimate, so checked before the living-only gate below.
+    if (name == "falling_block" || name == "tnt") return ShapeKind::Block;
+
     static const std::unordered_set<std::string> LIVING_KINDS = {
         "player", "mob", "living", "animal", "passive", "hostile", "water_creature", "ambient"
     };
