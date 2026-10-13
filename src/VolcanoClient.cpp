@@ -7,6 +7,7 @@
 #include <GLFW/glfw3.h>
 #include "CrashReporter.hpp"
 #include "GlobalState.hpp"
+#include "ModLoader.hpp"
 #include "InputHandler.hpp"
 #include "Logger.hpp"
 #include "audio/SoundRegistry.hpp"
@@ -74,9 +75,18 @@ int main(int argc, char** argv)
     // Let's keep this just for fun.
     Volcano::Log::Info("Hello, World!");
 
+    // Cool terminal effects.
+    std::cout << "\x1b[2J\x1b[H"; // Clear the screen and reset the cursor.
+    std::cout << "\x1b]0;Volcano Client Log\x07"; // Title.
+
     // Initialize global state.
     Volcano::GlobalState state{};
     state.LoadSettings();
+
+    Volcano::ModLoader modLoader(&state);
+    state.modLoader = &modLoader;
+    modLoader.Init();
+    modLoader.Fire(Volcano::EventType::PRE_START);
 
     // No Vulkan/GLFW dependency. Save this early since the debug overlay
     // wants it available from the start.
@@ -88,16 +98,24 @@ int main(int argc, char** argv)
 
     Volcano::RenderThread renderer(&state);
     Volcano::SplashScreen::Show();
+    modLoader.Fire(Volcano::EventType::SPLASH_SCREEN);
+
+    // Each init step below reports progress, which also pumps the window's
+    // event queue so the OS doesn't mark the client "Not Responding".
+    Volcano::SplashScreen::SetProgress(0.02f);
 
     // Audio comes after the window/splash so the slow sound indexing and
     // decoding below doesn't leave the user staring at nothing.
     Volcano::AudioManager audioManager;
     state.audioManager = &audioManager;
     audioManager.Init();
+    Volcano::SplashScreen::SetProgress(0.05f);
 
     Volcano::SoundRegistry soundRegistry("resources/minecraft/assets/minecraft/sounds");
     soundRegistry.IndexSounds();
     state.soundRegistry = &soundRegistry;
+    modLoader.Fire(Volcano::EventType::AUDIO_LOADED);
+    Volcano::SplashScreen::SetProgress(0.10f);
 
     Volcano::MusicController musicController(&state, &soundRegistry);
     state.musicController = &musicController;
@@ -158,25 +176,36 @@ int main(int argc, char** argv)
 
     // Builds the protocol block-state-id -> texture mapping from
     // minecraft-data + the vanilla blockstate/model JSON.
+    Volcano::SplashScreen::SetProgress(0.12f);
     Volcano::BlockRegistry::Init();
+    Volcano::SplashScreen::SetProgress(0.18f);
     Volcano::EntityRegistry::Init();
+    Volcano::SplashScreen::SetProgress(0.22f);
 
-    // Initialize texture manager and load textures
+    // Initialize texture manager and load textures. This is the longest
+    // step, so it reports per-texture progress across 0.22 -> 0.85.
     Volcano::Log::Info("Loading textures... (this may take a moment)");
     Volcano::TextureManager textureManager;
-    textureManager.LoadResourcePack("resources/minecraft");
+    textureManager.LoadResourcePack("resources/minecraft", [](float fraction) {
+        Volcano::SplashScreen::SetProgress(0.22f + fraction * 0.63f);
+    });
+    Volcano::SplashScreen::SetProgress(0.85f);
     Volcano::Log::Info("Texture loading complete!");
+    modLoader.Fire(Volcano::EventType::TEXTURES_LOADED);
 
     // Resolves item icon texture layers against the array textureManager
     // just built — must run after LoadResourcePack(), not alongside
     // BlockRegistry/EntityRegistry::Init() above (which only need JSON,
     // not the texture array).
     Volcano::ItemRegistry::Init(textureManager);
+    Volcano::SplashScreen::SetProgress(0.88f);
 
     // Point the world passes at the texture array, and start the ImGui
     // backend against the engine's render pass.
     renderEngine.AttachTextures(textureManager);
+    Volcano::SplashScreen::SetProgress(0.92f);
     renderEngine.AttachGUI(&textureManager);
+    Volcano::SplashScreen::SetProgress(0.95f);
 
     // Draws 3D item models (inventory icons for blocks and custom models).
     // Needs the texture array attached above.
@@ -184,6 +213,7 @@ int main(int argc, char** argv)
     Volcano::Engine::ShaderLibrary itemShaders;
     itemRenderer.Init(itemShaders);
     state.itemRenderer = &itemRenderer;
+    Volcano::SplashScreen::SetProgress(0.97f);
 
     // World (placeholder — see the tick-loop plan) and attributes must exist
     // before GenerateChunks/TickLoop touch them.
@@ -360,7 +390,13 @@ int main(int argc, char** argv)
         [mainMenuScreen] { Volcano::GUIController::OpenScreen(mainMenuScreen); }));
     connectScreen->components.push_back(connectBackButton);
 
+    // Loading is done: show a full bar for one frame, then free the
+    // splash's Vulkan objects before the real frame loop takes over.
+    Volcano::SplashScreen::SetProgress(1.0f);
+    Volcano::SplashScreen::Hide();
+
     Volcano::GUIController::OpenScreen(mainMenuScreen);
+    modLoader.Fire(Volcano::EventType::RENDER_START);
 
     // This is now the frame loop itself (see RenderThread::RunFrame — it
     // calls glfwPollEvents() internally as the first step of PollInputs)
@@ -392,6 +428,7 @@ int main(int argc, char** argv)
                 reason = state.disconnectReason;
             }
             Volcano::Log::Info("Returned to connect screen: " + reason);
+            modLoader.Fire(Volcano::EventType::LEAVE_PLAY_STATE);
 
             // See GlobalState::ResetWorldState's own comment — same reset a
             // mid-session dimension change (PlayS2C::Respawn) uses, just
@@ -412,6 +449,7 @@ int main(int argc, char** argv)
             Volcano::GUI::Screen* destination = disconnectDestination;
             disconnectDestination = nullptr;
 
+            modLoader.Fire(Volcano::EventType::LEAVE_PLAY_STATE);
             state.SetConnectionPhase(Volcano::ConnectionPhase::Idle);
             state.ResetWorldState();
 
@@ -429,6 +467,7 @@ int main(int argc, char** argv)
         if (state.connectionPhase.load() == Volcano::ConnectionPhase::LoadingTerrain && state.worldReady.load())
         {
             state.SetConnectionPhase(Volcano::ConnectionPhase::Playing);
+            modLoader.Fire(Volcano::EventType::CHUNKS_READY);
             if (Volcano::GUIController::GetActiveScreen() == loadingScreen)
             {
                 Volcano::GUIController::CloseScreen();
@@ -453,6 +492,7 @@ int main(int argc, char** argv)
     // used to require was specifically to avoid that while a second thread
     // wound down; ThreadArchitecture.mdx's merge removes the second thread
     // instead of working around it.
+    modLoader.Fire(Volcano::EventType::PRE_QUIT);
     renderer.Shutdown();
 
     // MeshingThread must be fully joined before renderEngine.Shutdown()

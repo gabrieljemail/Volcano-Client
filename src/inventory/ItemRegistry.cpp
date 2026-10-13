@@ -15,6 +15,7 @@ namespace {
 // version and PROTOCOL_VERSION (NetworkClient.hpp) — all must agree.
 constexpr const char* MC_DATA_VERSION = "26.1";
 const std::string ITEMS_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/items.json";
+const std::string FOODS_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/foods.json";
 
 std::unordered_map<int32_t, ItemTypeInfo> g_itemsById;
 
@@ -74,6 +75,23 @@ void InitImpl(const TextureManager& textureManager) {
             g_itemsById.emplace(id, std::move(info));
         } catch (const std::exception& e2) {
             Log::Error(std::string("[ERROR] ItemRegistry: skipping a malformed item entry: ") + e2.what());
+        }
+    }
+
+    // Optional: without foods.json nothing is edible client-side.
+    std::ifstream foodsFile(FOODS_JSON_PATH);
+    if (foodsFile) {
+        try {
+            json foodsJson;
+            foodsFile >> foodsJson;
+            for (const json& f : foodsJson) {
+                auto it = g_itemsById.find(f.value("id", 0));
+                if (it == g_itemsById.end()) continue;
+                it->second.edible = true;
+                it->second.foodPoints = static_cast<int32_t>(f.value("foodPoints", 0.0));
+            }
+        } catch (const std::exception& e) {
+            Log::Error(std::string("ItemRegistry: failed to parse foods.json: ") + e.what());
         }
     }
 

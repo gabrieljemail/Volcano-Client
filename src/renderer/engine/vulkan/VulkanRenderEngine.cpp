@@ -6,6 +6,8 @@
 #include "VulkanRenderEngine.hpp"
 #include "../passes/EntityPass.hpp"
 #include "../passes/GUIPass.hpp"
+#include "../passes/HandPass.hpp"
+#include "../passes/ItemPass.hpp"
 #include "../passes/NonCubicPass.hpp"
 #include "../passes/SelectionPass.hpp"
 #include "../passes/ShaderPackPass.hpp"
@@ -83,8 +85,10 @@ void VulkanRenderEngine::RegisterBuiltInPasses()
     AddPass(std::make_unique<Passes::SkyboxPass>());
     AddPass(std::make_unique<Passes::TerrainPass>());
     AddPass(std::make_unique<Passes::EntityPass>());
+    AddPass(std::make_unique<Passes::ItemPass>());
     AddPass(std::make_unique<Passes::NonCubicPass>());
     AddPass(std::make_unique<Passes::SelectionPass>());
+    AddPass(std::make_unique<Passes::HandPass>());
     AddPass(std::make_unique<Passes::ShaderPackPass>());
     AddPass(std::make_unique<Passes::GUIPass>());
 }

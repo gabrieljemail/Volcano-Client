@@ -178,6 +178,18 @@ Screen* CreateWindowScreen(GlobalState* state, Screen* settingsScreen)
     return screen;
 }
 
+Screen* CreateAudioScreen(GlobalState* state, Screen* settingsScreen)
+{
+    Config* config = state->config;
+    Screen* screen = GUIController::CreateScreen("Audio Settings", false);
+    screen->components.push_back(WithTooltip(MakeSlider(config, "Master Volume", "Audio.Volume", 0, 100, 100, "%"),
+        "Overall volume of everything the client plays."));
+    screen->components.push_back(WithTooltip(MakeSlider(config, "Music", "Audio.Music.Volume", 0, 100, 40, "%"),
+        "Volume of the background music, on top of Master Volume. 0 silences it."));
+    screen->components.push_back(MakeNavButton("Done", [settingsScreen] { GUIController::OpenScreen(settingsScreen); }));
+    return screen;
+}
+
 Screen* CreateControlsScreen(GlobalState* state, Screen* settingsScreen)
 {
     Config* config = state->config;
@@ -199,11 +211,13 @@ Screen* CreateSettingsScreen(GlobalState* state)
     Screen* screen = GUIController::CreateScreen("Settings", false);
     Screen* videoScreen = CreateVideoScreen(state, screen);
     Screen* windowScreen = CreateWindowScreen(state, screen);
+    Screen* audioScreen = CreateAudioScreen(state, screen);
     Screen* controlsScreen = CreateControlsScreen(state, screen);
 
-    screen->components.push_back(MakeNavButton("Video...", [videoScreen] { GUIController::OpenScreen(videoScreen); }));
-    screen->components.push_back(MakeNavButton("Window...", [windowScreen] { GUIController::OpenScreen(windowScreen); }));
-    screen->components.push_back(MakeNavButton("Controls...", [controlsScreen] { GUIController::OpenScreen(controlsScreen); }));
+    screen->components.push_back(MakeNavButton("Video", [videoScreen] { GUIController::OpenScreen(videoScreen); }));
+    screen->components.push_back(MakeNavButton("Window", [windowScreen] { GUIController::OpenScreen(windowScreen); }));
+    screen->components.push_back(MakeNavButton("Audio", [audioScreen] { GUIController::OpenScreen(audioScreen); }));
+    screen->components.push_back(MakeNavButton("Controls", [controlsScreen] { GUIController::OpenScreen(controlsScreen); }));
     screen->components.push_back(MakeNavButton("Back", []
     {
         if (returnScreen != nullptr) GUIController::OpenScreen(returnScreen);

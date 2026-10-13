@@ -66,6 +66,10 @@ struct Entity {
     // spawn objectData, tnt's fixed block). -1 for everything else.
     int32_t blockStateId = -1;
 
+    // Protocol item id of a dropped item's stack (Set Entity Data index 8).
+    // 0 until the metadata arrives, and for every non-item entity.
+    int32_t itemId = 0;
+
     // Set by the Damage Event packet. The hit flash lasts vanilla's 10-tick
     // hurtTime — see IsHurt.
     std::chrono::steady_clock::time_point lastHurtTime{};

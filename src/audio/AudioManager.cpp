@@ -248,6 +248,13 @@ void AudioManager::StopSound(const std::string& registryName)
     if (it != loadedSounds.end()) sourceStop(it->second.source);
 }
 
+void AudioManager::SetSoundVolume(const std::string& registryName, float volume)
+{
+    auto it = loadedSounds.find(registryName);
+    if (!IsInitialized() || it == loadedSounds.end()) return;
+    sourcef(it->second.source, AL_GAIN, std::clamp(volume, 0.0f, 1.0f));
+}
+
 bool AudioManager::IsSoundPlaying(const std::string& registryName) const
 {
     auto it = loadedSounds.find(registryName);

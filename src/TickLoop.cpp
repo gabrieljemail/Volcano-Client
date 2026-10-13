@@ -388,6 +388,19 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     // InteractionManager::PrimaryTrigger on a swing, incremented here once
     // per real fixed tick regardless of input, same as vanilla's own
     // per-tick ticker.
+    // Switching items resets it at the start of the next tick, not on the
+    // switch itself, so a swing between the two still uses the old item's
+    // attributes (attribute swapping).
+    int32_t mainhandItemId;
+    {
+        std::lock_guard<std::mutex> lock(state->inventory.mutex);
+        mainhandItemId = state->inventory.hotbar.Get(state->inventory.selectedHotbarSlot).itemId;
+    }
+    if (mainhandItemId != lastMainhandItemId)
+    {
+        lastMainhandItemId = mainhandItemId;
+        state->attackStrengthTicker.store(0, std::memory_order_relaxed);
+    }
     state->attackStrengthTicker.fetch_add(1, std::memory_order_relaxed);
     UpdateCrosshairProgress();
 
@@ -424,7 +437,11 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     // UpdateSprinting — and it already excludes sneaking.
     bool sneaking = sneakActive.load();
     UpdateSprinting(inputAllowedNow, forwardInput, sneaking);
+    // Using an item (eating, blocking, ...) ends the sprint and slows to 0.2x.
+    bool usingItem = state->usingItem.load(std::memory_order_relaxed);
+    if (usingItem) sprinting = false;
     float speedMultiplier = sneaking ? 0.3f : (sprinting ? 1.3f : 1.0f);
+    if (usingItem) speedMultiplier *= 0.2f;
 
     float movementSpeed = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1)) * speedMultiplier;
     float friction = grounded ? GROUND_FRICTION : AIR_FRICTION;

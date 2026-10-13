@@ -24,3 +24,7 @@ logs/
 run/
 screenshots/
 crash-report*
+
+# Bash on Linux devices and Git Bash for coding agents might make this file.
+# This is a reserved device on Windows, so it won't work there.
+nul

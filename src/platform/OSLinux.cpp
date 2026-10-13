@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cxxabi.h>
+#include <dlfcn.h>
 #include <execinfo.h>
 #include <fstream>
 #include <spawn.h>
@@ -188,8 +189,25 @@ bool OS::EnableBufferedRawMouse(GLFWwindow*)
 void OS::ReadBufferedRawMouse(double&, double&)
 {}
 
-bool OS::LoadObject(const std::string& path)
-{}
+const char* OS::GetObjectExtension()
+{
+    return ".so";
+}
+
+void* OS::LoadObject(const std::string& path)
+{
+    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+}
+
+void* OS::GetObjectSymbol(void* handle, const std::string& name)
+{
+    return dlsym(handle, name.c_str());
+}
+
+void OS::UnloadObject(void* handle)
+{
+    dlclose(handle);
+}
 
 } // namespace Volcano::Platform
 

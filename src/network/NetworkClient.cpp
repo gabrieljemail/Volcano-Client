@@ -4,6 +4,7 @@
 #include "TextComponent.hpp"
 #include "models/ChatEvent.hpp"
 #include "../Logger.hpp"
+#include "../ModLoader.hpp"
 #include "../renderer/terrain/ChunkParser.hpp"
 #include "../renderer/terrain/models/BlockRegistry.hpp"
 #include "../renderer/gui/models/Chat.hpp"
@@ -201,6 +202,7 @@ ParsedSlot ReadItemStack(PacketReader& reader)
 struct PlayerDataUpdate {
     std::optional<uint8_t> sharedFlags; // Index 0 (Entity.DATA_SHARED_FLAGS_ID).
     std::optional<float> health;        // Index 9 (LivingEntity.DATA_HEALTH_ID).
+    std::optional<int32_t> itemId;      // Index 8, item stack (ItemEntity.DATA_ITEM).
 };
 
 // Walks a Set Entity Data entry list (u8 index, varint type, value; 0xFF
@@ -213,7 +215,7 @@ struct PlayerDataUpdate {
 // only ever loses fields this doesn't track.
 PlayerDataUpdate ReadPlayerEntityData(PacketReader& reader)
 {
-    constexpr uint8_t SHARED_FLAGS_INDEX = 0, HEALTH_INDEX = 9, END_OF_DATA = 0xFF;
+    constexpr uint8_t SHARED_FLAGS_INDEX = 0, ITEM_INDEX = 8, HEALTH_INDEX = 9, END_OF_DATA = 0xFF;
     PlayerDataUpdate update;
 
     for (;;) {
@@ -241,7 +243,13 @@ PlayerDataUpdate ReadPlayerEntityData(PacketReader& reader)
         case 4: reader.ReadString(); break;
         case 5: ReadTextComponent(reader); break;
         case 6: if (reader.ReadBool()) ReadTextComponent(reader); break;
-        case 7: if (!ReadItemStack(reader).complete) return update; break;
+        case 7:
+        {
+            ParsedSlot slot = ReadItemStack(reader);
+            if (index == ITEM_INDEX) update.itemId = slot.item.IsEmpty() ? 0 : slot.item.itemId;
+            if (!slot.complete) return update;
+            break;
+        }
         case 8: reader.ReadBool(); break;
         case 9: reader.Skip(12); break; // rotations: 3x f32
         case 10: reader.Skip(8); break; // block_pos: packed i64
@@ -343,7 +351,9 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
 void NetworkClient::RunSession(GlobalState* state, std::stop_token stopToken)
 {
     try {
+        if (state->modLoader) state->modLoader->Fire(EventType::ENTER_CONFIG_STATE);
         if (!RunConfiguration(state)) return;
+        if (state->modLoader) state->modLoader->Fire(EventType::ENTER_PLAY_STATE);
         RunPlayLoop(state, stopToken);
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Session error: ") + e.what());
@@ -1341,15 +1351,32 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             try {
                 uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
                 bool isPlayer;
+                bool isItem = false;
                 {
                     std::lock_guard lock(state->entitiesMutex);
                     isPlayer = state->FindPlayerEntity(entityId) != nullptr;
+                    if (!isPlayer)
+                    {
+                        if (const Entity* entity = state->FindEntity(entityId))
+                        {
+                            const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity->type);
+                            isItem = info != nullptr && info->name == "item";
+                        }
+                    }
                 }
-                if (!isPlayer) continue;
+                if (!isPlayer && !isItem) continue;
 
                 PlayerDataUpdate update = ReadPlayerEntityData(reader);
 
                 std::lock_guard lock(state->entitiesMutex);
+                if (isItem)
+                {
+                    if (update.itemId)
+                    {
+                        if (Entity* entity = state->FindEntity(entityId)) entity->itemId = *update.itemId;
+                    }
+                    continue;
+                }
                 if (PlayerEntity* player = state->FindPlayerEntity(entityId)) {
                     if (update.sharedFlags) {
                         player->sneaking = (*update.sharedFlags & 0x02u) != 0;
@@ -1581,8 +1608,8 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             static std::unordered_set<int32_t> loggedIds;
             if (loggedIds.insert(packetId).second) {
                 std::ostringstream oss;
-                oss << "[NET] Unhandled Play packet id 0x" << std::hex << packetId
-                    << std::dec << " (" << payload.size() << " bytes), skipping.";
+                oss << "\x1b[90mNetwork:\x1b[0m Unhandled Play packet id \x1b[38;2;130;180;140m0x" << std::hex << packetId
+                    << std::dec << "\x1b[0m (" << payload.size() << " bytes).";
                 Log::Info(oss.str());
             }
         }
@@ -1815,6 +1842,9 @@ void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position,
 
 void SendArmAnimation(GlobalState* state, Hand hand)
 {
+    state->localSwingNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
+
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
         Log::Info("Dropped arm animation, no active connection.");

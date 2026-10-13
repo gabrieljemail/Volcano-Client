@@ -9,17 +9,8 @@ namespace Volcano::Log {
 
 void Info(const std::string& message)
 {
-    // '\n', not std::endl — a high-frequency caller (e.g. NetworkClient's
-    // per-packet unhandled-packet log) forcing a real flush syscall on every
-    // single line was blocking NetworkThread badly enough to visibly delay
-    // chunk data packets behind it in a busy world. But never flushing until
-    // the OS buffer fills has its own failure mode: a rare, isolated line
-    // (a one-off error in an otherwise quiet stretch) can sit invisible
-    // indefinitely instead of showing up. Bounded instead of all-or-nothing:
-    // at most one real flush per FLUSH_INTERVAL_MS, whichever caller happens
-    // to cross it, capping both the worst-case syscall rate and the
-    // worst-case time before a line actually becomes visible.
-    std::cout << "[INFO] " << message << '\n';
+    // Do not use std::endl(), it flushes the buffer every time.
+    std::cout << "\x1b[90m[INFO]\x1b[0m " << message << '\n';
 
     using namespace std::chrono;
     static std::atomic<int64_t> lastFlushMs{0};
@@ -35,7 +26,7 @@ void Info(const std::string& message)
 
 void Error(const std::string& message)
 {
-    std::cerr << "[ERROR] " << message << std::endl;
+    std::cerr << "\x1b[1;31m[ERROR]\x1b[31m " << message << "\x1b[0m" << std::endl;
 }
 
 void Debug(const std::string& message)

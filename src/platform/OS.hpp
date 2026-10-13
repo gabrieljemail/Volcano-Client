@@ -55,9 +55,14 @@ public:
     // glfwPollEvents, on the window's thread.
     static void ReadBufferedRawMouse(double& dx, double& dy);
 
-    // Loads a dynamic link library (DLL) or shared object (SO) by path, with the extension.
-    // Returns `false` if the library failed to load or was the wrong type for this platform.
-    static bool LoadObject(const std::string& path);
+    // Mod library extension for this platform, with the dot (".dll" / ".so").
+    static const char* GetObjectExtension();
+    // Loads a DLL / shared object by path. Returns an opaque handle, or
+    // nullptr if it failed to load or is the wrong type for this platform.
+    static void* LoadObject(const std::string& path);
+    // Address of an exported symbol, or nullptr.
+    static void* GetObjectSymbol(void* handle, const std::string& name);
+    static void UnloadObject(void* handle);
 };
 
 } // namespace Volcano::Platform

@@ -175,6 +175,10 @@ private:
 
     // Advances GlobalState's crosshair indicator prev/current pair one tick.
     void UpdateCrosshairProgress();
+
+    // Mainhand item seen by the previous tick, for vanilla's reset of the
+    // attack indicator when the held item changes.
+    int32_t lastMainhandItemId = 0;
     int ticksSinceStepSound = 0;
     void MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float delta);
 

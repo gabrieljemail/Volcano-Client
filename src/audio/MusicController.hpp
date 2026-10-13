@@ -71,7 +71,12 @@ public:
         currentContext = context;
 
         // Only count the gap between songs while nothing is playing.
-        if (!currentSong.empty() && state->audioManager->IsSoundPlaying(currentSong)) return;
+        if (!currentSong.empty() && state->audioManager->IsSoundPlaying(currentSong))
+        {
+            // Keeps the volume sliders live mid-song.
+            state->audioManager->SetSoundVolume(currentSong, CurrentVolume());
+            return;
+        }
         currentSong.clear();
 
         // Wall-clock gap, since this runs every frame rather than every tick.
@@ -87,12 +92,16 @@ public:
         const std::vector<std::string>& songs = music[context];
         if (songs.empty()) return;
 
+        // Never repeat the previous song when there is a choice.
         std::uniform_int_distribution<size_t> dist(0, songs.size() - 1);
         std::string song = songs[dist(gen)];
+        for (int tries = 0; tries < 8 && songs.size() > 1 && song == lastSong; tries++)
+        {
+            song = songs[dist(gen)];
+        }
+        lastSong = song;
 
-        float musicVolume = static_cast<float>(std::get<uint32_t>(state->config->Get("Audio.Music.Volume", 40u))) / 100.0f;
-        float masterVolume = static_cast<float>(std::get<uint32_t>(state->config->Get("Audio.Volume", 100u))) / 100.0f;
-        if (registry->Play(state->audioManager, song, musicVolume * masterVolume, 1.0f))
+        if (registry->Play(state->audioManager, song, CurrentVolume(), 1.0f))
         {
             currentSong = song;
         }
@@ -105,8 +114,12 @@ private:
     std::chrono::milliseconds gap{4500};
     std::chrono::steady_clock::time_point idleSince{};
     bool wasIdle = true;
-    std::mt19937 gen{std::random_device{}()};
+    // Mix in the clock in case random_device is deterministic on this runtime.
+    std::mt19937 gen{static_cast<std::mt19937::result_type>(
+        std::random_device{}() ^
+        static_cast<uint64_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count()))};
     std::string currentSong;
+    std::string lastSong;
     std::string currentContext;
     // A mapping of gameplay categories to a list of registry sound names.
     // Example structure:
@@ -116,6 +129,13 @@ private:
     //   ]
     // }
     std::unordered_map<std::string, std::vector<std::string>> music;
+
+    float CurrentVolume()
+    {
+        float musicVolume = static_cast<float>(std::get<uint32_t>(state->config->Get("Audio.Music.Volume", 40u))) / 100.0f;
+        float masterVolume = static_cast<float>(std::get<uint32_t>(state->config->Get("Audio.Volume", 100u))) / 100.0f;
+        return musicVolume * masterVolume;
+    }
 
     std::string IdentifyContext()
     {

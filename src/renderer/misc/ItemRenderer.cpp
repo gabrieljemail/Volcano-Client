@@ -31,7 +31,7 @@ void ItemRenderer::Init(const Engine::ShaderLibrary& shaders)
     if (initialized) return;
     CreateRenderPass();
     CreateDepthBuffer();
-    CreatePipeline(shaders);
+    pipeline = BuildPipeline(shaders, renderPass);
     initialized = true;
 }
 
@@ -39,6 +39,7 @@ void ItemRenderer::Shutdown()
 {
     if (!initialized) return;
     vkDeviceWaitIdle(GetDevice());
+    DestroyWorldPipeline();
 
     for (auto& [name, mesh] : meshes)
     {
@@ -155,7 +156,7 @@ void ItemRenderer::CreateDepthBuffer()
     }
 }
 
-void ItemRenderer::CreatePipeline(const Engine::ShaderLibrary& shaders)
+VkPipeline ItemRenderer::BuildPipeline(const Engine::ShaderLibrary& shaders, VkRenderPass pass)
 {
     VkShaderModule vertModule = CreateShaderModule(shaders, "item.vert");
     VkShaderModule fragModule = VK_NULL_HANDLE;
@@ -246,7 +247,7 @@ void ItemRenderer::CreatePipeline(const Engine::ShaderLibrary& shaders)
     layoutInfo.pSetLayouts = &textureSetLayout; // Set 0 = the block/item texture array.
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pushRange;
-    if (vkCreatePipelineLayout(GetDevice(), &layoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
+    if (pipelineLayout == VK_NULL_HANDLE && vkCreatePipelineLayout(GetDevice(), &layoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
     {
         vkDestroyShaderModule(GetDevice(), fragModule, nullptr);
         vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
@@ -266,17 +267,18 @@ void ItemRenderer::CreatePipeline(const Engine::ShaderLibrary& shaders)
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = pipelineLayout;
-    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.renderPass = pass;
     pipelineInfo.subpass = 0;
-    VkResult result = vkCreateGraphicsPipelines(GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
+    VkPipeline built = VK_NULL_HANDLE;
+    VkResult result = vkCreateGraphicsPipelines(GetDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &built);
 
     vkDestroyShaderModule(GetDevice(), fragModule, nullptr);
     vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
     if (result != VK_SUCCESS)
     {
-        pipeline = VK_NULL_HANDLE;
         throw std::runtime_error("[ERROR] ItemRenderer: failed to create the graphics pipeline.");
     }
+    return built;
 }
 
 ItemRenderer::GpuBuffer ItemRenderer::UploadBuffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage)
@@ -314,6 +316,59 @@ const ItemRenderer::GpuMesh* ItemRenderer::MeshFor(const std::string& itemName, 
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     mesh.indexCount = static_cast<uint32_t>(model.GetIndices().size());
     return &(meshes[itemName] = mesh);
+}
+
+bool ItemRenderer::HasModel(const std::string& itemName) const
+{
+    return textures != nullptr && ItemModel::ForItem(itemName, *textures) != nullptr;
+}
+
+void ItemRenderer::CreateWorldPipeline(const Engine::ShaderLibrary& shaders)
+{
+    if (!initialized) return;
+    DestroyWorldPipeline();
+    worldPipeline = BuildPipeline(shaders, GetRenderPass());
+}
+
+void ItemRenderer::DestroyWorldPipeline()
+{
+    if (worldPipeline == VK_NULL_HANDLE) return;
+    vkDestroyPipeline(GetDevice(), worldPipeline, nullptr);
+    worldPipeline = VK_NULL_HANDLE;
+}
+
+void ItemRenderer::RecordItem(VkCommandBuffer cmd, const std::string& itemName, const std::string& context,
+                              const glm::mat4& placement, const glm::mat4& viewProj, const glm::mat4& pivotRotation)
+{
+    if (!initialized || worldPipeline == VK_NULL_HANDLE || textures == nullptr) return;
+
+    const ItemModel* model = ItemModel::ForItem(itemName, *textures);
+    if (model == nullptr) return;
+    const GpuMesh* mesh = MeshFor(itemName, *model);
+
+    glm::mat4 display = model->DisplayMatrix(context);
+    glm::vec3 center = glm::vec3(display * glm::vec4(0.5f, 0.5f, 0.5f, 1.0f));
+    glm::mat4 pivot = glm::translate(glm::mat4(1.0f), center) * pivotRotation * glm::translate(glm::mat4(1.0f), -center);
+    glm::mat4 modelMatrix = placement * pivot * display;
+    glm::mat3 normalMatrix(modelMatrix);
+    // Lights are fixed in the placement's space; strip any uniform scale.
+    normalMatrix = glm::mat3(glm::normalize(normalMatrix[0]), glm::normalize(normalMatrix[1]), glm::normalize(normalMatrix[2]));
+
+    ItemPushConstants push{};
+    push.mvp = viewProj * modelMatrix;
+    push.normalRow0 = glm::vec4(normalMatrix[0][0], normalMatrix[1][0], normalMatrix[2][0], 0.0f);
+    push.normalRow1 = glm::vec4(normalMatrix[0][1], normalMatrix[1][1], normalMatrix[2][1], 0.0f);
+    push.normalRow2 = glm::vec4(normalMatrix[0][2], normalMatrix[1][2], normalMatrix[2][2], 0.0f);
+    push.params = glm::vec4(model->IsFlat() ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
+    VkDescriptorSet texturesSet = textureSet;
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &texturesSet, 0, nullptr);
+    VkDeviceSize vertexOffset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vertices.buffer, &vertexOffset);
+    vkCmdBindIndexBuffer(cmd, mesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
+    vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
 }
 
 bool ItemRenderer::RenderGuiIcon(const std::string& itemName, IconImage& out)
@@ -380,10 +435,7 @@ bool ItemRenderer::RenderGuiIcon(const std::string& itemName, IconImage& out)
     // The model's own "gui" transform, viewed down -Z through a unit-sized
     // orthographic window (one item = one 16px vanilla slot). Y is flipped
     // for Vulkan's clip space, like the world projection.
-    // Plus a quarter turn about the vertical axis: the display transform
-    // alone came out 90 degrees to the right of vanilla's icon.
-    glm::mat4 modelMatrix = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f))
-        * model->DisplayMatrix("gui");
+    glm::mat4 modelMatrix = model->DisplayMatrix("gui");
     glm::mat4 projection = glm::orthoRH_ZO(-0.5f, 0.5f, -0.5f, 0.5f, -2.0f, 2.0f);
     projection[1][1] *= -1.0f;
 

@@ -89,7 +89,7 @@ void TextureManager::UploadLayer(uint32_t layerIndex, const uint8_t* rgbaPixels,
     vmaDestroyBuffer(vmaAllocator, staging.buffer, staging.allocation);
 }
 
-void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
+void TextureManager::LoadResourcePack(const std::string& resourcePackRoot, const std::function<void(float)>& onProgress)
 {
     std::vector<fs::path> texturePaths;
     for (const auto& subdir : { "block", "item" })
@@ -161,6 +161,8 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
         layer++;
 
         stbi_image_free(pixels);
+
+        if (onProgress) onProgress(static_cast<float>(layer) / static_cast<float>(validPaths.size()));
     }
 
     GenerateMipmaps();

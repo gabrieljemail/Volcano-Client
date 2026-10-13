@@ -272,6 +272,8 @@ void InteractionManager::Update(bool inputAllowed)
     // same as TickLoop::Advance — see RenderThread::PollInputs.
     RaycastSelection();
 
+    UpdateUsingItem(inputAllowed);
+
     // ImGui owns the mouse while a Screen/chat box is focused.
     if (!inputAllowed) return;
 
@@ -326,12 +328,16 @@ float InteractionManager::GetAttackStrengthScale(float partialTicks) const
 void InteractionManager::RefreshHeldItems()
 {
     std::lock_guard<std::mutex> lock(state->inventory.mutex);
-    mainhand = state->inventory.hotbar.Get(state->inventory.selectedHotbarSlot);
+    selectedSlot = state->inventory.selectedHotbarSlot;
+    mainhand = state->inventory.hotbar.Get(selectedSlot);
     offhand = state->inventory.offhand.Get(0);
 
     mainhandEmpty = mainhand.IsEmpty();
-    // See offhandInteractible's own comment — nothing to derive this from yet.
-    offhandInteractible = false;
+
+    const ItemRegistry::ItemTypeInfo* mainInfo = ItemRegistry::Lookup(mainhand.itemId);
+    const ItemRegistry::ItemTypeInfo* offInfo = ItemRegistry::Lookup(offhand.itemId);
+    offhandInteractible = !offhand.IsEmpty() && ItemBehaviorFor(offInfo).action != UseAction::None
+        && (mainhand.IsEmpty() || !UsesOnBlocks(mainInfo));
 }
 
 void InteractionManager::RefreshReach()
@@ -344,6 +350,13 @@ void InteractionManager::RefreshReach()
 
 void InteractionManager::PrimaryTriggerStart()
 {
+    // Vanilla's isHandsBusy: no attacking or mining mid-use.
+    if (usingState.has_value())
+    {
+        CancelMining();
+        return;
+    }
+
     // Vanilla never refuses a swing — attackStrengthTicker only scales the
     // damage a landed hit deals (GetAttackStrengthScale), it doesn't gate
     // whether one happens. Reset happens here, on the press edge — this
@@ -384,6 +397,12 @@ void InteractionManager::PrimaryTriggerStart()
 
 void InteractionManager::PrimaryTriggerHold()
 {
+    if (usingState.has_value())
+    {
+        CancelMining();
+        return;
+    }
+
     if (targetedEntityId.has_value())
     {
         // Vanilla doesn't keep attacking while the button stays down —
@@ -600,17 +619,20 @@ void InteractionManager::SecondaryTriggerStart()
 
 void InteractionManager::SecondaryTriggerHold()
 {
-    // Continues whatever SecondaryTriggerStart began (keep eating, keep
-    // charging a bow, keep blocking with a shield) — the server times a
-    // continuous use off the single UseItem packet Start already sent, so
-    // that case needs no packet here. Placing/using against a block is
-    // different: vanilla repeats it for as long as the button stays down
-    // (bridging, filling a wall, ...), which needs an explicit repeat here,
-    // rate-limited since nothing else paces it — see DispatchUse's own
-    // comment. Entity interact and bare use-item don't repeat on hold in
-    // vanilla either, so both are left alone the same as the continuous
-    // case above.
-    if (!targetedBlock.has_value()) return;
+    // A continuous use (eating, a shield, a bow) is timed by the server off
+    // the single UseItem packet it started with, so nothing is sent while one
+    // is running. Otherwise vanilla repeats the click while the button stays
+    // down (bridging, the next apple), paced by PLACE_REPEAT_DELAY.
+    if (usingState.has_value()) return;
+
+    bool canRepeat = targetedBlock.has_value();
+    if (!canRepeat)
+    {
+        const ItemStack& held = HeldItem(offhandInteractible ? Hand::Off : Hand::Main);
+        UseAction action = ItemBehaviorFor(ItemRegistry::Lookup(held.itemId)).action;
+        canRepeat = action != UseAction::None;
+    }
+    if (!canRepeat) return;
 
     auto now = std::chrono::steady_clock::now();
     if (now - lastPlaceTime < PLACE_REPEAT_DELAY) return;
@@ -620,61 +642,160 @@ void InteractionManager::SecondaryTriggerHold()
 
 void InteractionManager::DispatchUse()
 {
-    // Simplification: there's no per-item "is this placeable/edible/a
-    // tool/..." behavior classification yet (see ItemRegistry), so this
-    // always tries block-place when a block is targeted and falls back to
-    // a bare use-item otherwise — matching vanilla's own dispatch order
-    // (interact entity > use-on-block > use-item) without its PASS-result
-    // fallback (real vanilla can send both a block-use AND a plain use in
-    // the same click if the former locally predicts a no-op; this client
-    // has no item behavior data to predict that with, so it only ever
-    // sends one).
-    Hand hand = Hand::Main; // offhandInteractible is always false for now — see its own comment.
+    if (usingState.has_value()) return;
+
+    // Mainhand always gets the block/entity interaction; UseHeldItem decides
+    // whether the offhand takes over the item use.
+    Hand hand = Hand::Main;
 
     if (targetedEntityId.has_value())
     {
         bool sneaking = state->tickLoop->IsSneaking();
         InteractEntityEvent{ *targetedEntityId, hand, sneaking }.Dispatch(state);
+
+        // Feedable or tradable mobs consume the click in vanilla; don't also
+        // start eating the food that was just handed to them.
+        std::string kind;
+        {
+            std::lock_guard<std::mutex> lock(state->entitiesMutex);
+            if (const Entity* entity = state->FindEntity(*targetedEntityId))
+            {
+                const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity->type);
+                if (info != nullptr) kind = info->entityKind;
+            }
+        }
+        UseAction action = ItemBehaviorFor(ItemRegistry::Lookup(HeldItem(offhandInteractible ? Hand::Off : Hand::Main).itemId)).action;
+        bool consumable = action == UseAction::Eat || action == UseAction::Drink;
+        bool entityTakesIt = kind == "animal" || kind == "passive" || kind == "mob";
+        if (!(consumable && entityTakesIt)) UseHeldItem();
+        return;
     }
-    else if (targetedBlock.has_value()
-        && (state->world->HasBlockEntity(targetedBlock->position)
-            || state->world->GetBlock(targetedBlock->position.x, targetedBlock->position.y,
-                                      targetedBlock->position.z).isCraftingTable)
-        && !(state->tickLoop->IsSneaking() && !mainhand.IsEmpty()))
+
+    if (targetedBlock.has_value())
     {
+        bool interactsWithBlock = state->world->HasBlockEntity(targetedBlock->position)
+            || state->world->GetBlock(targetedBlock->position.x, targetedBlock->position.y,
+                                      targetedBlock->position.z).isCraftingTable;
         // Vanilla: sneaking with something in hand places against the block
         // instead of opening it.
-        BlockEntityInteractEvent{ targetedBlock->position, targetedBlock->face, hand }.Dispatch(state);
-    }
-    else if (targetedBlock.has_value())
-    {
+        if (interactsWithBlock && !(state->tickLoop->IsSneaking() && !mainhand.IsEmpty()))
+        {
+            BlockEntityInteractEvent{ targetedBlock->position, targetedBlock->face, hand }.Dispatch(state);
+            return;
+        }
+
         // Block items share their block's name ("stone" -> stone), which is
         // enough to predict the common case; anything else just waits for
         // the server.
         int32_t predictedStateId = -1;
-        if (!mainhand.IsEmpty())
+        const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(mainhand.itemId);
+        if (item != nullptr) predictedStateId = BlockRegistry::DefaultStateIdForName(item->name);
+
+        // The offhand takes the click (a shield with a sword in hand) without
+        // placing anything against the block first.
+        if (!offhandInteractible)
         {
-            const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(mainhand.itemId);
-            if (item != nullptr) predictedStateId = BlockRegistry::DefaultStateIdForName(item->name);
+            PlaceBlockEvent{ targetedBlock->position, targetedBlock->face, hand, predictedStateId }.Dispatch(state);
         }
-        PlaceBlockEvent{ targetedBlock->position, targetedBlock->face, hand, predictedStateId }.Dispatch(state);
+        // A placed block ends the click; anything else (armor, food, a
+        // shield) falls through to its own use, as vanilla's PASS does.
+        if (predictedStateId >= 0 && !offhandInteractible) return;
+
+        // Buckets, tools and the like were fully handled by the block click.
+        ItemBehavior behavior = ItemBehaviorFor(item);
+        if (!offhandInteractible && behavior.action == UseAction::None && behavior.armorSlot < 0) return;
     }
-    else
+
+    UseHeldItem();
+}
+
+void InteractionManager::UseHeldItem()
+{
+    Hand hand = offhandInteractible ? Hand::Off : Hand::Main;
+    const ItemStack& held = HeldItem(hand);
+    if (held.IsEmpty()) return;
+
+    const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(held.itemId);
+    ItemBehavior behavior = ItemBehaviorFor(item);
+
+    // Nothing to eat at full hunger (creative can always eat, like vanilla's
+    // invulnerable abilities).
+    if (behavior.action == UseAction::Eat && !behavior.alwaysEdible
+        && !state->canInstabuild.load(std::memory_order_relaxed))
     {
-        float yaw = state->player->camera.GetYaw();
-        float pitch = state->player->camera.GetPitch();
-        UseItemEvent{ hand, yaw, pitch }.Dispatch(state);
+        int32_t food;
+        {
+            std::lock_guard<std::mutex> lock(state->healthMutex);
+            food = state->food;
+        }
+        if (food >= 20) return;
     }
+
+    // Negated like TickThread's per-tick report: the camera turns the
+    // opposite way from Minecraft's convention.
+    float yaw = std::remainder(-state->player->camera.GetYaw(), 360.0f);
+    float pitch = -state->player->camera.GetPitch();
+    bool continuous = behavior.action != UseAction::None;
+    UseItemEvent{ hand, yaw, pitch, /*swing=*/!continuous }.Dispatch(state);
+
+    if (!continuous) return;
+    usingState = UsingState{ hand, held.itemId, selectedSlot, behavior.action,
+                             behavior.useTicks, std::chrono::steady_clock::now() };
+    PublishUsing();
+}
+
+void InteractionManager::StopUsingItem()
+{
+    if (!usingState.has_value()) return;
+    // Vanilla's release action ignores position; same fixed dummies as before.
+    SendPlayerAction(state, DigStatus::ReleaseUseItem, glm::ivec3(0), glm::ivec3(0, 1, 0));
+    usingState.reset();
+    PublishUsing();
+}
+
+void InteractionManager::UpdateUsingItem(bool inputAllowed)
+{
+    if (!usingState.has_value()) return;
+
+    // Finished by itself: the server consumed the item, nothing to release.
+    if (usingState->useTicks > 0)
+    {
+        double elapsedTicks = std::chrono::duration<double>(std::chrono::steady_clock::now() - usingState->startTime).count() * 20.0;
+        if (elapsedTicks >= static_cast<double>(usingState->useTicks))
+        {
+            usingState.reset();
+            PublishUsing();
+            return;
+        }
+    }
+
+    // Switching slots or items, losing the stack, a screen opening, or letting
+    // go all end the use early.
+    const ItemStack& held = HeldItem(usingState->hand);
+    bool itemChanged = held.IsEmpty() || held.itemId != usingState->itemId
+        || (usingState->hand == Hand::Main && selectedSlot != usingState->hotbarSlot);
+    if (itemChanged || !inputAllowed || !state->input->IsActive("SecondaryActionHold"))
+    {
+        StopUsingItem();
+    }
+}
+
+void InteractionManager::PublishUsing()
+{
+    if (usingState.has_value())
+    {
+        state->useStartNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            usingState->startTime.time_since_epoch()).count(), std::memory_order_relaxed);
+        state->usingItemAction.store(static_cast<uint8_t>(usingState->action), std::memory_order_relaxed);
+    }
+    state->usingItem.store(usingState.has_value(), std::memory_order_relaxed);
 }
 
 void InteractionManager::SecondaryTriggerRelease()
 {
-    // Ends whatever SecondaryTriggerStart began, early (release a drawn
-    // bow, stop eating, lower a shield) — vanilla's ReleaseUseItem action
-    // doesn't care what's targeted, so this ignores targetedBlock/
-    // targetedEntityId entirely and sends the same fixed dummy position/
-    // face every time, matching vanilla's own call site for this action.
-    SendPlayerAction(state, DigStatus::ReleaseUseItem, glm::ivec3(0), glm::ivec3(0, 1, 0));
+    // Only a continuous use has anything to release; vanilla sends nothing
+    // otherwise.
+    StopUsingItem();
 }
 
 void InteractionManager::RaycastSelection()

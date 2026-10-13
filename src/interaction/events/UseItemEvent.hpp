@@ -17,11 +17,14 @@ struct UseItemEvent {
     Hand hand;
     float yaw;
     float pitch;
+    // Vanilla only swings for instant uses (equipping, throwing); eating,
+    // blocking and drawing a bow don't.
+    bool swing = true;
 
     void Dispatch(GlobalState* state) const
     {
         SendUseItem(state, hand, yaw, pitch);
-        SendArmAnimation(state, hand);
+        if (swing) SendArmAnimation(state, hand);
     }
 };
 

@@ -11,6 +11,8 @@
 #include "EntityRenderer.hpp"
 #include "models/Entity.hpp"
 #include "models/EntityRegistry.hpp"
+#include "../misc/ItemRenderer.hpp"
+#include "../../inventory/ItemRegistry.hpp"
 #include "models/EntityBoxMesh.hpp"
 #include "models/EntityJsonModel.hpp"
 #include "models/QuadrupedModel.hpp"
@@ -1086,6 +1088,16 @@ void EntityRenderer::ReloadPipelines(const Engine::ShaderLibrary& shaders)
     CreateHumanoidPipeline(shaders);
 }
 
+VkDescriptorSet EntityRenderer::GetDefaultSkinSet()
+{
+    return g_steveSkin.descriptorSet;
+}
+
+VkDescriptorSetLayout EntityRenderer::GetSkinSetLayout()
+{
+    return g_textureSetLayout;
+}
+
 void EntityRenderer::Shutdown()
 {
     if (g_pipeline != VK_NULL_HANDLE)
@@ -1290,6 +1302,13 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
         {
             if (!entity.visible) return;
             if (const PlayerEntity* player = state->FindPlayerEntity(id); player && player->invisible) return;
+
+            // Dropped items with a 3D model are drawn by ItemPass instead.
+            if (state->itemRenderer != nullptr && entity.itemId != 0)
+            {
+                const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(entity.itemId);
+                if (item != nullptr && state->itemRenderer->HasModel(item->name)) return;
+            }
 
             float halfWidth = entity.boundingBox.x * 0.5f;
             float halfHeight = entity.boundingBox.y * 0.5f;

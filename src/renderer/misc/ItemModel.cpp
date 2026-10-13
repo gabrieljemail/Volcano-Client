@@ -306,16 +306,35 @@ const ItemModel* ItemModel::ForItem(const std::string& itemName, const TextureMa
 
 glm::mat4 ItemModel::DisplayMatrix(const std::string& context) const
 {
+    // Left-hand contexts fall back to the right hand's entry, and either way
+    // are mirrored (ItemTransform.apply's leftHand flag): yaw and roll are
+    // negated and the X translation flipped.
+    bool leftHand = context.size() > 8 && context.compare(context.size() - 8, 8, "lefthand") == 0;
     ModelLoader::DisplayTransform transform;
-    if (auto it = display.find(context); it != display.end()) transform = it->second;
+    if (auto it = display.find(context); it != display.end())
+    {
+        transform = it->second;
+    }
+    else if (leftHand)
+    {
+        std::string rightContext = context.substr(0, context.size() - 8) + "righthand";
+        if (auto right = display.find(rightContext); right != display.end()) transform = right->second;
+    }
+    if (leftHand)
+    {
+        transform.rotation.y = -transform.rotation.y;
+        transform.rotation.z = -transform.rotation.z;
+        transform.translation.x = -transform.translation.x;
+    }
 
     glm::vec3 translation = glm::clamp(transform.translation, glm::vec3(-80.0f), glm::vec3(80.0f)) / 16.0f;
     glm::vec3 scale = glm::clamp(transform.scale, glm::vec3(-4.0f), glm::vec3(4.0f));
 
-    // Quaternion::rotationXYZ: X first, then Y, then Z.
-    glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(transform.rotation.z), glm::vec3(0, 0, 1))
+    // Quaternion::rotationXYZ is Qx * Qy * Qz, so a vertex is rotated about Z
+    // first, then Y, then X.
+    glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(transform.rotation.x), glm::vec3(1, 0, 0))
         * glm::rotate(glm::mat4(1.0f), glm::radians(transform.rotation.y), glm::vec3(0, 1, 0))
-        * glm::rotate(glm::mat4(1.0f), glm::radians(transform.rotation.x), glm::vec3(1, 0, 0));
+        * glm::rotate(glm::mat4(1.0f), glm::radians(transform.rotation.z), glm::vec3(0, 0, 1));
 
     return glm::translate(glm::mat4(1.0f), translation) * rotation * glm::scale(glm::mat4(1.0f), scale)
         * glm::translate(glm::mat4(1.0f), glm::vec3(-0.5f));

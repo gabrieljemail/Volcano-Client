@@ -58,6 +58,7 @@ class InteractionManager;
 
 class AudioManager;
 class MusicController;
+class ModLoader;
 class SoundRegistry;
 class ItemRenderer;
 
@@ -193,6 +194,7 @@ struct GlobalState {
     InteractionManager* interaction;
     AudioManager* audioManager{nullptr};
     MusicController* musicController{nullptr};
+    ModLoader* modLoader{nullptr}; // Owned by main(); fires events to loaded mods.
     SoundRegistry* soundRegistry{nullptr};
     ItemRenderer* itemRenderer{nullptr}; // 3D item models (GUI icons now; hand and dropped items later).
 
@@ -217,6 +219,19 @@ struct GlobalState {
     // change how long the recovery takes, matching vanilla's own
     // Player::getAttackStrengthScale/resetAttackStrengthTicker.
     std::atomic<uint32_t> attackStrengthTicker{0};
+
+    // When the local player last swung an arm (steady_clock ns; 0 = never).
+    // Written by SendArmAnimation on the render thread; read by HandModel.
+    std::atomic<int64_t> localSwingNs{0};
+
+    // True while a continuous item use (eating, blocking, a drawn bow) is in
+    // progress. Written by the render thread (InteractionManager); read by
+    // the tick thread, which slows movement and stops sprinting. usingItemAction
+    // is the UseAction ordinal (inventory/ItemBehavior.hpp); useStartNs is
+    // steady_clock ns.
+    std::atomic<bool> usingItem{false};
+    std::atomic<uint8_t> usingItemAction{0};
+    std::atomic<int64_t> useStartNs{0};
 
     // Active block-break, published for the tick thread's crosshair
     // indicator update. Written by the render thread (InteractionManager

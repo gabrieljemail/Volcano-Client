@@ -10,7 +10,7 @@ struct GlobalState;
 
 namespace Volcano::GUI {
 
-// Settings hub plus its category sub-screens (Video, Window, Controls).
+// Settings hub plus its category sub-screens (Video, Window, Audio, Controls).
 // Every control writes straight to settings.json through Config::Set, and
 // the systems that own each setting pick the change up live. Back returns
 // to whichever screen opened it, hence OpenSettingsScreen.

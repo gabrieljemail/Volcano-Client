@@ -40,6 +40,11 @@ public:
     // RenderEngine::StopRendering().
     static void Shutdown();
 
+    // The default (Steve) skin as a sampler2D descriptor set, and its layout,
+    // for the first-person arm. Valid between Init() and Shutdown().
+    static VkDescriptorSet GetDefaultSkinSet();
+    static VkDescriptorSetLayout GetSkinSetLayout();
+
     // Culls state->entities (frustum + distance limit), uploads the
     // survivors into frameIndex's instance SSBO, and issues one indirect
     // draw call for them. Must be called inside an active render pass with

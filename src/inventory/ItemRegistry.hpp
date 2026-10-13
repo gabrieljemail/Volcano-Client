@@ -18,6 +18,8 @@ struct ItemTypeInfo {
     std::string displayName;   // e.g. "Diamond Sword".
     uint16_t textureLayer = 0; // TextureManager::array layer to sample for this item's icon.
     bool hasTexture = false;   // false if GetLayerIndex() found nothing under this name (see Init()'s own note).
+    bool edible = false;       // Listed in minecraft-data's foods.json.
+    int32_t foodPoints = 0;    // Hunger restored when eaten (half-drumsticks); 0 if not edible.
 };
 
 // Parses minecraft-data's items.json once at startup, keyed by its "id"

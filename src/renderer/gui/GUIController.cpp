@@ -13,6 +13,7 @@
 #include <imgui_impl_vulkan.h>
 #include <GLFW/glfw3.h>
 #include <cstring>
+#include <unordered_set>
 #include <stb_image.h>
 #include "gui/models/GUIComponent.hpp"
 #include "gui/models/Button.hpp"
@@ -23,6 +24,8 @@
 #include "inventory/ItemRegistry.hpp"
 #include "TickLoop.hpp"
 #include "SystemInfo.hpp"
+#include "renderer/engine/SceneView.hpp"
+#include "renderer/entity/models/EntityRegistry.hpp"
 #include "platform/OS.hpp"
 #include "renderer/VulkanInit.hpp"
 #include "renderer/terrain/ChunkMesher.hpp"
@@ -31,6 +34,20 @@
 #include "renderer/misc/ItemRenderer.hpp"
 
 namespace Volcano {
+
+// Pixel-art GUI textures are drawn with nearest sampling so scaled-up art
+// stays crisp; text and 3D icons keep ImGui's linear sampler.
+static std::unordered_set<ImTextureID> linearIconTextures;
+
+static void AddImageNearest(ImDrawList* drawList, ImTextureID texture, const ImVec2& min, const ImVec2& max,
+    const ImVec2& uv0 = ImVec2(0.0f, 0.0f), const ImVec2& uv1 = ImVec2(1.0f, 1.0f), ImU32 color = IM_COL32_WHITE)
+{
+    ImGuiPlatformIO& platformIO = ImGui::GetPlatformIO();
+    drawList->AddCallback(platformIO.DrawCallback_SetSamplerNearest, nullptr);
+    drawList->AddImage(texture, min, max, uv0, uv1, color);
+    drawList->AddCallback(platformIO.DrawCallback_SetSamplerLinear, nullptr);
+}
+
 // Declared here rather than including network/NetworkClient.hpp: that
 // header drags in asio.hpp, which on Windows pulls in <windows.h> —
 // whose CreateWindowA/CreateWindow macros collide with
@@ -89,6 +106,7 @@ GUIController::StandaloneIcon GUIController::inventoryBackground;
 GUIController::StandaloneIcon GUIController::craftingBackground;
 GUIController::StandaloneIcon GUIController::furnaceBackground;
 GUIController::StandaloneIcon GUIController::genericBackground;
+GUIController::StandaloneIcon GUIController::logoIcon;
 
 void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState,
                           const TextureManager* textureMgr)
@@ -183,6 +201,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     craftingBackground = LoadStandaloneIcon(guiTextures + "container/crafting_table.png");
     furnaceBackground = LoadStandaloneIcon(guiTextures + "container/furnace.png");
     genericBackground = LoadStandaloneIcon(guiTextures + "container/generic_54.png");
+    logoIcon = LoadStandaloneIcon("resources/logo.png");
 
     Log::Info("GUI Controller initialized with ImGui");
     initialized = true;
@@ -210,7 +229,7 @@ void GUIController::Shutdown()
     for (StandaloneIcon* icon : { &crosshairIcon, &crosshairEntityIcon, &attackIndicatorBackgroundIcon,
             &attackIndicatorProgressIcon, &hotbarIcon, &hotbarSelectionIcon,
             &slotHighlightBackIcon, &slotHighlightFrontIcon, &inventoryBackground, &craftingBackground,
-            &furnaceBackground, &genericBackground }) {
+            &furnaceBackground, &genericBackground, &logoIcon }) {
         if (icon->view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), icon->view, nullptr);
         if (icon->image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, icon->image, icon->allocation);
         *icon = StandaloneIcon{};
@@ -297,6 +316,7 @@ ImTextureID GUIController::ModelIconForItem(uint16_t itemId, const std::string& 
                     entry.icon.allocation = image.allocation;
                     entry.icon.view = image.view;
                     entry.icon.descriptorSet = ImGui_ImplVulkan_AddTexture(image.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                    linearIconTextures.insert(TextureOf(entry.icon));
                 }
             }
         }
@@ -403,7 +423,7 @@ void GUIController::RenderCrosshair()
     ImVec2 center(display.x * 0.5f, display.y * 0.5f);
     ImVec2 half(CROSSHAIR_SIZE * 0.5f, CROSSHAIR_SIZE * 0.5f);
 
-    ImGui::GetForegroundDrawList()->AddImage(texture,
+    AddImageNearest(ImGui::GetForegroundDrawList(), texture,
         ImVec2(center.x - half.x, center.y - half.y),
         ImVec2(center.x + half.x, center.y + half.y));
 
@@ -430,10 +450,10 @@ void GUIController::RenderAttackIndicator(const ImVec2& center)
     ImVec2 min(center.x - Art(8.0f), center.y + Art(16.0f));
     ImVec2 max(min.x + Art(16.0f), min.y + Art(4.0f));
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
-    drawList->AddImage(background, min, max);
+    AddImageNearest(drawList, background, min, max);
 
     if (fillPixels <= 0.0f) return;
-    drawList->AddImage(progress, min, ImVec2(min.x + Art(fillPixels), max.y),
+    AddImageNearest(drawList, progress, min, ImVec2(min.x + Art(fillPixels), max.y),
         ImVec2(0.0f, 0.0f), ImVec2(fillPixels / 16.0f, 1.0f), IM_COL32_WHITE);
 }
 
@@ -672,7 +692,114 @@ void GUIController::DiscardFrame()
     ImGui::EndFrame();
 }
 
-void GUIController::Render(VkCommandBuffer commandBuffer)
+void GUIController::RenderNametags(const Engine::SceneView& scene)
+{
+    constexpr float MAX_DISTANCE = 100.0f;
+    constexpr float MAX_DISTANCE_SQUARED = MAX_DISTANCE * MAX_DISTANCE;
+    constexpr float HEAD_MARGIN = 0.3f; // Blocks above the bounding box.
+    constexpr float SCREEN_MARGIN = 1.3f; // NDC extent kept, so wide tags near an edge still draw.
+    constexpr uint64_t PRUNE_INTERVAL = 120;
+
+    // Text and its measured width per entity; rebuilt only when the
+    // reported position (or the font size) changes, not every frame.
+    struct TagText
+    {
+        glm::vec3 shownPosition{0.0f};
+        bool built = false;
+        decltype(Entity::type) type{};
+        float fontSize = 0.0f;
+        std::string lines[2];
+        float widths[2]{};
+        uint64_t lastUsed = 0;
+    };
+    struct Visible
+    {
+        ImVec2 screen;
+        const TagText* text;
+    };
+    static std::unordered_map<uint32_t, TagText> cache;
+    static std::vector<Visible> visible;
+    static uint64_t frame = 0;
+    frame++;
+    visible.clear();
+
+    glm::mat4 viewProj = scene.proj * scene.view;
+    ImVec2 display = ImGui::GetIO().DisplaySize;
+    float fontSize = ImGui::GetFontSize();
+    auto now = std::chrono::steady_clock::now();
+    int32_t localId = state->localEntityId.load();
+
+    auto consider = [&](const Entity& entity, const std::string& name)
+    {
+        if (static_cast<int32_t>(entity.id) == localId || !entity.visible) return;
+
+        glm::vec3 offset = entity.position - scene.cameraPosition;
+        if (glm::dot(offset, offset) > MAX_DISTANCE_SQUARED) return;
+
+        glm::vec3 anchor = entity.InterpolatedPosition(now) + glm::vec3(0.0f, entity.boundingBox.y + HEAD_MARGIN, 0.0f);
+        glm::vec4 clip = viewProj * glm::vec4(anchor, 1.0f);
+        if (clip.w <= 0.0f) return; // Behind the camera.
+
+        // The projection already carries Vulkan's flipped Y, so NDC y grows downward.
+        float ndcX = clip.x / clip.w;
+        float ndcY = clip.y / clip.w;
+        if (std::abs(ndcX) > SCREEN_MARGIN || std::abs(ndcY) > SCREEN_MARGIN) return;
+
+        TagText& text = cache[entity.id];
+        text.lastUsed = frame;
+        if (!text.built || text.type != entity.type || text.shownPosition != entity.position || text.fontSize != fontSize)
+        {
+            bool typeChanged = !text.built || text.type != entity.type;
+            text.built = true;
+            text.shownPosition = entity.position;
+            text.fontSize = fontSize;
+            text.type = entity.type;
+
+            if (typeChanged)
+            {
+                const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity.type);
+                text.lines[0] = info != nullptr ? info->name : "unknown";
+                if (!name.empty()) text.lines[0] += " '" + name + "'";
+            }
+
+            char buffer[96];
+            int length = std::snprintf(buffer, sizeof(buffer), "%.2f, %.2f, %.2f", entity.position.x, entity.position.y, entity.position.z);
+            text.lines[1].assign(buffer, static_cast<size_t>(std::max(length, 0)));
+
+            for (int i = 0; i < 2; i++) text.widths[i] = ImGui::CalcTextSize(text.lines[i].c_str()).x;
+        }
+
+        visible.push_back({ ImVec2((ndcX * 0.5f + 0.5f) * display.x, (ndcY * 0.5f + 0.5f) * display.y), &text });
+    };
+
+    {
+        std::lock_guard<std::mutex> lock(state->entitiesMutex);
+        for (const auto& [id, entity] : state->entities) consider(entity, std::string());
+        for (const auto& [id, player] : state->playerEntities) consider(player, player.username);
+    }
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    for (const Visible& tag : visible)
+    {
+        for (int i = 0; i < 2; i++)
+        {
+            const std::string& line = tag.text->lines[i];
+            float lineY = tag.screen.y - fontSize * static_cast<float>(2 - i);
+            ImVec2 position(std::floor(tag.screen.x - tag.text->widths[i] * 0.5f), std::floor(lineY));
+            drawList->AddText(nullptr, 0.0f, position, IM_COL32_WHITE, line.data(), line.data() + line.size());
+        }
+    }
+
+    if (frame % PRUNE_INTERVAL == 0)
+    {
+        for (auto it = cache.begin(); it != cache.end();)
+        {
+            it = frame - it->second.lastUsed > PRUNE_INTERVAL ? cache.erase(it) : std::next(it);
+        }
+    }
+}
+
+void GUIController::Render(VkCommandBuffer commandBuffer, const Engine::SceneView* scene)
 {
     if (!initialized) return;
 
@@ -740,6 +867,12 @@ void GUIController::Render(VkCommandBuffer commandBuffer)
         RenderPlayerStatusBars();
         RenderMovementStatePanel();
         RenderCrosshair();
+
+        if (scene != nullptr && state->connectionPhase.load() == ConnectionPhase::Playing
+            && std::get<bool>(state->config->Get("Graphics.Nametags", true)))
+        {
+            RenderNametags(*scene);
+        }
     }
 
     ImGui::Render();
@@ -756,17 +889,36 @@ void GUIController::AddTextShadows(ImDrawData* drawData)
     constexpr float offset = 2.0f;
     ImFontAtlas* atlas = ImGui::GetIO().Fonts;
     ImVec2 white = atlas->TexUvWhitePixel;
+    auto isText = [&](const ImDrawVert& vertex) { return vertex.uv.x != white.x || vertex.uv.y != white.y; };
 
     for (ImDrawList* list : drawData->CmdLists)
     {
+        bool hasText = false;
+        for (const ImDrawCmd& cmd : list->CmdBuffer)
+        {
+            if (cmd.UserCallback == nullptr && cmd.TexRef._TexData == atlas->TexData)
+            {
+                hasText = true;
+                break;
+            }
+        }
+        if (!hasText) continue;
+
+        // Room for a shadow copy of every vertex, so nothing reallocates below.
+        int vertexCount = list->VtxBuffer.Size;
+        list->VtxBuffer.reserve(vertexCount * 2);
+        ImDrawVert* vertices = list->VtxBuffer.Data;
+        int vertexCapacity = list->VtxBuffer.Capacity;
+
         ImVector<ImDrawIdx> newIndices;
         newIndices.reserve(list->IdxBuffer.Size * 2);
-        auto isText = [&](const ImDrawVert& vertex) { return vertex.uv.x != white.x || vertex.uv.y != white.y; };
+        ImDrawIdx* out = newIndices.Data;
 
         for (ImDrawCmd& cmd : list->CmdBuffer)
         {
-            unsigned int newOffset = static_cast<unsigned int>(newIndices.Size);
+            unsigned int newOffset = static_cast<unsigned int>(out - newIndices.Data);
             const ImDrawIdx* indices = list->IdxBuffer.Data + cmd.IdxOffset;
+            const ImDrawVert* cmdVertices = vertices + cmd.VtxOffset;
             bool fontCmd = cmd.UserCallback == nullptr && cmd.TexRef._TexData == atlas->TexData;
 
             unsigned int i = 0;
@@ -775,36 +927,52 @@ void GUIController::AddTextShadows(ImDrawData* drawData)
                 // A run of consecutive text triangles: shadows first, then the text.
                 unsigned int runEnd = i;
                 while (fontCmd && runEnd + 3 <= cmd.ElemCount
-                    && isText(list->VtxBuffer[cmd.VtxOffset + indices[runEnd]])
-                    && isText(list->VtxBuffer[cmd.VtxOffset + indices[runEnd + 1]])
-                    && isText(list->VtxBuffer[cmd.VtxOffset + indices[runEnd + 2]]))
+                    && isText(cmdVertices[indices[runEnd]])
+                    && isText(cmdVertices[indices[runEnd + 1]])
+                    && isText(cmdVertices[indices[runEnd + 2]]))
                 {
                     runEnd += 3;
                 }
 
                 if (runEnd == i)
                 {
-                    newIndices.push_back(indices[i++]);
+                    *out++ = indices[i++];
                     continue;
                 }
 
-                for (unsigned int k = i; k < runEnd; k++)
+                // The run's vertices are contiguous; shadow them as one block.
+                ImDrawIdx first = indices[i];
+                ImDrawIdx last = first;
+                for (unsigned int k = i + 1; k < runEnd; k++)
                 {
-                    ImDrawVert shadow = list->VtxBuffer[cmd.VtxOffset + indices[k]];
-                    shadow.pos.x += offset;
-                    shadow.pos.y += offset;
-                    shadow.col &= IM_COL32_A_MASK; // black, same alpha as the text
-                    newIndices.push_back(static_cast<ImDrawIdx>(list->VtxBuffer.Size - static_cast<int>(cmd.VtxOffset)));
-                    list->VtxBuffer.push_back(shadow);
+                    first = std::min(first, indices[k]);
+                    last = std::max(last, indices[k]);
                 }
-                for (unsigned int k = i; k < runEnd; k++) newIndices.push_back(indices[k]);
+                int blockSize = static_cast<int>(last - first) + 1;
+
+                if (vertexCount + blockSize <= vertexCapacity)
+                {
+                    ImDrawIdx shadowBase = static_cast<ImDrawIdx>(vertexCount - static_cast<int>(cmd.VtxOffset));
+                    for (int v = 0; v < blockSize; v++)
+                    {
+                        ImDrawVert shadow = cmdVertices[first + v];
+                        shadow.pos.x += offset;
+                        shadow.pos.y += offset;
+                        shadow.col &= IM_COL32_A_MASK; // black, same alpha as the text
+                        vertices[vertexCount++] = shadow;
+                    }
+                    for (unsigned int k = i; k < runEnd; k++) *out++ = shadowBase + (indices[k] - first);
+                }
+                for (unsigned int k = i; k < runEnd; k++) *out++ = indices[k];
                 i = runEnd;
             }
 
             cmd.IdxOffset = newOffset;
-            cmd.ElemCount = static_cast<unsigned int>(newIndices.Size) - newOffset;
+            cmd.ElemCount = static_cast<unsigned int>(out - newIndices.Data) - newOffset;
         }
 
+        newIndices.Size = static_cast<int>(out - newIndices.Data);
+        list->VtxBuffer.Size = vertexCount;
         list->IdxBuffer.swap(newIndices);
     }
 
@@ -1021,9 +1189,19 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     // inside the vanilla panel).
     if (!screen.customContent)
     {
-        ImGui::GetFont()->Scale = 1.15f;
-        ImGui::Text("%s", screen.title.c_str());
-        ImGui::GetFont()->Scale = 1.00f;
+        constexpr float logoSize = 128.0f;
+        ImTextureID logo = screen.showLogo ? TextureOf(logoIcon) : 0;
+        if (logo != 0)
+        {
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - logoSize) * 0.5f);
+            ImGui::Image(logo, ImVec2(logoSize, logoSize));
+        }
+        else
+        {
+            ImGui::GetFont()->Scale = 1.15f;
+            ImGui::Text("%s", screen.title.c_str());
+            ImGui::GetFont()->Scale = 1.00f;
+        }
 
         ImGui::Dummy(ImVec2(0.0f, 16.0f));
     }
@@ -1302,7 +1480,9 @@ namespace {
     {
         if (icon == 0) return;
 
-        drawList->AddImage(icon, pos, ImVec2(pos.x + Art(ITEM_SIZE), pos.y + Art(ITEM_SIZE)));
+        ImVec2 max(pos.x + Art(ITEM_SIZE), pos.y + Art(ITEM_SIZE));
+        if (linearIconTextures.count(icon) != 0) drawList->AddImage(icon, pos, max);
+        else AddImageNearest(drawList, icon, pos, max);
 
         if (count > 1)
         {
@@ -1420,7 +1600,7 @@ void GUIController::RenderHotbarAndArmor()
     // All vanilla-sized geometry goes through Art() (see g_artScale).
     ImTextureID hotbarTexture = TextureOf(hotbarIcon);
     ImVec2 hotbarMax(hotbarPos.x + Art(HOTBAR_WIDTH), hotbarPos.y + Art(HOTBAR_HEIGHT));
-    if (hotbarTexture != 0) drawList->AddImage(hotbarTexture, hotbarPos, hotbarMax);
+    if (hotbarTexture != 0) AddImageNearest(drawList, hotbarTexture, hotbarPos, hotbarMax);
     else drawList->AddRectFilled(hotbarPos, hotbarMax, IM_COL32(0, 0, 0, 120));
 
     // Armor: the hotbar texture cut down to 4 slots (its first 81 columns
@@ -1429,9 +1609,9 @@ void GUIController::RenderHotbarAndArmor()
     if (hotbarTexture != 0)
     {
         constexpr float bodyWidth = ARMOR_WIDTH - 1.0f;
-        drawList->AddImage(hotbarTexture, armorPos, ImVec2(armorPos.x + Art(bodyWidth), armorPos.y + Art(HOTBAR_HEIGHT)),
+        AddImageNearest(drawList, hotbarTexture, armorPos, ImVec2(armorPos.x + Art(bodyWidth), armorPos.y + Art(HOTBAR_HEIGHT)),
             ImVec2(0.0f, 0.0f), ImVec2(bodyWidth / HOTBAR_WIDTH, 1.0f));
-        drawList->AddImage(hotbarTexture, ImVec2(armorPos.x + Art(bodyWidth), armorPos.y),
+        AddImageNearest(drawList, hotbarTexture, ImVec2(armorPos.x + Art(bodyWidth), armorPos.y),
             ImVec2(armorPos.x + Art(ARMOR_WIDTH), armorPos.y + Art(HOTBAR_HEIGHT)),
             ImVec2((HOTBAR_WIDTH - 1.0f) / HOTBAR_WIDTH, 0.0f), ImVec2(1.0f, 1.0f));
     }
@@ -1459,7 +1639,7 @@ void GUIController::RenderHotbarAndArmor()
     ImTextureID selectionTexture = TextureOf(hotbarSelectionIcon);
     ImVec2 selectionPos(hotbarPos.x + Art(-1.0f + selectedSlot * HOTBAR_SLOT_STRIDE), hotbarPos.y + Art(-1.0f));
     ImVec2 selectionMax(selectionPos.x + Art(24.0f), selectionPos.y + Art(23.0f));
-    if (selectionTexture != 0) drawList->AddImage(selectionTexture, selectionPos, selectionMax);
+    if (selectionTexture != 0) AddImageNearest(drawList, selectionTexture, selectionPos, selectionMax);
     else drawList->AddRect(selectionPos, selectionMax, IM_COL32(255, 255, 255, 255));
 
     ImGui::End();
@@ -1706,15 +1886,15 @@ void GUIController::RenderInventoryScreen()
     else if (genericRows > 0)
     {
         float topHeight = 17.0f + genericRows * 18.0f;
-        drawList->AddImage(backgroundTexture, ImVec2(panelX, panelY), ImVec2(panelX + Art(PANEL_WIDTH), panelY + Art(topHeight)),
+        AddImageNearest(drawList, backgroundTexture, ImVec2(panelX, panelY), ImVec2(panelX + Art(PANEL_WIDTH), panelY + Art(topHeight)),
             ImVec2(0.0f, 0.0f), ImVec2(PANEL_WIDTH / TEXTURE_SIZE, topHeight / TEXTURE_SIZE));
-        drawList->AddImage(backgroundTexture, ImVec2(panelX, panelY + Art(topHeight)),
+        AddImageNearest(drawList, backgroundTexture, ImVec2(panelX, panelY + Art(topHeight)),
             ImVec2(panelX + Art(PANEL_WIDTH), panelY + Art(panelHeight)),
             ImVec2(0.0f, 126.0f / TEXTURE_SIZE), ImVec2(PANEL_WIDTH / TEXTURE_SIZE, 222.0f / TEXTURE_SIZE));
     }
     else
     {
-        drawList->AddImage(backgroundTexture, ImVec2(panelX, panelY), ImVec2(panelX + Art(PANEL_WIDTH), panelY + Art(panelHeight)),
+        AddImageNearest(drawList, backgroundTexture, ImVec2(panelX, panelY), ImVec2(panelX + Art(PANEL_WIDTH), panelY + Art(panelHeight)),
             ImVec2(0.0f, 0.0f), ImVec2(PANEL_WIDTH / TEXTURE_SIZE, panelHeight / TEXTURE_SIZE));
     }
 
@@ -1779,7 +1959,7 @@ void GUIController::RenderInventoryScreen()
     {
         if (hovered == nullptr) return;
         ImVec2 min(panelX + Art(hovered->x - 4.0f), panelY + Art(hovered->y - 4.0f));
-        if (texture != 0) drawList->AddImage(texture, min, ImVec2(min.x + Art(HIGHLIGHT_SIZE), min.y + Art(HIGHLIGHT_SIZE)));
+        if (texture != 0) AddImageNearest(drawList, texture, min, ImVec2(min.x + Art(HIGHLIGHT_SIZE), min.y + Art(HIGHLIGHT_SIZE)));
         else if (fallback != 0)
         {
             drawList->AddRectFilled(ImVec2(min.x + Art(4.0f), min.y + Art(4.0f)),

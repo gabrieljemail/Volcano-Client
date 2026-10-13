@@ -272,8 +272,25 @@ void OS::ReadBufferedRawMouse(double& dx, double& dy)
     rawMouseY = 0.0;
 }
 
-bool OS::LoadObject(const std::string& path)
-{}
+const char* OS::GetObjectExtension()
+{
+    return ".dll";
+}
+
+void* OS::LoadObject(const std::string& path)
+{
+    return reinterpret_cast<void*>(LoadLibraryA(path.c_str()));
+}
+
+void* OS::GetObjectSymbol(void* handle, const std::string& name)
+{
+    return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(handle), name.c_str()));
+}
+
+void OS::UnloadObject(void* handle)
+{
+    FreeLibrary(static_cast<HMODULE>(handle));
+}
 
 } // namespace Volcano::Platform
 

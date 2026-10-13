@@ -11,6 +11,7 @@ Screen* CreateMainMenuScreen(GlobalState* state, Screen* singleplayerScreen, Scr
     Screen* settingsScreen)
 {
     Screen* mainMenuScreen = GUIController::CreateScreen("Volcano Client", /* closable */ false);
+    mainMenuScreen->showLogo = true;
 
     auto* singleplayerButton = new Button("Singleplayer");
     singleplayerButton->AddClickHandler(new std::function<void()>(

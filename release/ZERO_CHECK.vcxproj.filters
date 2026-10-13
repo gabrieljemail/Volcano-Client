@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\f5fb19e202ee11bd8d0b0ad17b816f19\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{7E63EFC5-0026-3030-9940-4ABC790E5F20}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

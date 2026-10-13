@@ -23,7 +23,7 @@ public:
 
     void Record(FrameContext& frame) override
     {
-        GUIController::Render(frame.commandBuffer);
+        GUIController::Render(frame.commandBuffer, frame.scene);
     }
 };
 

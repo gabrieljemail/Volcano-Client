@@ -9,7 +9,9 @@
 #include "../GlobalState.hpp"
 #include "../Helpers.hpp"
 #include "../InputHandler.hpp"
+#include "../inventory/ItemBehavior.hpp"
 #include "../inventory/ItemStack.hpp"
+#include "InteractionTypes.hpp"
 #include "../TickLoop.hpp"
 
 namespace Volcano {
@@ -118,9 +120,10 @@ private:
     // would race a future inventory-packet write from NetworkThread.
     ItemStack mainhand;
     ItemStack offhand;
+    uint8_t selectedSlot = 0;
 
-    // True if the offhand item has a secondary action (e.g. a shield).
-    // Always false for now — ItemRegistry has no such flag yet.
+    // True if the offhand item has a continuous use (e.g. a shield) and the
+    // mainhand doesn't claim the click first. Refreshed with the snapshot.
     bool offhandInteractible = false;
 
     // True if the mainhand slot is Air and the hand model
@@ -234,11 +237,39 @@ private:
     void SecondaryTriggerHold();
     void SecondaryTriggerRelease();
 
-    // The click dispatch SecondaryTriggerStart/Hold share: block-entity
-    // interact, block place, or a bare use-item, in that priority order —
-    // see SecondaryTriggerStart's own comment for why. Hold only calls this
-    // while a block is targeted, paced by PLACE_REPEAT_DELAY.
+    // The click dispatch SecondaryTriggerStart/Hold share. Vanilla's order:
+    // entity interact, then block use (block entity or place), then, if
+    // neither consumed the click, the held item's own use (equip armor, eat,
+    // raise a shield, draw a bow). Hold repeats it, paced by PLACE_REPEAT_DELAY.
     void DispatchUse();
+
+    // The item-use half of DispatchUse: picks the hand (mainhand unless it
+    // has nothing to do, then the offhand), gates eating on hunger, sends
+    // UseItem and, for a continuous use, starts tracking it in `usingState`.
+    void UseHeldItem();
+
+    // Ends a continuous use early: sends ReleaseUseItem and clears the state.
+    void StopUsingItem();
+
+    // Per-frame upkeep of `usingState`: ends the use when the button came up,
+    // the held item changed, or a timed use (food) ran its course.
+    void UpdateUsingItem(bool inputAllowed);
+
+    void PublishUsing();
+
+    // The item in `hand`, from the per-frame snapshot.
+    const ItemStack& HeldItem(Hand hand) const { return hand == Hand::Main ? mainhand : offhand; }
+
+    // A continuous use in progress — see UseHeldItem.
+    struct UsingState {
+        Hand hand;
+        int32_t itemId;
+        uint8_t hotbarSlot;
+        UseAction action;
+        int32_t useTicks; // 0 = until released.
+        std::chrono::steady_clock::time_point startTime;
+    };
+    std::optional<UsingState> usingState;
 
     // Resolves the camera's look ray against blocks/entities within reach
     // and updates targetedBlock/targetedEntityId (and GlobalState::

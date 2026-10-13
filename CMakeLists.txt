@@ -48,6 +48,10 @@ list(APPEND SOURCES
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# Mods resolve VC_EventHandler and the client's own classes from the exe:
+# on Windows this emits an import library, on Linux it adds -rdynamic.
+set_target_properties(${PROJECT_NAME} PROPERTIES ENABLE_EXPORTS ON)
+
 # 32-bit ImGui indices: GUIController::AddTextShadows appends vertices to
 # draw lists, which could overflow 16-bit indices on a busy frame.
 target_compile_definitions(${PROJECT_NAME} PRIVATE "ImDrawIdx=unsigned int")

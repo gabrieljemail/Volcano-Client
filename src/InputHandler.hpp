@@ -229,7 +229,7 @@ private:
     // thread) — writes straight into `state` with no locking needed now
     // that nothing else touches it from another thread. See InputState's
     // own comment for why that's safe.
-    static void KeyCallback(GLFWwindow* win, int key, int scancode, int action, int mods)
+    static void KeyCallback(GLFWwindow* win, int key, [[maybe_unused]] int scancode, int action, [[maybe_unused]] int mods)
     {
         auto* self = static_cast<InputHandler*>(glfwGetWindowUserPointer(win));
         if (!self || key < 0 || static_cast<size_t>(key) >= MAX_KEYS) return;

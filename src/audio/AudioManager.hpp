@@ -34,6 +34,8 @@ public:
     bool PlaySound(const std::string& registryName, float volume = 1.0f,
                    float pitch = 1.0f, bool loop = false);
     void StopSound(const std::string& registryName = {});
+    // Changes the gain of a sound that is already playing.
+    void SetSoundVolume(const std::string& registryName, float volume);
     bool IsSoundPlaying(const std::string& registryName) const;
 
 private:

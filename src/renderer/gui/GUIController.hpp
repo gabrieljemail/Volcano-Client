@@ -17,6 +17,8 @@
 
 namespace Volcano {
 
+namespace Engine { struct SceneView; }
+
 class GUIController {
 public:
     static void Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState,
@@ -24,7 +26,9 @@ public:
     static void Shutdown();
     static void NewFrame();
     static void Update(float deltaTime);
-    static void Render(VkCommandBuffer commandBuffer);
+    // `scene` (the frame's camera) is what world-space HUD elements such as
+    // nametags project through; null skips them.
+    static void Render(VkCommandBuffer commandBuffer, const Engine::SceneView* scene = nullptr);
     // Ends the current ImGui frame without drawing (for a skipped frame).
     static void DiscardFrame();
 
@@ -147,6 +151,7 @@ private:
     static StandaloneIcon craftingBackground;       // container/crafting_table.png
     static StandaloneIcon furnaceBackground;        // container/furnace.png
     static StandaloneIcon genericBackground;        // container/generic_54.png (chest-style grids)
+    static StandaloneIcon logoIcon;                 // resources/logo.png, drawn 128x128 on screens with Screen::showLogo
 
     // ImGui texture handle for a StandaloneIcon, or 0 if it failed to load.
     static ImTextureID TextureOf(const StandaloneIcon& icon);
@@ -171,6 +176,9 @@ private:
     // Draws the centered crosshair every HUD frame — plain or the
     // "looking at an entity" variant, per GlobalState::lookingAtEntity.
     static void RenderCrosshair();
+    // Debug nametags above every entity: type, name, position. Plain text, so
+    // AddTextShadows gives it the UI's shadow. Graphics.Nametags toggles it.
+    static void RenderNametags(const Engine::SceneView& scene);
     // Bar under the crosshair: block-break progress or attack recharge.
     static void RenderAttackIndicator(const ImVec2& center);
 

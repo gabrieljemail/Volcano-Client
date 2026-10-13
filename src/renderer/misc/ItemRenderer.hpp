@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
+#include <glm/glm.hpp>
 #include "../engine/ShaderLibrary.hpp"
 
 namespace Volcano {
@@ -45,6 +46,28 @@ public:
     // item has no 3D model, so the caller can fall back to its 2D texture.
     bool RenderGuiIcon(const std::string& itemName, IconImage& out);
 
+    // True if the item has a drawable 3D model.
+    bool HasModel(const std::string& itemName) const;
+
+    // The pipeline for drawing into the main render pass (dropped items, the
+    // held item). Built by the pass that uses it, once the render pass exists.
+    void CreateWorldPipeline(const Engine::ShaderLibrary& shaders);
+    void DestroyWorldPipeline();
+    // Builds the world pipeline on first use; passes call it each frame.
+    void EnsureWorldPipeline(const Engine::ShaderLibrary& shaders)
+    {
+        if (worldPipeline == VK_NULL_HANDLE) CreateWorldPipeline(shaders);
+    }
+
+    // Draws an item inside the main pass: `placement` * the model's display
+    // transform for `context` ("ground", "firstperson_righthand", ...), then
+    // `viewProj`. Needs viewport/scissor already set by the caller.
+    // `pivotRotation` turns the item in place about its own center, in
+    // `placement` space, after the display transform.
+    void RecordItem(VkCommandBuffer cmd, const std::string& itemName, const std::string& context,
+                    const glm::mat4& placement, const glm::mat4& viewProj,
+                    const glm::mat4& pivotRotation = glm::mat4(1.0f));
+
 private:
     struct GpuBuffer {
         VkBuffer buffer = VK_NULL_HANDLE;
@@ -64,6 +87,7 @@ private:
     VkRenderPass renderPass = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipeline worldPipeline = VK_NULL_HANDLE; // Same shaders, targeting the main render pass.
 
     // Shared depth buffer for the icon passes (each pass clears it).
     VkImage depthImage = VK_NULL_HANDLE;
@@ -74,7 +98,7 @@ private:
 
     void CreateRenderPass();
     void CreateDepthBuffer();
-    void CreatePipeline(const Engine::ShaderLibrary& shaders);
+    VkPipeline BuildPipeline(const Engine::ShaderLibrary& shaders, VkRenderPass pass);
     GpuBuffer UploadBuffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage);
     const GpuMesh* MeshFor(const std::string& itemName, const ItemModel& model);
 };

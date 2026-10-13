@@ -1,0 +1,910 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E6643105-FFCA-3E9B-A90E-1AE0F66A5259}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0.28000.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>VolcanoClient</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\Gabriel Jemail\Projects\Volcano Client\release\Debug\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">VolcanoClient.dir\Debug\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">VolcanoClient</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.exe</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\Gabriel Jemail\Projects\Volcano Client\release\Release\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">VolcanoClient.dir\Release\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">VolcanoClient</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.exe</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Users\Gabriel Jemail\Projects\Volcano Client\release\MinSizeRel\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">VolcanoClient.dir\MinSizeRel\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">VolcanoClient</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">.exe</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Users\Gabriel Jemail\Projects\Volcano Client\release\RelWithDebInfo\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">VolcanoClient.dir\RelWithDebInfo\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">VolcanoClient</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">.exe</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</GenerateManifest>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Apps/Libraries/GLFW/include" /external:I "C:/Apps/Libraries/ZLIB" /external:I "C:/Apps/Libraries/OpenSSL/include" /external:I "C:/Apps/Libraries/Asio/include" /external:I "C:/Apps/Libraries/STB" /external:I "C:/Apps/Libraries/ImGui" /external:I "C:/Apps/Libraries/ImGui/backends" /external:I "C:/Apps/Libraries/OpenAL/include" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" /external:I "C:/Apps/VulkanSDK/include" -Wextra -pthread -ffast-math -g -Og -march=native</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>Disabled</Optimization>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/VolcanoClient.dir/Debug//cmake_pch.pch</PrecompiledHeaderOutputFile>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>EnableAllWarnings</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;ImDrawIdx=unsigned int;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_VERBOSE_TRAP=0;_ENABLE_EXTENDED_ALIGNED_STORAGE;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;ImDrawIdx=unsigned int;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_VERBOSE_TRAP=0;_ENABLE_EXTENDED_ALIGNED_STORAGE;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;C:\Apps\Libraries\GLFW\include;C:\Apps\Libraries\ZLIB;C:\Apps\Libraries\OpenSSL\include;C:\Apps\Libraries\Asio\include;C:\Apps\Libraries\STB;C:\Apps\Libraries\ImGui;C:\Apps\Libraries\ImGui\backends;C:\Apps\Libraries\OpenAL\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vk-bootstrap\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vulkanmemory\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib;C:\Apps\VulkanSDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;C:\Apps\Libraries\GLFW\include;C:\Apps\Libraries\ZLIB;C:\Apps\Libraries\OpenSSL\include;C:\Apps\Libraries\Asio\include;C:\Apps\Libraries\STB;C:\Apps\Libraries\ImGui;C:\Apps\Libraries\ImGui\backends;C:\Apps\Libraries\OpenAL\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vk-bootstrap\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vulkanmemory\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib;C:\Apps\VulkanSDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message>	</Message>
+      <Command>setlocal
+C:\Apps\CMake\bin\cmake.exe -E copy_directory "C:/Users/Gabriel Jemail/Projects/Volcano Client/resources" "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/resources"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+setlocal
+C:\Apps\CMake\bin\cmake.exe -E copy_if_different C:/Apps/Libraries/OpenSSL/bin/libcrypto-4-x64.dll C:/Apps/Libraries/OpenSSL/bin/libssl-4-x64.dll "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/Debug"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>C:\Apps\VulkanSDK\Lib\vulkan-1.lib;C:\Apps\Libraries\OpenAL\libs\Win64\OpenAL32.lib;Dbghelp.lib;Winmm.lib;C:\Apps\Libraries\GLFW\lib-vc2026\glfw3.lib;C:\Apps\Libraries\ZLIB\zlib.lib;C:\Apps\Libraries\OpenSSL\lib\VC\x64\MD\libcrypto.lib;C:\Apps\Libraries\OpenSSL\lib\VC\x64\MD\libssl.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/Debug/VolcanoClient.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/Debug/VolcanoClient.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Apps/Libraries/GLFW/include" /external:I "C:/Apps/Libraries/ZLIB" /external:I "C:/Apps/Libraries/OpenSSL/include" /external:I "C:/Apps/Libraries/Asio/include" /external:I "C:/Apps/Libraries/STB" /external:I "C:/Apps/Libraries/ImGui" /external:I "C:/Apps/Libraries/ImGui/backends" /external:I "C:/Apps/Libraries/OpenAL/include" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" /external:I "C:/Apps/VulkanSDK/include" -Wextra -pthread -ffast-math</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/VolcanoClient.dir/Release//cmake_pch.pch</PrecompiledHeaderOutputFile>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>EnableAllWarnings</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;ImDrawIdx=unsigned int;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_VERBOSE_TRAP=0;_ENABLE_EXTENDED_ALIGNED_STORAGE;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;ImDrawIdx=unsigned int;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_VERBOSE_TRAP=0;_ENABLE_EXTENDED_ALIGNED_STORAGE;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;C:\Apps\Libraries\GLFW\include;C:\Apps\Libraries\ZLIB;C:\Apps\Libraries\OpenSSL\include;C:\Apps\Libraries\Asio\include;C:\Apps\Libraries\STB;C:\Apps\Libraries\ImGui;C:\Apps\Libraries\ImGui\backends;C:\Apps\Libraries\OpenAL\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vk-bootstrap\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vulkanmemory\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib;C:\Apps\VulkanSDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;C:\Apps\Libraries\GLFW\include;C:\Apps\Libraries\ZLIB;C:\Apps\Libraries\OpenSSL\include;C:\Apps\Libraries\Asio\include;C:\Apps\Libraries\STB;C:\Apps\Libraries\ImGui;C:\Apps\Libraries\ImGui\backends;C:\Apps\Libraries\OpenAL\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vk-bootstrap\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vulkanmemory\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib;C:\Apps\VulkanSDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message>	</Message>
+      <Command>setlocal
+C:\Apps\CMake\bin\cmake.exe -E copy_directory "C:/Users/Gabriel Jemail/Projects/Volcano Client/resources" "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/resources"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+setlocal
+C:\Apps\CMake\bin\cmake.exe -E copy_if_different C:/Apps/Libraries/OpenSSL/bin/libcrypto-4-x64.dll C:/Apps/Libraries/OpenSSL/bin/libssl-4-x64.dll "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/Release"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>C:\Apps\VulkanSDK\Lib\vulkan-1.lib;C:\Apps\Libraries\OpenAL\libs\Win64\OpenAL32.lib;Dbghelp.lib;Winmm.lib;C:\Apps\Libraries\GLFW\lib-vc2026\glfw3.lib;C:\Apps\Libraries\ZLIB\zlib.lib;C:\Apps\Libraries\OpenSSL\lib\VC\x64\MD\libcrypto.lib;C:\Apps\Libraries\OpenSSL\lib\VC\x64\MD\libssl.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/Release/VolcanoClient.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/Release/VolcanoClient.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Apps/Libraries/GLFW/include" /external:I "C:/Apps/Libraries/ZLIB" /external:I "C:/Apps/Libraries/OpenSSL/include" /external:I "C:/Apps/Libraries/Asio/include" /external:I "C:/Apps/Libraries/STB" /external:I "C:/Apps/Libraries/ImGui" /external:I "C:/Apps/Libraries/ImGui/backends" /external:I "C:/Apps/Libraries/OpenAL/include" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" /external:I "C:/Apps/VulkanSDK/include" -Wextra -pthread -ffast-math -g -Og -march=native</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MinSpace</Optimization>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/VolcanoClient.dir/MinSizeRel//cmake_pch.pch</PrecompiledHeaderOutputFile>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>EnableAllWarnings</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;ImDrawIdx=unsigned int;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_VERBOSE_TRAP=0;_ENABLE_EXTENDED_ALIGNED_STORAGE;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;ImDrawIdx=unsigned int;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_VERBOSE_TRAP=0;_ENABLE_EXTENDED_ALIGNED_STORAGE;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;C:\Apps\Libraries\GLFW\include;C:\Apps\Libraries\ZLIB;C:\Apps\Libraries\OpenSSL\include;C:\Apps\Libraries\Asio\include;C:\Apps\Libraries\STB;C:\Apps\Libraries\ImGui;C:\Apps\Libraries\ImGui\backends;C:\Apps\Libraries\OpenAL\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vk-bootstrap\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vulkanmemory\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib;C:\Apps\VulkanSDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;C:\Apps\Libraries\GLFW\include;C:\Apps\Libraries\ZLIB;C:\Apps\Libraries\OpenSSL\include;C:\Apps\Libraries\Asio\include;C:\Apps\Libraries\STB;C:\Apps\Libraries\ImGui;C:\Apps\Libraries\ImGui\backends;C:\Apps\Libraries\OpenAL\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vk-bootstrap\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vulkanmemory\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib;C:\Apps\VulkanSDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message>	</Message>
+      <Command>setlocal
+C:\Apps\CMake\bin\cmake.exe -E copy_directory "C:/Users/Gabriel Jemail/Projects/Volcano Client/resources" "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/resources"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+setlocal
+C:\Apps\CMake\bin\cmake.exe -E copy_if_different C:/Apps/Libraries/OpenSSL/bin/libcrypto-4-x64.dll C:/Apps/Libraries/OpenSSL/bin/libssl-4-x64.dll "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/MinSizeRel"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>C:\Apps\VulkanSDK\Lib\vulkan-1.lib;C:\Apps\Libraries\OpenAL\libs\Win64\OpenAL32.lib;Dbghelp.lib;Winmm.lib;C:\Apps\Libraries\GLFW\lib-vc2026\glfw3.lib;C:\Apps\Libraries\ZLIB\zlib.lib;C:\Apps\Libraries\OpenSSL\lib\VC\x64\MD\libcrypto.lib;C:\Apps\Libraries\OpenSSL\lib\VC\x64\MD\libssl.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/MinSizeRel/VolcanoClient.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/MinSizeRel/VolcanoClient.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Apps/Libraries/GLFW/include" /external:I "C:/Apps/Libraries/ZLIB" /external:I "C:/Apps/Libraries/OpenSSL/include" /external:I "C:/Apps/Libraries/Asio/include" /external:I "C:/Apps/Libraries/STB" /external:I "C:/Apps/Libraries/ImGui" /external:I "C:/Apps/Libraries/ImGui/backends" /external:I "C:/Apps/Libraries/OpenAL/include" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vk-bootstrap/src" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib/vulkanmemory/include" /external:I "C:/Users/Gabriel Jemail/Projects/Volcano Client/lib" /external:I "C:/Apps/VulkanSDK/include" -Wextra -pthread -ffast-math -g -Og -march=native</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/VolcanoClient.dir/RelWithDebInfo//cmake_pch.pch</PrecompiledHeaderOutputFile>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <WarningLevel>EnableAllWarnings</WarningLevel>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;ImDrawIdx=unsigned int;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_VERBOSE_TRAP=0;_ENABLE_EXTENDED_ALIGNED_STORAGE;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;ImDrawIdx=unsigned int;_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH;_HAS_VERBOSE_TRAP=0;_ENABLE_EXTENDED_ALIGNED_STORAGE;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;C:\Apps\Libraries\GLFW\include;C:\Apps\Libraries\ZLIB;C:\Apps\Libraries\OpenSSL\include;C:\Apps\Libraries\Asio\include;C:\Apps\Libraries\STB;C:\Apps\Libraries\ImGui;C:\Apps\Libraries\ImGui\backends;C:\Apps\Libraries\OpenAL\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vk-bootstrap\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vulkanmemory\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib;C:\Apps\VulkanSDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\Gabriel Jemail\Projects\Volcano Client\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity;C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui;C:\Apps\Libraries\GLFW\include;C:\Apps\Libraries\ZLIB;C:\Apps\Libraries\OpenSSL\include;C:\Apps\Libraries\Asio\include;C:\Apps\Libraries\STB;C:\Apps\Libraries\ImGui;C:\Apps\Libraries\ImGui\backends;C:\Apps\Libraries\OpenAL\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vk-bootstrap\src;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib\vulkanmemory\include;C:\Users\Gabriel Jemail\Projects\Volcano Client\lib;C:\Apps\VulkanSDK\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message>	</Message>
+      <Command>setlocal
+C:\Apps\CMake\bin\cmake.exe -E copy_directory "C:/Users/Gabriel Jemail/Projects/Volcano Client/resources" "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/resources"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+setlocal
+C:\Apps\CMake\bin\cmake.exe -E copy_if_different C:/Apps/Libraries/OpenSSL/bin/libcrypto-4-x64.dll C:/Apps/Libraries/OpenSSL/bin/libssl-4-x64.dll "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/RelWithDebInfo"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>C:\Apps\VulkanSDK\Lib\vulkan-1.lib;C:\Apps\Libraries\OpenAL\libs\Win64\OpenAL32.lib;Dbghelp.lib;Winmm.lib;C:\Apps\Libraries\GLFW\lib-vc2026\glfw3.lib;C:\Apps\Libraries\ZLIB\zlib.lib;C:\Apps\Libraries\OpenSSL\lib\VC\x64\MD\libcrypto.lib;C:\Apps\Libraries\OpenSSL\lib\VC\x64\MD\libssl.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/RelWithDebInfo/VolcanoClient.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>C:/Users/Gabriel Jemail/Projects/Volcano Client/release/RelWithDebInfo/VolcanoClient.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\CMakeLists.txt">
+      <UseUtf8Encoding>Always</UseUtf8Encoding>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule C:/Users/Gabriel Jemail/Projects/Volcano Client/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
+C:\Apps\CMake\bin\cmake.exe "-SC:/Users/Gabriel Jemail/Projects/Volcano Client" "-BC:/Users/Gabriel Jemail/Projects/Volcano Client/release" --check-stamp-file "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXCompiler.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXCompilerABI.cpp;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCommonLanguageInclude.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCompilerIdDetection.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCXXCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerABI.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerId.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerSupport.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineRCCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineSystem.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeFindBinUtils.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeGenericSystem.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeInitializeConfigs.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeLanguageInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseImplicitIncludeInfo.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseImplicitLinkInfo.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseLibraryArchitecture.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeRCCompiler.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeRCInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystem.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystemSpecificInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystemSpecificInitialize.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestCXXCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestCompilerCommon.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestRCCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ADSP-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ARMCC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ARMClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\AppleClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Borland-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Clang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Clang-DetermineCompilerInternal.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Compaq-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Cray-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\CrayClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Diab-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Embarcadero-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Fujitsu-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\FujitsuClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\GHS-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\GNU-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\HP-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IAR-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IBMCPP-CXX-DetermineVersionInternal.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IBMClang-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Intel-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IntelLLVM-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\LCC-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\NVHPC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\NVIDIA-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\OpenWatcom-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\OrangeC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PGI-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PathScale-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PellesC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Renesas-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\SCO-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\SunPro-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\TI-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\TIClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Tasking-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\VisualAge-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Watcom-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\XL-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\XLClang-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\zOS-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CompilerId\VS-10.vcxproj.in;C:\Apps\CMake\share\cmake-4.4\Modules\FindPackageHandleStandardArgs.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\FindPackageMessage.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\FindVulkan.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeDetermineLinkerId.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeInspectCXXLinker.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\FeatureTesting.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Linker\MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Linker\MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-Determine-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-Initialize.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\WindowsPaths.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeCXXCompiler.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeRCCompiler.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeSystem.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\cmake.verify_globs;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule C:/Users/Gabriel Jemail/Projects/Volcano Client/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
+C:\Apps\CMake\bin\cmake.exe "-SC:/Users/Gabriel Jemail/Projects/Volcano Client" "-BC:/Users/Gabriel Jemail/Projects/Volcano Client/release" --check-stamp-file "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXCompiler.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXCompilerABI.cpp;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCommonLanguageInclude.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCompilerIdDetection.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCXXCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerABI.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerId.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerSupport.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineRCCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineSystem.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeFindBinUtils.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeGenericSystem.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeInitializeConfigs.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeLanguageInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseImplicitIncludeInfo.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseImplicitLinkInfo.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseLibraryArchitecture.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeRCCompiler.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeRCInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystem.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystemSpecificInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystemSpecificInitialize.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestCXXCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestCompilerCommon.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestRCCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ADSP-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ARMCC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ARMClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\AppleClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Borland-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Clang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Clang-DetermineCompilerInternal.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Compaq-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Cray-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\CrayClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Diab-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Embarcadero-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Fujitsu-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\FujitsuClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\GHS-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\GNU-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\HP-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IAR-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IBMCPP-CXX-DetermineVersionInternal.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IBMClang-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Intel-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IntelLLVM-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\LCC-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\NVHPC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\NVIDIA-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\OpenWatcom-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\OrangeC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PGI-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PathScale-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PellesC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Renesas-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\SCO-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\SunPro-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\TI-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\TIClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Tasking-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\VisualAge-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Watcom-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\XL-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\XLClang-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\zOS-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CompilerId\VS-10.vcxproj.in;C:\Apps\CMake\share\cmake-4.4\Modules\FindPackageHandleStandardArgs.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\FindPackageMessage.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\FindVulkan.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeDetermineLinkerId.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeInspectCXXLinker.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\FeatureTesting.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Linker\MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Linker\MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-Determine-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-Initialize.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\WindowsPaths.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeCXXCompiler.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeRCCompiler.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeSystem.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\cmake.verify_globs;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule C:/Users/Gabriel Jemail/Projects/Volcano Client/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
+C:\Apps\CMake\bin\cmake.exe "-SC:/Users/Gabriel Jemail/Projects/Volcano Client" "-BC:/Users/Gabriel Jemail/Projects/Volcano Client/release" --check-stamp-file "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXCompiler.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXCompilerABI.cpp;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCommonLanguageInclude.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCompilerIdDetection.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCXXCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerABI.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerId.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerSupport.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineRCCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineSystem.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeFindBinUtils.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeGenericSystem.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeInitializeConfigs.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeLanguageInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseImplicitIncludeInfo.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseImplicitLinkInfo.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseLibraryArchitecture.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeRCCompiler.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeRCInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystem.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystemSpecificInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystemSpecificInitialize.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestCXXCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestCompilerCommon.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestRCCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ADSP-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ARMCC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ARMClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\AppleClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Borland-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Clang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Clang-DetermineCompilerInternal.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Compaq-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Cray-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\CrayClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Diab-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Embarcadero-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Fujitsu-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\FujitsuClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\GHS-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\GNU-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\HP-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IAR-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IBMCPP-CXX-DetermineVersionInternal.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IBMClang-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Intel-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IntelLLVM-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\LCC-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\NVHPC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\NVIDIA-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\OpenWatcom-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\OrangeC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PGI-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PathScale-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PellesC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Renesas-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\SCO-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\SunPro-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\TI-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\TIClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Tasking-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\VisualAge-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Watcom-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\XL-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\XLClang-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\zOS-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CompilerId\VS-10.vcxproj.in;C:\Apps\CMake\share\cmake-4.4\Modules\FindPackageHandleStandardArgs.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\FindPackageMessage.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\FindVulkan.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeDetermineLinkerId.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeInspectCXXLinker.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\FeatureTesting.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Linker\MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Linker\MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-Determine-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-Initialize.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\WindowsPaths.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeCXXCompiler.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeRCCompiler.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeSystem.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\cmake.verify_globs;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule C:/Users/Gabriel Jemail/Projects/Volcano Client/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
+C:\Apps\CMake\bin\cmake.exe "-SC:/Users/Gabriel Jemail/Projects/Volcano Client" "-BC:/Users/Gabriel Jemail/Projects/Volcano Client/release" --check-stamp-file "C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXCompiler.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXCompilerABI.cpp;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCXXInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCommonLanguageInclude.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeCompilerIdDetection.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCXXCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerABI.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerId.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineCompilerSupport.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineRCCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeDetermineSystem.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeFindBinUtils.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeGenericSystem.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeInitializeConfigs.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeLanguageInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseImplicitIncludeInfo.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseImplicitLinkInfo.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeParseLibraryArchitecture.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeRCCompiler.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeRCInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystem.cmake.in;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystemSpecificInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeSystemSpecificInitialize.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestCXXCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestCompilerCommon.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CMakeTestRCCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ADSP-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ARMCC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\ARMClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\AppleClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Borland-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\CMakeCommonCompilerMacros.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Clang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Clang-DetermineCompilerInternal.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Compaq-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Cray-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\CrayClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Diab-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Embarcadero-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Fujitsu-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\FujitsuClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\GHS-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\GNU-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\HP-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IAR-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IBMCPP-CXX-DetermineVersionInternal.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IBMClang-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Intel-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\IntelLLVM-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\LCC-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\NVHPC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\NVIDIA-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\OpenWatcom-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\OrangeC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PGI-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PathScale-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\PellesC-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Renesas-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\SCO-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\SunPro-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\TI-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\TIClang-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Tasking-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\VisualAge-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\Watcom-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\XL-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\XLClang-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Compiler\zOS-CXX-DetermineCompiler.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\CompilerId\VS-10.vcxproj.in;C:\Apps\CMake\share\cmake-4.4\Modules\FindPackageHandleStandardArgs.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\FindPackageMessage.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\FindVulkan.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeCXXLinkerInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeCommonLinkerInformation.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeDetermineLinkerId.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\CMakeInspectCXXLinker.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Internal\FeatureTesting.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Linker\MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Linker\MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Linker\Windows-MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Linker\Windows-MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-Determine-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-Initialize.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-MSVC-CXX.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows-MSVC.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\Windows.cmake;C:\Apps\CMake\share\cmake-4.4\Modules\Platform\WindowsPaths.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeCXXCompiler.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeRCCompiler.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\4.4.3\CMakeSystem.cmake;C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\cmake.verify_globs;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\VolcanoClient.dir\cmake_pch.cxx">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/VolcanoClient.dir/Debug//cmake_pch.pch</PrecompiledHeaderOutputFile>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/VolcanoClient.dir/Release//cmake_pch.pch</PrecompiledHeaderOutputFile>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/VolcanoClient.dir/MinSizeRel//cmake_pch.pch</PrecompiledHeaderOutputFile>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeaderFile Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/VolcanoClient.dir/RelWithDebInfo//cmake_pch.pch</PrecompiledHeaderOutputFile>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\Config.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\CrashReporter.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\Logger.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\PlayerAttributes.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\SystemInfo.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\TickLoop.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\TickThread.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\VolcanoClient.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\audio\AudioManager.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\interaction\InteractionManager.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\inventory\ItemRegistry.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network\Connection.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network\LocalServer.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network\MSAuth.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network\NBT.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network\NetworkClient.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network\NetworkThread.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\network\TextComponent.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\platform\OSLinux.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\platform\OSWindows.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\FullscreenExclusive.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\RenderThread.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\Screenshot.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\SplashScreen.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\TextureManager.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\VulkanInit.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\engine\RenderEngine.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\engine\ShaderLibrary.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\engine\passes\HiZBuildPass.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\engine\passes\NonCubicPass.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\engine\passes\ShaderPackPass.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\engine\passes\SkyboxPass.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\engine\passes\TerrainPass.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\engine\vulkan\VulkanRenderEngine.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity\EntityRenderer.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\entity\models\EntityRegistry.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui\ControlRenderer.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui\GUIController.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui\ImGuiVulkan.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui\OverlayController.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui\models\Chat.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui\screens\LoadingScreen.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui\screens\MainMenuScreen.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui\screens\PauseScreen.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\gui\screens\SettingsScreen.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\misc\NonCubicMesher.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\misc\SelectionRenderer.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\models\SlabBuffer.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain\ChunkMesher.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain\ChunkParser.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain\MeshingThread.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain\OcclusionSnapshot.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain\VisibleChunkController.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\src\renderer\terrain\models\BlockRegistry.cpp">
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Apps\Libraries\vk-bootstrap\src\VkBootstrap.cpp">
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Apps\Libraries\ImGui\imgui.cpp">
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Apps\Libraries\ImGui\imgui_demo.cpp">
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Apps\Libraries\ImGui\imgui_draw.cpp">
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Apps\Libraries\ImGui\imgui_tables.cpp">
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Apps\Libraries\ImGui\imgui_widgets.cpp">
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Apps\Libraries\ImGui\backends\imgui_impl_glfw.cpp">
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClCompile Include="C:\Apps\Libraries\ImGui\backends\imgui_impl_vulkan.cpp">
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Debug/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/Release/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/MinSizeRel/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">%(AdditionalOptions) -w</AdditionalOptions>
+      <ForcedIncludeFiles Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:/Users/Gabriel Jemail/Projects/Volcano Client/release/CMakeFiles/VolcanoClient.dir/RelWithDebInfo/cmake_pch.hxx;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+    </ClCompile>
+    <ClInclude Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\VolcanoClient.dir\Debug\cmake_pch.hxx" />
+    <ClInclude Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\VolcanoClient.dir\Release\cmake_pch.hxx" />
+    <ClInclude Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\VolcanoClient.dir\MinSizeRel\cmake_pch.hxx" />
+    <ClInclude Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\release\CMakeFiles\VolcanoClient.dir\RelWithDebInfo\cmake_pch.hxx" />
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="C:\Users\Gabriel Jemail\Projects\Volcano Client\release\ZERO_CHECK.vcxproj">
+      <Project>{CDFD4130-5765-33BA-9BCF-6122B400EEE7}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>
