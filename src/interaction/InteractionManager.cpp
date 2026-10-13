@@ -196,6 +196,12 @@ bool IsTargetable(uint16_t entityType)
     return info->entityKind != "projectile" && info->name != "item" && info->name != "experience_orb";
 }
 
+bool IsSword(const ItemRegistry::ItemTypeInfo* item)
+{
+    return item != nullptr && item->name.size() > 6
+        && item->name.compare(item->name.size() - 6, 6, "_sword") == 0;
+}
+
 // One entity-shaped raycast hit.
 struct EntityHit { uint32_t entityId; float distance; };
 
@@ -441,6 +447,10 @@ void InteractionManager::BeginMining(const TargetedBlock& target)
     if (!primaryPressedThisFrame && now - lastBreakTime < BREAK_REPEAT_DELAY) return;
 
     bool instabuild = state->canInstabuild.load(std::memory_order_relaxed);
+
+    // Like vanilla's creative mode: a sword can't break blocks.
+    if (instabuild && IsSword(ItemRegistry::Lookup(mainhand.itemId))) return;
+
     Block block = state->world->GetBlock(target.position.x, target.position.y, target.position.z);
     int32_t breakTicks = BreakTicksFor(block);
 
@@ -601,10 +611,7 @@ AttackType InteractionManager::ClassifyAttack(float strength, const TickLoop::Mo
     if (fullStrength && movement.grounded)
     {
         float speedLimit = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1)) * 2.5f;
-        const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(mainhand.itemId);
-        bool holdingSword = item != nullptr && item->name.size() > 6
-            && item->name.compare(item->name.size() - 6, 6, "_sword") == 0;
-        if (holdingSword && movement.horizontalSpeed < speedLimit) return AttackType::Sweep;
+        if (IsSword(ItemRegistry::Lookup(mainhand.itemId)) &&movement.horizontalSpeed < speedLimit) return AttackType::Sweep;
     }
 
     return AttackType::Normal;
@@ -681,6 +688,15 @@ void InteractionManager::DispatchUse()
         if (interactsWithBlock && !(state->tickLoop->IsSneaking() && !mainhand.IsEmpty()))
         {
             BlockEntityInteractEvent{ targetedBlock->position, targetedBlock->face, hand }.Dispatch(state);
+            return;
+        }
+
+        // Usable items (food, drinks, shields, armor) win over a plain
+        // block: no placement click is sent, so you can eat facing grass.
+        ItemBehavior useBehavior = ItemBehaviorFor(ItemRegistry::Lookup(HeldItem(offhandInteractible ? Hand::Off : Hand::Main).itemId));
+        if (useBehavior.action != UseAction::None || useBehavior.armorSlot >= 0)
+        {
+            UseHeldItem();
             return;
         }
 

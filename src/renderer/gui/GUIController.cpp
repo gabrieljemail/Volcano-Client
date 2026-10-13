@@ -29,6 +29,7 @@
 #include "platform/OS.hpp"
 #include "renderer/VulkanInit.hpp"
 #include "renderer/terrain/ChunkMesher.hpp"
+#include "renderer/terrain/OcclusionSnapshot.hpp"
 #include "renderer/misc/NonCubicMesher.hpp"
 #include "renderer/misc/ItemModel.hpp"
 #include "renderer/misc/ItemRenderer.hpp"
@@ -699,6 +700,8 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
     constexpr float HEAD_MARGIN = 0.3f; // Blocks above the bounding box.
     constexpr float SCREEN_MARGIN = 1.3f; // NDC extent kept, so wide tags near an edge still draw.
     constexpr uint64_t PRUNE_INTERVAL = 120;
+    constexpr size_t MAX_TAGS = 24; // Nearest only; every tag is two lines of glyph quads plus shadows.
+    constexpr float DETAIL_DISTANCE_SQUARED = 24.0f * 24.0f; // The coordinate line is dropped beyond this.
 
     // Text and its measured width per entity; rebuilt only when the
     // reported position (or the font size) changes, not every frame.
@@ -706,21 +709,32 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
     {
         glm::vec3 shownPosition{0.0f};
         bool built = false;
+        bool detailed = false;
         decltype(Entity::type) type{};
         float fontSize = 0.0f;
         std::string lines[2];
         float widths[2]{};
         uint64_t lastUsed = 0;
     };
+    struct Candidate
+    {
+        float distanceSquared;
+        const Entity* entity;
+        const std::string* name;
+        ImVec2 screen;
+    };
     struct Visible
     {
         ImVec2 screen;
         const TagText* text;
+        int lineCount;
     };
     static std::unordered_map<uint32_t, TagText> cache;
+    static std::vector<Candidate> candidates;
     static std::vector<Visible> visible;
     static uint64_t frame = 0;
     frame++;
+    candidates.clear();
     visible.clear();
 
     glm::mat4 viewProj = scene.proj * scene.view;
@@ -729,15 +743,17 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
     auto now = std::chrono::steady_clock::now();
     int32_t localId = state->localEntityId.load();
 
-    auto consider = [&](const Entity& entity, const std::string& name)
+    // Cheap tests only; text is built afterward for the nearest few.
+    auto consider = [&](const Entity& entity, const std::string* name)
     {
         if (static_cast<int32_t>(entity.id) == localId || !entity.visible) return;
 
         glm::vec3 offset = entity.position - scene.cameraPosition;
-        if (glm::dot(offset, offset) > MAX_DISTANCE_SQUARED) return;
+        float distanceSquared = glm::dot(offset, offset);
+        if (distanceSquared > MAX_DISTANCE_SQUARED) return;
 
-        glm::vec3 anchor = entity.InterpolatedPosition(now) + glm::vec3(0.0f, entity.boundingBox.y + HEAD_MARGIN, 0.0f);
-        glm::vec4 clip = viewProj * glm::vec4(anchor, 1.0f);
+        glm::vec3 feet = entity.InterpolatedPosition(now);
+        glm::vec4 clip = viewProj * glm::vec4(feet + glm::vec3(0.0f, entity.boundingBox.y + HEAD_MARGIN, 0.0f), 1.0f);
         if (clip.w <= 0.0f) return; // Behind the camera.
 
         // The projection already carries Vulkan's flipped Y, so NDC y grows downward.
@@ -745,46 +761,70 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
         float ndcY = clip.y / clip.w;
         if (std::abs(ndcX) > SCREEN_MARGIN || std::abs(ndcY) > SCREEN_MARGIN) return;
 
-        TagText& text = cache[entity.id];
-        text.lastUsed = frame;
-        if (!text.built || text.type != entity.type || text.shownPosition != entity.position || text.fontSize != fontSize)
-        {
-            bool typeChanged = !text.built || text.type != entity.type;
-            text.built = true;
-            text.shownPosition = entity.position;
-            text.fontSize = fontSize;
-            text.type = entity.type;
+        // Hi-Z: tags of non-players behind terrain are skipped, like the models.
+        if (name == nullptr && occlusionSnapshot.IsEntityOccluded(feet, entity.boundingBox.x, entity.boundingBox.y)) return;
 
-            if (typeChanged)
-            {
-                const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity.type);
-                text.lines[0] = info != nullptr ? info->name : "unknown";
-                if (!name.empty()) text.lines[0] += " '" + name + "'";
-            }
-
-            char buffer[96];
-            int length = std::snprintf(buffer, sizeof(buffer), "%.2f, %.2f, %.2f", entity.position.x, entity.position.y, entity.position.z);
-            text.lines[1].assign(buffer, static_cast<size_t>(std::max(length, 0)));
-
-            for (int i = 0; i < 2; i++) text.widths[i] = ImGui::CalcTextSize(text.lines[i].c_str()).x;
-        }
-
-        visible.push_back({ ImVec2((ndcX * 0.5f + 0.5f) * display.x, (ndcY * 0.5f + 0.5f) * display.y), &text });
+        candidates.push_back({ distanceSquared, &entity, name,
+            ImVec2((ndcX * 0.5f + 0.5f) * display.x, (ndcY * 0.5f + 0.5f) * display.y) });
     };
 
     {
         std::lock_guard<std::mutex> lock(state->entitiesMutex);
-        for (const auto& [id, entity] : state->entities) consider(entity, std::string());
-        for (const auto& [id, player] : state->playerEntities) consider(player, player.username);
+        for (const auto& [id, entity] : state->entities) consider(entity, nullptr);
+        for (const auto& [id, player] : state->playerEntities) consider(player, &player.username);
+
+        if (candidates.size() > MAX_TAGS)
+        {
+            std::nth_element(candidates.begin(), candidates.begin() + MAX_TAGS, candidates.end(),
+                [](const Candidate& a, const Candidate& b) { return a.distanceSquared < b.distanceSquared; });
+            candidates.resize(MAX_TAGS);
+        }
+
+        for (const Candidate& candidate : candidates)
+        {
+            const Entity& entity = *candidate.entity;
+            bool detailed = candidate.distanceSquared <= DETAIL_DISTANCE_SQUARED;
+
+            TagText& text = cache[entity.id];
+            text.lastUsed = frame;
+            if (!text.built || text.type != entity.type || text.detailed != detailed
+                || (detailed && text.shownPosition != entity.position) || text.fontSize != fontSize)
+            {
+                bool typeChanged = !text.built || text.type != entity.type;
+                text.built = true;
+                text.detailed = detailed;
+                text.shownPosition = entity.position;
+                text.fontSize = fontSize;
+                text.type = entity.type;
+
+                if (typeChanged)
+                {
+                    const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity.type);
+                    text.lines[0] = info != nullptr ? info->name : "unknown";
+                    if (candidate.name != nullptr && !candidate.name->empty()) text.lines[0] += " '" + *candidate.name + "'";
+                    text.widths[0] = ImGui::CalcTextSize(text.lines[0].c_str()).x;
+                }
+
+                if (detailed)
+                {
+                    char buffer[96];
+                    int length = std::snprintf(buffer, sizeof(buffer), "%.2f, %.2f, %.2f", entity.position.x, entity.position.y, entity.position.z);
+                    text.lines[1].assign(buffer, static_cast<size_t>(std::max(length, 0)));
+                    text.widths[1] = ImGui::CalcTextSize(text.lines[1].c_str()).x;
+                }
+            }
+
+            visible.push_back({ candidate.screen, &text, detailed ? 2 : 1 });
+        }
     }
 
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
     for (const Visible& tag : visible)
     {
-        for (int i = 0; i < 2; i++)
+        for (int i = 0; i < tag.lineCount; i++)
         {
             const std::string& line = tag.text->lines[i];
-            float lineY = tag.screen.y - fontSize * static_cast<float>(2 - i);
+            float lineY = tag.screen.y - fontSize * static_cast<float>(tag.lineCount - i);
             ImVec2 position(std::floor(tag.screen.x - tag.text->widths[i] * 0.5f), std::floor(lineY));
             drawList->AddText(nullptr, 0.0f, position, IM_COL32_WHITE, line.data(), line.data() + line.size());
         }

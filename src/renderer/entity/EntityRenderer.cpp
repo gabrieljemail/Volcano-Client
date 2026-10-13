@@ -20,6 +20,7 @@
 #include "models/PigModel.hpp"
 #include "models/CowModel.hpp"
 #include "../terrain/models/BlockRegistry.hpp"
+#include "../terrain/OcclusionSnapshot.hpp"
 #include "../VulkanInit.hpp"
 #include "../../Helpers.hpp"
 #include "../../Logger.hpp"
@@ -1301,7 +1302,8 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
         state->ForEachEntity([&](uint32_t id, const Entity& entity)
         {
             if (!entity.visible) return;
-            if (const PlayerEntity* player = state->FindPlayerEntity(id); player && player->invisible) return;
+            const PlayerEntity* player = state->FindPlayerEntity(id);
+            if (player && player->invisible) return;
 
             // Dropped items with a 3D model are drawn by ItemPass instead.
             if (state->itemRenderer != nullptr && entity.itemId != 0)
@@ -1316,6 +1318,14 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             float radius = glm::length(glm::vec3(halfWidth, halfHeight, halfWidth));
 
             if (!SphereInFrustum(frustumPlanes, center, radius)) return;
+
+            // Hi-Z: skip non-players hidden behind terrain. Players stay
+            // drawn so they can be seen through walls.
+            if (player == nullptr
+                && occlusionSnapshot.IsEntityOccluded(entity.InterpolatedPosition(now), entity.boundingBox.x, entity.boundingBox.y))
+            {
+                return;
+            }
 
             float distanceSq = glm::dot(center - cameraPosition, center - cameraPosition);
             visible.emplace_back(distanceSq, &entity);

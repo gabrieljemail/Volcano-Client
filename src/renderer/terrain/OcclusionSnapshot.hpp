@@ -35,6 +35,16 @@ struct OcclusionSnapshot {
     // geometry. Anything uncertain (no snapshot, straddling the near plane,
     // off-screen in the snapshot's view) returns false, i.e. stays visible.
     bool IsOccluded(const glm::vec3& min, const glm::vec3& max) const;
+
+    // Same test for a moving thing: the box around `feet` (bottom center),
+    // padded so the pyramid's lag doesn't clip an entity walking out from
+    // behind cover.
+    bool IsEntityOccluded(const glm::vec3& feet, float width, float height) const
+    {
+        constexpr float PAD = 0.3f;
+        float half = width * 0.5f + PAD;
+        return IsOccluded(feet + glm::vec3(-half, -PAD, -half), feet + glm::vec3(half, height + PAD, half));
+    }
 };
 
 // Single instance, owned by the render thread — see the comment above.

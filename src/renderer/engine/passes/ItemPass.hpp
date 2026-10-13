@@ -9,6 +9,7 @@
 #include "../RenderPass.hpp"
 #include "../RenderEngine.hpp"
 #include "../../misc/ItemRenderer.hpp"
+#include "../../terrain/OcclusionSnapshot.hpp"
 #include "../../../GlobalState.hpp"
 #include "../../../inventory/ItemRegistry.hpp"
 
@@ -51,6 +52,7 @@ public:
                 if (entity.itemId == 0 || !entity.visible) return;
                 glm::vec3 position = entity.InterpolatedPosition(now);
                 if (glm::distance(position, frame.scene->cameraPosition) > MAX_DISTANCE) return;
+                if (occlusionSnapshot.IsEntityOccluded(position, entity.boundingBox.x, entity.boundingBox.y)) return;
                 drops.push_back({ position, entity.itemId, id });
             });
         }
