@@ -20,7 +20,7 @@ void HiZBuildPass::Create(const ShaderLibrary& shaders)
 
     // Created directly through VMA (not CreateBuffer) since these need
     // host-READ-friendly memory (RANDOM access, i.e. cached), and so they
-    // stay out of VulkanInit's allocatedBuffers sweep - freed in Destroy().
+    // stay out of VulkanInit's allocatedBuffers sweep
     for (Slot& slot : slots)
     {
         VkBufferCreateInfo bufferInfo{};
@@ -76,7 +76,7 @@ void HiZBuildPass::BeginFrame(uint32_t frameIndex)
     slot.pending = false;
 
     // This slot's fence was just waited on by BeginFrame, so the GPU copy
-    // into it is finished - invalidate in case the memory isn't coherent.
+    // into it is finished
     vmaInvalidateAllocation(vmaAllocator, slot.allocation, 0, VK_WHOLE_SIZE);
 
     const size_t texelCount = static_cast<size_t>(slot.width) * slot.height;
@@ -126,9 +126,7 @@ void HiZBuildPass::Record(VkCommandBuffer cmd, uint32_t frameIndex, const glm::m
     // own (only one for VK_SUBPASS_EXTERNAL -> 0, entering), so this
     // barrier is the ONLY thing synchronizing the compute read below
     // against the depth write. Missing either stage here means an
-    // unsynchronized read on whichever GPUs use that one - this was
-    // LATE-only, which is why the pyramid read back as a constant 0
-    // (racing ahead of the real writes) instead of real depth values.
+    // unsynchronized read on whichever GPUs use that one
     vkCmdPipelineBarrier(cmd,
         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,

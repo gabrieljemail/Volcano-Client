@@ -17,14 +17,7 @@ namespace Volcano {
 // One raw TCP connection to a Minecraft server: connect, and read/write
 // whole packets framed the way the protocol expects (VarInt length prefix
 // around a VarInt packet ID + payload bytes). No protocol/state-machine
-// knowledge lives here - see NetworkClient for that.
-//
-// Reads/writes themselves are still synchronous (see ReadPacket/SendPacket)
-// - the only asynchronous piece is WaitForReadable below, a pure readiness
-// check used to bound how long the Play loop can block with nothing to
-// read. A full async_read/async_write rewrite (posting the tick timer
-// through the same io_context instead of polling readiness) is a separate,
-// later step - see the tick-loop plan's "blocker" section.
+// knowledge lives here
 class Connection {
 public:
     explicit Connection(asio::io_context& ioContext) : socket(ioContext) {}
@@ -55,11 +48,7 @@ public:
     // cancels outstanding I/O on that handle regardless of which thread
     // issued it. A chat message sent from the render thread could therefore
     // race the readability timer expiring on the network thread, and the
-    // worst case was not a lost message but a PARTIAL write - a half-written
-    // frame desyncs the packet stream permanently for the rest of the
-    // session. Widening the mutex to cover reads would have fixed it only by
-    // blocking every send for up to the full WaitForReadable timeout; the
-    // queue below fixes it without that.
+    // worst case was not a lost message but a PARTIAL write
     void SendPacket(int32_t packetId, const std::vector<uint8_t>& payload);
 
     // Thread-safe way to send from any thread other than the network one
@@ -75,16 +64,7 @@ public:
 
     // NETWORK THREAD ONLY. Writes out everything QueuePacket() has
     // accumulated since the last call, in order. Called once per RunPlayLoop
-    // iteration. Throws whatever SendPacket throws (a dead socket) - the
-    // same failure the loop's own sends would hit on that iteration anyway.
-    //
-    // Order is load-bearing for TickThread's traffic: each tick's movement
-    // packet has to reach the server ahead of that same tick's
-    // PlayC2S::ClientTickEnd, since that marker is what delimits one client
-    // tick from the next server-side. A backlog is fine - several
-    // fully-delimited ticks flushed back-to-back is exactly what a real
-    // client's stream looks like when its own sends bunch up - but
-    // reordering or dropping one half of a pair is not.
+    // iteration. Throws whatever SendPacket throws (a dead socket)
     void FlushOutbound();
 
     // Blocks for one full packet. Returns its packet ID; `outPayload` is set
@@ -122,7 +102,7 @@ private:
 
     // Packets pushed by other threads (QueuePacket) and drained by the
     // network thread (FlushOutbound). The mutex guards only this vector -
-    // never a socket operation - so a cross-thread send never waits on I/O.
+    // never a socket operation
     std::mutex outboundMutex;
     std::vector<std::pair<int32_t, std::vector<uint8_t>>> outbound;
 
@@ -133,24 +113,12 @@ private:
     int32_t ReadPacketCompressed(std::vector<uint8_t>& outPayload);
 
     // Appends one line ("C2S"/"S2C", packet id, payload hex) to
-    // settings.json's Network.LogPackets file - added to chase down a server
-    // kicking this client for an invalid packet ("write: An established
-    // connection was aborted..."), with no indication which packet or field
-    // was malformed. Checked once per Connection (packetLoggingChecked) since
-    // this runs on every single packet in/out; empty (the default) means no
-    // logging and this becomes a single bool check per call.
+    // settings.json's Network.LogPackets file
     void LogPacket(const char* direction, int32_t packetId, const uint8_t* data, size_t size);
     bool packetLoggingChecked = false;
     std::optional<std::ofstream> packetLogFile;
 
-    // t=0 for every line's leading timestamp - set once, on this
-    // Connection's first logged packet (the Handshake), so gaps between
-    // consecutive lines are directly readable without doing date-time math.
-    // Added specifically to measure real elapsed time between this client's
-    // own movement-packet sends, to confirm/rule out a receivedPositionThisTick-
-    // style server-side tick-stall collision (see RunPlayLoop's comment on
-    // the worldReady edge trigger) rather than guessing from send order
-    // alone.
+    // t=0 for every line's leading timestamp
     std::chrono::steady_clock::time_point packetLogStartTime;
 };
 

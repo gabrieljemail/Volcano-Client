@@ -44,13 +44,7 @@ namespace {
 // that instead of introducing a second, possibly-inconsistent constant.
 constexpr uint32_t FRAMES_IN_FLIGHT = 3;
 
-// Local vertex format for every untextured procedural entity mesh - entities
-// need their own vertex layout (position + normal) since they don't share
-// the chunk mesh's packed-block format at all. An alias, not a separate
-// type: EntityBoxMesh.hpp's AppendBox (shared by the cube/quadruped/golem
-// builders below) already produces EntityMeshVertex, and this must stay
-// layout-compatible with whatever's actually bound to the pipeline's vertex
-// input state.
+// Local vertex format for every untextured procedural entity mesh
 using EntityVertex = EntityMeshVertex;
 
 // std430 layout: 4 vec4s, 16-byte aligned throughout.
@@ -80,12 +74,7 @@ AllocatedBuffer g_cubeVertexBuffer;
 AllocatedBuffer g_cubeIndexBuffer;
 uint32_t g_cubeIndexCount = 0;
 
-// Quadruped/golem meshes - drawn through the very same instanced g_pipeline/
-// entity.vert as the cube above (see RecordDraw): just a different bound
-// vertex/index buffer and indirect-draw slice per shape, not a separate
-// pipeline. Humanoid entities are the one shape with a genuinely separate,
-// non-instanced draw path (g_humanoidPipeline below) since they need a bound
-// skin texture per draw.
+// Quadruped/golem meshes
 AllocatedBuffer g_quadrupedVertexBuffer;
 AllocatedBuffer g_quadrupedIndexBuffer;
 uint32_t g_quadrupedIndexCount = 0;
@@ -95,7 +84,7 @@ AllocatedBuffer g_golemIndexBuffer;
 uint32_t g_golemIndexCount = 0;
 
 // Real vanilla-derived proportions (PigModel.hpp/CowModel.hpp) rather than
-// the generic Quadruped box - same instanced path, just two more shapes.
+// the generic Quadruped box
 AllocatedBuffer g_pigVertexBuffer;
 AllocatedBuffer g_pigIndexBuffer;
 uint32_t g_pigIndexCount = 0;
@@ -130,10 +119,7 @@ struct TexturedInstance {
     glm::vec4 partRotation; // xyz: radians, applied Z * Y * X.
 };
 
-// One loaded skin - its own image/view/sampler/descriptor set, registered
-// with g_textureSetLayout's single combined-image-sampler binding. Not
-// registered in VulkanInit's global allocatedImages list, for the same
-// double-free reason CreateOwnedBuffer's own comment gives for buffers.
+// One loaded skin
 struct SkinTexture {
     AllocatedImage image{};
     VkImageView view = VK_NULL_HANDLE;
@@ -417,9 +403,7 @@ BlockEntityModel LookupBlockEntityModel(uint8_t kind, uint8_t type)
 
 // Allocates a buffer via VMA without registering it in VulkanInit's global
 // `allocatedBuffers` list. EntityRenderer::Shutdown() destroys every buffer
-// it creates itself (unmapping first where needed) - going through the
-// global list here would mean both it and VulkanInit::Cleanup()'s own sweep
-// try to destroy the same VkBuffer/VmaAllocation, which is a double free.
+// it creates itself (unmapping first where needed)
 AllocatedBuffer CreateOwnedBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA)
 {
     VkBufferCreateInfo bufferInfo{};
@@ -439,9 +423,7 @@ AllocatedBuffer CreateOwnedBuffer(VkDeviceSize size, VkBufferUsageFlags usage, b
     return result;
 }
 
-// The placeholder box - now just a single unit box through AppendBox (see
-// EntityBoxMesh.hpp for the shared winding convention every procedural
-// entity mesh, this one included, follows).
+// The placeholder box
 void BuildCubeMesh(std::vector<EntityVertex>& vertices, std::vector<uint32_t>& indices)
 {
     AppendBox(vertices, indices, glm::vec3(0.0f), glm::vec3(1.0f));
@@ -449,10 +431,7 @@ void BuildCubeMesh(std::vector<EntityVertex>& vertices, std::vector<uint32_t>& i
 
 // Uploads a host-built mesh (vertices/indices already populated by
 // BuildCubeMesh/QuadrupedModel::BuildMesh/GolemModel::BuildMesh) into a
-// fresh GPU-only vertex/index buffer pair via a staging buffer - shared by
-// all three since they're all static, uploaded-once, EntityVertex-typed
-// meshes (EntityJsonModel's own upload stays separate below: different vertex
-// type, UV included).
+// fresh GPU-only vertex/index buffer pair via a staging buffer
 void UploadMesh(const std::vector<EntityVertex>& vertices, const std::vector<uint32_t>& indices,
     AllocatedBuffer& outVertexBuffer, AllocatedBuffer& outIndexBuffer, uint32_t& outIndexCount)
 {
@@ -643,8 +622,7 @@ SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height
 
     // Nearest-neighbor: skin sheets are hand-painted pixel art viewed close
     // up, same reasoning TextureManager's block/item array would apply if
-    // it exposed a filter choice - linear filtering would blur the seams
-    // between adjacent UV-unwrapped box faces.
+    // it exposed a filter choice
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     samplerInfo.magFilter = VK_FILTER_NEAREST;
@@ -962,9 +940,7 @@ void CreateDescriptorLayoutAndPool()
         throw std::runtime_error("[ERROR] Failed to create entity descriptor pool.");
     }
 
-    // Humanoid skin textures - a separate layout/pool from the instance SSBO
-    // above (different descriptor type, and allocated per distinct skin
-    // texture rather than per frame-in-flight).
+    // Humanoid skin textures
     VkDescriptorSetLayoutBinding textureBinding{};
     textureBinding.binding = 0;
     textureBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -981,7 +957,7 @@ void CreateDescriptorLayoutAndPool()
     }
 
     // One descriptor per distinct skin, plus one per cached block-entity
-    // texture (see MAX_BLOCK_TEXTURES) - cheap to over-provision.
+    // texture (see MAX_BLOCK_TEXTURES)
     constexpr uint32_t MAX_SKIN_TEXTURES = 8 + static_cast<uint32_t>(MAX_BLOCK_TEXTURES);
     VkDescriptorPoolSize texturePoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_SKIN_TEXTURES };
     VkDescriptorPoolCreateInfo texturePoolInfo{};
@@ -1207,7 +1183,7 @@ void CreatePipeline(const Engine::ShaderLibrary& shaders)
 
     // AppendBox's winding (u x v == normal, corners (-u,-v)->(+u,-v)->
     // (+u,+v)->(-u,+v)) comes out CCW seen from outside, so front face is
-    // counter-clockwise here - see EntityBoxMesh.hpp's own comment.
+    // counter-clockwise here
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
@@ -1222,7 +1198,7 @@ void CreatePipeline(const Engine::ShaderLibrary& shaders)
     // Entities share the chunk pass's depth attachment within the same
     // subpass/render pass, so depth test/write here is what makes walls
     // correctly occlude entities behind them (and vice versa) regardless of
-    // draw order - no extra wiring needed for that culling method.
+    // draw order
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
@@ -1320,11 +1296,7 @@ void CreatePipeline(const Engine::ShaderLibrary& shaders)
 
 // Same fixed-function state as CreatePipeline() above (same render pass/
 // subpass, same depth test since humanoids share the world's depth
-// attachment too, same winding/cull convention - EntityJsonModel::BuildMesh
-// follows BuildCubeMesh's own winding rule deliberately), differing only in
-// vertex layout (+UV, plus the instance-rate TexturedInstance record on
-// binding 1 instead of an SSBO), shaders, and descriptor set 1 (a skin
-// texture instead of the instance buffer).
+// attachment too, same winding/cull convention
 void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
 {
     VkShaderModule vertModule = VK_NULL_HANDLE;
@@ -1402,8 +1374,7 @@ void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
     viewportState.viewportCount = 1;
     viewportState.scissorCount = 1;
 
-    // Same winding/cull convention as CreatePipeline() above - EntityJsonModel::
-    // BuildMesh follows AppendBox's rule deliberately (see its own comment).
+    // Same winding/cull convention as CreatePipeline() above
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
@@ -1566,8 +1537,7 @@ bool SphereInFrustum(const std::array<glm::vec4, 4>& planes, const glm::vec3& ce
     return true;
 }
 
-// Both pipelines and their layouts - everything shader-dependent, and
-// nothing else (meshes, skins, per-frame buffers stay put).
+// Both pipelines and their layouts
 void DestroyPipelines()
 {
     VkDevice dev = GetDevice();
@@ -1707,10 +1677,7 @@ void EntityRenderer::Init(const Engine::ShaderLibrary& shaders)
     CreateShadowCasterBuffers();
     CreatePipeline(shaders);
 
-    // Humanoid path - CreateDescriptorLayoutAndPool() above must run first
-    // (LoadSkins() allocates each skin's descriptor set from
-    // g_textureDescriptorPool against g_textureSetLayout, both created
-    // there).
+    // Humanoid path
     UploadBlockMesh();
     UploadJsonMesh("resources/volcano/models/entity/chest.json", g_chestMeshes[0]);
     UploadJsonMesh("resources/volcano/models/entity/chest_left.json", g_chestMeshes[1]);
@@ -1951,7 +1918,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
 
     // Read per frame so a settings reload applies immediately. All four
     // channels are 0-255; alpha is how strongly the color replaces the model.
-    // TODO: Graphics.EntityHurt.IncludeArmor - armor isn't rendered yet.
+    // TODO: Graphics.EntityHurt.IncludeArmor
     auto hurtChannel = [state](const char* channel, uint32_t fallback) {
         std::string key = std::string("Graphics.EntityHurt.Color.") + channel;
         return static_cast<float>(std::get<uint32_t>(state->config->Get(key, uint32_t{fallback}))) / 255.0f;
@@ -1967,14 +1934,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
     std::vector<std::pair<float, const Entity*>> visible;
     // Humanoid-shaped entities (player/zombie/mannequin/skeleton) are pulled
     // out of the instanced path entirely and drawn separately below via
-    // EntityJsonModel - they need a real UV-mapped mesh and their own bound
-    // skin texture, neither of which the flat-tinted instance SSBO (shared
-    // mesh per shape, no per-instance texture) has any way to carry.
-    // Distance-sorting/MAX_VISIBLE_ENTITIES still applies to them via the
-    // same `visible` pass below; they're just routed to a different draw
-    // call afterward instead of into one of the shape instance lists. Holds
-    // resolved values rather than Entity pointers - see HumanoidDraw's own
-    // comment for why that distinction is load-bearing here.
+    // EntityJsonModel
     std::vector<HumanoidDraw> humanoidVisible;
     std::vector<BlockDraw> blockVisible;
 
@@ -2000,8 +1960,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
         visible.reserve(state->entities.size() + state->playerEntities.size());
 
         // Other players (playerEntities) render exactly like every other
-        // humanoid - the invisibility status effect's flag aside, which
-        // hides them the way it does in vanilla.
+        // humanoid
         state->ForEachEntity([&](uint32_t id, const Entity& entity)
         {
             if (!entity.visible) return;
@@ -2047,10 +2006,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
         // Build the GPU instance buffer while still holding the lock, since
         // `visible` (and humanoidVisible, built alongside it here) holds raw
         // pointers into state->entities/playerEntities. Split by
-        // EntityRegistry::ShapeKind rather than one flat list - each shape
-        // draws off its own mesh, so its instances need to land in their own
-        // contiguous slice of the shared instance SSBO (see the
-        // concatenation below).
+        // EntityRegistry::ShapeKind rather than one flat list
         std::vector<GPUEntityInstance> cubeInstances;
         std::vector<GPUEntityInstance> quadrupedInstances;
         std::vector<GPUEntityInstance> golemInstances;
@@ -2173,7 +2129,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
     // The local player has no entity of their own; draw them as a plain
     // "player" humanoid when the camera isn't in their head. The pose is
     // advanced in first person too (body turn, walk cycle, swing), so the
-    // shadow they cast - see RecordShadowCasters - moves like everyone else's.
+    // shadow they cast
     g_localShadowValid = false;
     if (state->worldReady.load() && state->localGameMode.load() != 3)
     {

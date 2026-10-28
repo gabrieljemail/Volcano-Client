@@ -46,13 +46,13 @@ std::optional<RayHit> RayIntersectsAABB(const glm::vec3& origin, const glm::vec3
 {
     float tMin = 0.0f;
     float tMax = maxDistance;
-    int hitAxis = -1; // Which axis last raised tMin - i.e. the entry face, once the loop finishes.
+    int hitAxis = -1; // Which axis last raised tMin
 
     for (int axis = 0; axis < 3; axis++)
     {
         if (direction[axis] == 0.0f)
         {
-            // Parallel to this axis's slab - inside it, or never hits.
+            // Parallel to this axis's slab
             if (origin[axis] < boxMin[axis] || origin[axis] > boxMax[axis]) return std::nullopt;
             continue;
         }
@@ -73,8 +73,7 @@ std::optional<RayHit> RayIntersectsAABB(const glm::vec3& origin, const glm::vec3
 
     glm::ivec3 normal(0);
     // hitAxis stays -1 only if the ray's origin is already inside the box
-    // on every axis (tMin never left 0) - an edge case (the camera clipped
-    // into a block), not a real face; leave normal zeroed rather than guess.
+    // on every axis (tMin never left 0)
     if (hitAxis >= 0)
     {
         // Moving in +axis means the box's near (min) face is what the ray
@@ -88,8 +87,7 @@ std::optional<RayHit> RayIntersectsAABB(const glm::vec3& origin, const glm::vec3
 }
 
 // Vanilla's own Direction.getNearest(x,y,z): whichever axis has the
-// largest magnitude wins, its sign giving the direction - turns a
-// continuous vector into one of the 6 cardinal directions.
+// largest magnitude wins, its sign giving the direction
 glm::ivec3 NearestCardinalDirection(const glm::vec3& v)
 {
     glm::vec3 absV = glm::abs(v);
@@ -98,13 +96,7 @@ glm::ivec3 NearestCardinalDirection(const glm::vec3& v)
     return glm::ivec3(0, 0, v.z > 0.0f ? 1 : -1);
 }
 
-// DDA (Amanatides & Woo) voxel walk - visits only the cells the ray
-// actually passes through between origin and maxDistance, in order, instead
-// of scanning every cell in a bounding box (most of which the ray never
-// comes near). Stops at the first cell with real collision geometry
-// (BlockRegistry::GetCollisionBoxes - the same shapes TickLoop's own
-// physics collides against), so a slab/stair is only "hit" where its
-// actual shape is, not its full voxel.
+// DDA (Amanatides & Woo) voxel walk
 std::optional<TargetedBlock> RaycastBlocks(GlobalState* state, const glm::vec3& origin,
                                             const glm::vec3& direction, float maxDistance)
 {
@@ -115,9 +107,7 @@ std::optional<TargetedBlock> RaycastBlocks(GlobalState* state, const glm::vec3& 
     glm::ivec3 step;
     glm::vec3 tMax, tDelta;
     // A large finite sentinel, not actual infinity: this project builds
-    // with -ffast-math, which assumes no infinities/NaNs exist - comparing
-    // real IEEE infinity against tMax's other components would be
-    // undefined behavior under that flag, not just unusual.
+    // with -ffast-math, which assumes no infinities/NaNs exist
     constexpr float INF = 1e30f;
     for (int axis = 0; axis < 3; axis++)
     {
@@ -219,12 +209,7 @@ bool IsSpear(const ItemRegistry::ItemTypeInfo* item)
 struct EntityHit { uint32_t entityId; float distance; };
 
 // Linear scan, but with a cheap bounding-sphere reject before the real
-// ray/AABB test - entities within reach are normally few, so this costs
-// one subtraction and one dot product for everything the ray has no chance
-// of touching, rather than a full slab test for each. Covers other players
-// too (GlobalState::playerEntities), minus spectators, which vanilla never
-// lets the crosshair pick. Dead entities are skipped as well - they're only
-// still around for their death animation.
+// ray/AABB test
 std::optional<EntityHit> RaycastEntities(GlobalState* state, const glm::vec3& origin,
                                           const glm::vec3& direction, float maxDistance,
                                           std::chrono::steady_clock::time_point now)
@@ -262,7 +247,7 @@ InteractionManager::InteractionManager(GlobalState* globalState)
     // so it needs unwrapping via std::get before it can go anywhere near a
     // uint8_t/float field. Alpha is stored as a 0-100 percentage (so it
     // reads sanely in a hand-edited settings.json), which also needs a
-    // floating-point divide by 100 - an integer one truncates 80/100 to 0.
+    // floating-point divide by 100
     auto GetColorByte = [this](const std::string& key, uint32_t fallback) {
         return static_cast<uint8_t>(std::get<uint32_t>(state->config->Get(key, uint32_t{fallback})));
     };
@@ -288,7 +273,7 @@ void InteractionManager::Update(bool inputAllowed)
     RefreshReach();
 
     // Keeps the selection current even behind an open Screen/chat box,
-    // same as TickLoop::Advance - see RenderThread::PollInputs.
+    // same as TickLoop::Advance
     RaycastSelection();
 
     UpdateUsingItem(inputAllowed);
@@ -314,11 +299,7 @@ void InteractionManager::Update(bool inputAllowed)
         CancelMining();
     }
 
-    // Not mutually exclusive on the press frame - Hold is already true then
-    // too (it's a HOLD action and the button is down), so Start and Hold
-    // both fire that frame. Harmless while both are stubs; whoever wires
-    // real item-use logic in here can decide whether Start should suppress
-    // that frame's Hold call.
+    // Not mutually exclusive on the press frame
     if (state->input->WasActivated("SecondaryAction"))
     {
         SecondaryTriggerStart();
@@ -376,10 +357,7 @@ void InteractionManager::PrimaryTriggerStart()
         return;
     }
 
-    // Vanilla never refuses a swing - attackStrengthTicker only scales the
-    // damage a landed hit deals (GetAttackStrengthScale), it doesn't gate
-    // whether one happens. Reset happens here, on the press edge - this
-    // only runs once per click, unlike PrimaryTriggerHold below.
+    // Vanilla never refuses a swing
     if (targetedEntityId.has_value())
     {
         // An entity in front always wins over whatever was being mined
@@ -441,9 +419,7 @@ void InteractionManager::PrimaryTriggerHold()
 
     if (mining.has_value() && mining->position != targetedBlock->position)
     {
-        // Looked at a different block mid-hold - vanilla restarts rather
-        // than carrying progress over. Another face of the same block keeps
-        // going (vanilla's sameDestroyTarget only compares the position).
+        // Looked at a different block mid-hold
         CancelMining();
     }
 
@@ -591,15 +567,7 @@ void InteractionManager::AttackEntity(uint32_t entityId)
     SendAttack(state, entityId);
 
     // The part of a hit vanilla applies to the attacker on the client
-    // (Player.causeExtraKnockback): any knockback - the sprint hit's extra
-    // 0.5, plus the attack_knockback attribute - slows us to 0.6x
-    // horizontally and ends the sprint. Vanilla only gets there when the
-    // client-side hurt check passes, which on the client is only true for
-    // other players (RemotePlayer.hurtClient), so a sprint hit on a mob
-    // keeps our momentum. TickLoop applies it on its next tick; the
-    // resulting stop_sprinting goes out after the Attack packet above (see
-    // NetworkClient::ReportMovementState), so the server still counts this
-    // hit as a sprint hit.
+    // (Player.causeExtraKnockback): any knockback
     float knockback = static_cast<float>(state->attributes->GetDouble("generic.attack_knockback", 0.0))
         + (lastAttackType == AttackType::Knockback ? 0.5f : 0.0f);
     if (targetIsPlayer && knockback > 0.0f)
@@ -652,8 +620,7 @@ AttackType InteractionManager::ClassifyAttack(float strength, const TickLoop::Mo
     if (knockback) return AttackType::Knockback;
 
     // Sweep: a sword swung at full strength while on the ground and moving
-    // slower than 2.5x the movement_speed attribute (per tick) - i.e.
-    // standing still or walking, not running around.
+    // slower than 2.5x the movement_speed attribute (per tick)
     if (fullStrength && movement.grounded)
     {
         float speedLimit = static_cast<float>(state->attributes->GetDouble("generic.movement_speed", 0.1)) * 2.5f;
@@ -884,8 +851,7 @@ void InteractionManager::RaycastSelection()
     Normalize(normalized);
     direction = glm::vec3(normalized.x, normalized.y, normalized.z);
 
-    // Whichever the ray reaches first wins - a wall between the camera and
-    // an entity should block targeting it, not lose to it unconditionally.
+    // Whichever the ray reaches first wins
     std::optional<TargetedBlock> blockHit = RaycastBlocks(state, origin, direction, blockReachDistance);
     std::optional<EntityHit> entityHit = RaycastEntities(state, origin, direction, reachDistance,
                                                           std::chrono::steady_clock::now());

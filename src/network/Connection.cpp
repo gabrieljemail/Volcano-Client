@@ -17,11 +17,7 @@ namespace {
 // Vanilla's own MAX_PACKET_SIZE, applied to both the wire frame length and a
 // compressed packet's declared uncompressed size. Both numbers come straight
 // off the socket before a single byte of them has been validated, and both
-// are fed directly to a vector's sizing constructor - so without this, one
-// desynced byte anywhere in the stream (exactly what the Set Container Slot
-// VarInt-vs-i16 misread produced before it was fixed) turns the next "length"
-// into garbage and asks for an allocation of up to 2 GiB. That's a hard
-// crash or a swap-storm instead of a clean, catchable "malformed packet".
+// are fed directly to a vector's sizing constructor
 constexpr int32_t MAX_PACKET_SIZE = 2097152;
 
 // Validates a length field read off the wire before it's used to size a
@@ -81,8 +77,7 @@ void Connection::QueuePacket(int32_t packetId, std::vector<uint8_t> payload)
 void Connection::FlushOutbound()
 {
     // Swap the queue out under the lock and write outside it, so a
-    // cross-thread QueuePacket() never blocks behind a socket write - and so
-    // a throw from SendPacket below can't leave the lock held.
+    // cross-thread QueuePacket() never blocks behind a socket write
     std::vector<std::pair<int32_t, std::vector<uint8_t>>> pending;
     {
         std::lock_guard<std::mutex> lock(outboundMutex);
@@ -191,8 +186,7 @@ bool Connection::WaitForReadable(std::chrono::milliseconds timeout)
 int32_t Connection::ReadPacketRaw(std::vector<uint8_t>& outPayload)
 {
     // The length-prefix VarInt precedes everything else in the frame, so it
-    // has to be read one byte at a time straight off the socket - there's
-    // nothing to size a bulk read against yet.
+    // has to be read one byte at a time straight off the socket
     int32_t length = 0;
     int shift = 0;
     while (true) {

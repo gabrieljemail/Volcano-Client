@@ -7,29 +7,26 @@
 
 namespace Volcano::EntityRegistry {
 
-// Which procedural mesh/pipeline EntityRenderer draws a type with - chosen
-// by ClassifyShape (EntityRegistry.cpp) since minecraft-data itself carries
-// no shape/model hint. Cube is the fallback for anything not covered by a
-// more specific shape.
+// Which procedural mesh/pipeline EntityRenderer draws a type with
 enum class ShapeKind {
-    Cube,      // Flat-tinted placeholder box - EntityRenderer::BuildCubeMesh.
-    Humanoid,  // Head/body/arms/legs skeleton - data-driven, see resources/volcano/models/entity/*.json + EntityJsonModel.hpp.
-    Quadruped, // Body + head + 4 legs, generic proportions - QuadrupedModel.hpp.
-    Golem,     // Iron golem's own blocky proportions - GolemModel.hpp.
-    Pig,       // Real vanilla-derived pig proportions - PigModel.hpp.
-    Cow,       // Real vanilla-derived cow proportions - CowModel.hpp.
-    Block,     // A textured block cube (falling_block, tnt) - Entity::blockStateId picks the block.
+    Cube,      // Flat-tinted placeholder box
+    Humanoid,  // Head/body/arms/legs skeleton
+    Quadruped, // Body + head + 4 legs, generic proportions
+    Golem,     // Iron golem's own blocky proportions
+    Pig,       // Real vanilla-derived pig proportions
+    Cow,       // Real vanilla-derived cow proportions
+    Block,     // A textured block cube (falling_block, tnt)
 };
 
 // One entity type's static metadata, straight from minecraft-data's
 // entities.json (see EntityRegistry.cpp for the version pinned).
 struct EntityTypeInfo {
-    std::string name;        // e.g. "cow" - matches the resource-pack/protocol name.
+    std::string name;        // e.g. "cow"
     std::string displayName; // e.g. "Cow".
     float width = 0.0f;
     float height = 0.0f;
-    std::string category;    // e.g. "Passive mobs" - broad UI-facing bucket, too coarse for shape choice.
-    std::string entityKind;  // minecraft-data's "type" field - "animal"/"hostile"/"player"/"projectile"/...;
+    std::string category;    // e.g. "Passive mobs"
+    std::string entityKind;  // minecraft-data's "type" field
                               // the one field that reliably says whether a type is alive at all (see
                               // ClassifyShape), so kept here too for anything else that needs the same check.
     ShapeKind shape = ShapeKind::Cube; // See ShapeKind above.

@@ -246,9 +246,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     // The F3 overlay's built-in entries (mods add theirs via SetDebugDisplay).
     RegisterBuiltinDebugDisplays();
 
-    // Death screen - opened by Update() when GlobalState::playerDied is set
-    // (see NetworkClient's PlayerCombatKill handling). Not closable via Esc;
-    // Respawn is the only way out.
+    // Death screen
     deathScreen = CreateScreen("You Died!", /* closable */ false);
     deathMessageText = new GUI::GUIComponent(GUI::GUIComponentType::TEXT, "");
     auto* respawnButton = new GUI::Button("Respawn");
@@ -259,8 +257,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     deathScreen->components.push_back(deathMessageText);
     deathScreen->components.push_back(respawnButton);
 
-    // Inventory screen - "E" toggles it (see Update()), same as vanilla. It
-    // draws its own slot grid with Pincel; see screens/InventoryScreen.
+    // Inventory screen
     inventoryScreen = GUI::CreateInventoryScreen(state);
 
     LoadStandaloneIcons();
@@ -272,10 +269,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
 // Loads every standalone HUD/GUI icon. Used by Init() and ReloadTextures().
 void GUIController::LoadStandaloneIcons()
 {
-    // Crosshair - see RenderCrosshair(). Loaded once here rather than
-    // lazily on first draw (like GetItemIcon's item-icon cache) since,
-    // unlike item icons, both variants are needed from the very first HUD
-    // frame and there are only ever exactly two of them.
+    // Crosshair
     crosshairIcon = LoadStandaloneIcon("resources/crosshair.png");
     crosshairEntityIcon = LoadStandaloneIcon("resources/crosshair-entity.png");
 
@@ -386,7 +380,7 @@ ImTextureID GUIController::TextureOf(const StandaloneIcon& icon)
 }
 
 // See the header's own comment. Returns a null ImTextureID (0) on any
-// Vulkan failure - callers skip drawing rather than pass that to AddImage.
+// Vulkan failure
 ImTextureID GUIController::GetItemIcon(uint16_t textureLayer)
 {
     auto cached = itemIconCache.find(textureLayer);
@@ -516,9 +510,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
         }
     }
 
-    // Single 2D image, one layer, no mip chain - this is small UI art drawn
-    // at roughly its native size, not a world texture sampled at a range of
-    // distances the way TextureManager's array needs mips for.
+    // Single 2D image, one layer, no mip chain
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -543,7 +535,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
 
     // Upload via the same staging-buffer-then-copy path TextureManager::
     // UploadLayer uses (CreateBuffer/BeginOneShotCommands/
-    // TransitionImageLayout - see VulkanInit.hpp).
+    // TransitionImageLayout
     VkDeviceSize size = static_cast<VkDeviceSize>(width) * height * 4;
     AllocatedBuffer staging = CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
 
@@ -585,10 +577,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
 }
 
 // Centered on the display, drawn on ImGui's foreground draw list rather
-// than in a Begin/End window - it needs no chrome, background, or input
-// handling, just an image pinned to the exact center every frame regardless
-// of display size (unlike the hotbar/status HUD, which anchors off
-// HotbarOrigin()).
+// than in a Begin/End window
 void GUIController::RenderCrosshair()
 {
     // Native size of both source PNGs; drawn 1:1 rather than scaled by a
@@ -596,7 +585,7 @@ void GUIController::RenderCrosshair()
     constexpr float CROSSHAIR_SIZE = 32.0f;
 
     const StandaloneIcon& active = state->lookingAtEntity.load() ? crosshairEntityIcon : crosshairIcon;
-    if (active.descriptorSet == VK_NULL_HANDLE) return; // Missing/failed-to-load asset - draw nothing.
+    if (active.descriptorSet == VK_NULL_HANDLE) return; // Missing/failed-to-load asset
 
     ImTextureID texture = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(active.descriptorSet));
     ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -687,8 +676,7 @@ void GUIController::Update(float deltaTime)
 {
     if (!initialized) return;
 
-    // Death takes over whatever's on screen - including the pause menu, if
-    // that happened to be open - same as vanilla's death screen does.
+    // Death takes over whatever's on screen
     if (state->playerDied.exchange(false))
     {
         std::string message;
@@ -740,10 +728,7 @@ void GUIController::Update(float deltaTime)
         OpenScreen(pauseScreen);
     }
 
-    // "T" opens the chat input box, same key Minecraft uses - but not while
-    // a Screen already owns input, and not if it's already open (PRESS is
-    // edge-triggered so this only fires once per keypress anyway, but the
-    // guard makes the intent explicit).
+    // "T" opens the chat input box, same key Minecraft uses
     if (!chatInputOpen && activeScreen == nullptr && !state->input->IsKeyDown(GLFW_KEY_F3) // F3+T reloads resources.
         && state->input->WasActivated("OpenChat"))
     {
@@ -758,11 +743,7 @@ void GUIController::Update(float deltaTime)
         CloseChatInput();
     }
 
-    // "E" toggles the inventory screen, same key Minecraft uses - opens it
-    // only while nothing else owns input (matching "T" above), closes it
-    // again on a second press. Esc also closes it via the generic
-    // activeScreen->closable branch above, same as any other closable
-    // screen - no separate handling needed for that direction.
+    // "E" toggles the inventory screen, same key Minecraft uses
     if (activeScreen == nullptr && !chatInputOpen && state->input->WasActivated("ToggleInventory"))
     {
         OpenScreen(inventoryScreen);
@@ -1044,10 +1025,7 @@ void GUIController::RegisterBuiltinDebugDisplays()
     AddBuiltin<std::string>("Performance", "Present Mode", []
     {
         // GlobalState::presentMode is the swapchain's actual active
-        // VkPresentModeKHR - this client only ever requests FIFO or IMMEDIATE
-        // (Graphics.VSync), but reports whatever vk-bootstrap actually
-        // granted, so an unsupported request showing up here as something
-        // else is visible rather than silently wrong.
+        // VkPresentModeKHR
         switch (static_cast<VkPresentModeKHR>(state->presentMode))
         {
             case VK_PRESENT_MODE_FIFO_KHR: return std::string("VSync (FIFO)");
@@ -1779,7 +1757,7 @@ void GUIController::RenderComponent(GUI::GUIComponent* component, float width, f
 }
 
 // Draw the active Screen fullscreen, title first, then its components
-// stacked and centered - the ImGui equivalent of Minecraft's GuiScreen.
+// stacked and centered
 void GUIController::RenderScreen(GUI::Screen& screen)
 {
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
@@ -1793,9 +1771,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     bool screenJustOpened = lastScreen != &screen;
     lastScreen = &screen;
     if (screenJustOpened) ImGui::SetNextWindowFocus();
-    // No window background - the engine's world passes draw the 3D scene
-    // into this same render pass before GUIController::Render runs, so the
-    // world shows through behind the screen's own components.
+    // No window background
     ImGui::Begin("##screen", nullptr,
         ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoResize |
@@ -1845,7 +1821,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
 
     // customContent (see Screen::customContent's own comment) replaces the
     // generic centered TEXT/BUTTON/INPUT stack entirely for a screen that
-    // needs its own layout - the inventory screen's slot grid, so far.
+    // needs its own layout
     if (screen.customContent)
     {
         screen.customContent();
@@ -1930,10 +1906,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     ImGui::End();
 }
 
-// Vanilla-style Tab-list overlay - just names, no ping/gamemode columns (see
-// GlobalState::playerList's own comment for where the data comes from).
-// Only called while Tab is held (see Render()); NoInputs so it never steals
-// mouse focus from whatever's under it.
+// Vanilla-style Tab-list overlay
 void GUIController::RenderPlayerListWindow()
 {
     std::vector<std::string> names;
@@ -1964,11 +1937,7 @@ void GUIController::RenderPlayerListWindow()
     ImGui::End();
 }
 
-// Hotbar/armor/status-bar/movement-state geometry - kept together so the
-// four HUD pieces that key off "where's the hotbar" (RenderHotbarAndArmor,
-// RenderPlayerStatusBars, RenderMovementStatePanel, via HotbarOrigin below)
-// can't drift out of sync with each other the way four independently
-// hand-tuned pixel offsets eventually would.
+// Hotbar/armor/status-bar/movement-state geometry
 namespace {
     // Vanilla GUI geometry in GUI units: 1 unit = 1 texture pixel, and
     // Graphics.GUIScale scales the whole thing (see ApplyGUIScale).
@@ -2058,18 +2027,14 @@ ImVec2 GUIController::GetHotbarOrigin()
     return HotbarOrigin();
 }
 
-// Top-left of the hotbar - see the header comment on why every other HUD
-// piece in this group derives its position from this single call rather
-// than each re-deriving "bottom center" independently.
+// Top-left of the hotbar
 ImVec2 GUIController::HotbarOrigin()
 {
     return ResolveAnchor(GUI::ScreenAnchor::BOTTOM, ImVec2(Art(HOTBAR_WIDTH), Art(HOTBAR_HEIGHT)), ImVec2(0.0f, Art(HUD_BOTTOM_MARGIN)));
 }
 
 // Dark navy panels with a orange border tint, laid on top of StyleColorsDark.
-// Called once at Init - component-level drawing (DrawStyledButton) pulls
-// its own hand-picked colors rather than reading these back, since ImGui's
-// built-in widget colors don't cover custom-drawn glow/border fills.
+// Called once at Init
 void GUIController::ApplyVolcanoTheme()
 {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -2235,7 +2200,7 @@ bool GUIController::DrawStyledButton(const std::string& label, ImVec2 size)
 }
 
 // Create a new GUI window, pinned to a screen anchor + offset rather than
-// an absolute position - see GUI::ScreenAnchor and ResolveAnchor().
+// an absolute position
 GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, GUI::ScreenAnchor anchor,
                                              float offsetX, float offsetY)
 {
@@ -2254,7 +2219,7 @@ GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, GUI::Screen
 }
 
 // Resolves anchor + inward pixel offset into an absolute top-left position
-// against the current ImGui display size - see the header comment.
+// against the current ImGui display size
 ImVec2 GUIController::ResolveAnchor(GUI::ScreenAnchor anchor, ImVec2 size, ImVec2 offset)
 {
     ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -2336,8 +2301,7 @@ void GUIController::CloseInventoryWindow()
 // Show a screen fullscreen, hiding the HUD and releasing the mouse cursor
 // so ImGui (rather than the fly-cam) drives it. GUIController runs on the
 // render thread, but GLFW only guarantees glfwSetInputMode is safe from the
-// main (window-owning) thread - see GlobalState::pendingCursorMode, applied
-// by VolcanoClient.cpp's main loop.
+// main (window-owning) thread
 void GUIController::OpenScreen(GUI::Screen* screen)
 {
     if (activeScreen == inventoryScreen && screen != inventoryScreen) CloseInventoryWindow();
@@ -2371,10 +2335,7 @@ void GUIController::CloseScreen()
 }
 
 // Raise the chat input box and free the cursor, same reasoning OpenScreen
-// gives for doing so - mouse-look shouldn't fight with typing, and
-// RenderThread::PollInputs is the piece that actually stops reading
-// movement/camera input while this is open (see its own IsChatInputOpen()
-// check, right alongside the existing IsScreenOpen() one).
+// gives for doing so
 void GUIController::OpenChatInput(const char* initialText)
 {
     chatInputOpen = true;

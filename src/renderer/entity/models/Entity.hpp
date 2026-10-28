@@ -16,12 +16,7 @@
 namespace Volcano {
 
 // How long a render-time interpolation blend from previous*/lastUpdateTime
-// to the current authoritative position/yaw runs - see InterpolatedPosition/
-// InterpolatedYaw. 3 ticks (vanilla's own remote-entity interpolation
-// window) smooths out normal 1-tick-per-packet movement jitter without
-// feeling laggy; a bigger gap (a teleport, a missed packet) just means the
-// entity sits at its target a little before the next update arrives, since
-// alpha clamps at 1.
+// to the current authoritative position/yaw runs
 constexpr float ENTITY_INTERP_SECONDS = 3.0f / 20.0f;
 
 // How long a server position correction on a simulated entity fades out over.
@@ -29,19 +24,7 @@ constexpr float CORRECTION_SECONDS = 3.0f / 20.0f;
 
 // A remote entity (mob, other player, item frame, etc.) tracked for
 // rendering. Populated by NetworkClient's Play packet loop (Spawn Entity /
-// Move Entity Pos(Rot) / Entity Teleport / Remove Entities - see
-// PacketIds.hpp) directly into GlobalState::entities, guarded by
-// entitiesMutex the same way renderList is guarded against RenderThread.
-//
-// Holds only the fields every entity has regardless of category. For the
-// category-specific data the network layer will eventually populate, see
-// PlayerEntity.hpp (other players), SubjectEntity.hpp (mobs/animals - living
-// entities with their own AI/health), and ObjectEntity.hpp (items, boats,
-// projectiles - inanimate objects). Each inherits these fields as plain
-// data (no virtuals), so any of them still slices into a plain Entity here.
-// Slot indices of Entity::equipment - vanilla's EquipmentSlot ordinals, which is
-// exactly what PlayS2C::SetEquipment sends per entry, so a packet's slot byte
-// indexes the array directly.
+// Move Entity Pos(Rot) / Entity Teleport / Remove Entities
 enum class EquipmentSlot : uint8_t {
     MainHand = 0,
     OffHand = 1,
@@ -58,8 +41,7 @@ struct Entity {
     uint32_t id = 0;   // Network entity ID.
     uint16_t type = 0; // Raw network entity-type ID (an index into EntityRegistry/minecraft-data's entities.json).
 
-    // Authoritative state, as of the most recent packet - NOT what should be
-    // rendered directly; use InterpolatedPosition/InterpolatedYaw for that.
+    // Authoritative state, as of the most recent packet
     glm::vec3 position{0.0f}; // World position, feet/base (Minecraft's convention).
     // Held items and worn armor, indexed by EquipmentSlot. Only id/count are
     // tracked - see ItemStack's own comment on data components.
@@ -71,12 +53,7 @@ struct Entity {
                               // rotationally symmetric about them.
 
     // The authoritative state just before the update above landed, plus when
-    // that update arrived - together with position/yaw these are all
-    // InterpolatedPosition/InterpolatedYaw need to blend smoothly between
-    // network updates instead of snapping an entity from one spot to the
-    // next every ~50ms. A freshly spawned entity has these equal to
-    // position/yaw (see NetworkClient's Spawn Entity handling), so it
-    // doesn't animate in from some earlier undefined state.
+    // that update arrived
     glm::vec3 previousPosition{0.0f};
     float previousYaw = 0.0f;
 
@@ -113,7 +90,7 @@ struct Entity {
     int32_t itemId = 0;
 
     // Set by the Damage Event packet. The hit flash lasts vanilla's 10-tick
-    // hurtTime - see IsHurt.
+    // hurtTime
     std::chrono::steady_clock::time_point lastHurtTime{};
     bool visible = true;
 

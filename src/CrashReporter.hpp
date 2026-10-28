@@ -11,8 +11,7 @@ namespace Volcano {
 //
 // The crashed process only writes crash-report.txt (reason + stack trace),
 // relaunches its own executable with --crash-report to show the dialog, and
-// exits immediately - so nothing keeps running behind the dialog. With a
-// debugger attached it steps aside and lets the debugger break instead.
+// exits immediately
 class CrashReporter
 {
 public:

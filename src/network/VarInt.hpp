@@ -13,8 +13,7 @@ namespace Volcano {
 // Minecraft protocol primitive codec. VarInt is the core piece (7 payload
 // bits per byte, MSB = continuation), plus the small set of primitives that
 // are directly built on top of it (VarInt-prefixed strings, raw bytes) and
-// that essentially every packet needs - kept together rather than split
-// into more one-liner headers.
+// that essentially every packet needs
 
 class PacketWriter {
 public:
@@ -43,8 +42,7 @@ public:
     }
 
     // Same big-endian encoding as WriteUShortBE, for protocol fields typed
-    // as a plain (signed) short rather than a VarInt - e.g. PlayC2S::
-    // SetHeldItem's slotId. Matches PacketReader::ReadShort's byte order.
+    // as a plain (signed) short rather than a VarInt
     void WriteShort(int16_t value)
     {
         WriteUShortBE(static_cast<uint16_t>(value));
@@ -55,10 +53,7 @@ public:
         bytes.push_back(value ? 1u : 0u);
     }
 
-    // Fixed 4-byte big-endian int - distinct from WriteVarInt. Most numeric
-    // protocol fields are VarInts, but a handful (e.g. the Ping/Pong id in
-    // both the Configuration and Play states) are a plain fixed-width int;
-    // matches PacketReader::ReadInt's byte order.
+    // Fixed 4-byte big-endian int
     void WriteInt(int32_t value)
     {
         uint32_t v = static_cast<uint32_t>(value);
@@ -99,11 +94,7 @@ public:
     }
 
     // Minecraft's packed block position: a single i64 with x in the top 26
-    // bits, z in the next 26, y in the low 12 - the protocol's `position`
-    // type (used by e.g. packet_block_dig/packet_block_place's `location`
-    // field), unchanged since 1.14. Each component is masked to its own bit
-    // width first so a negative coordinate's sign-extension doesn't bleed
-    // into its neighbor's bits.
+    // bits, z in the next 26, y in the low 12
     void WritePosition(int32_t x, int32_t y, int32_t z)
     {
         uint64_t packed = ((static_cast<uint64_t>(x) & 0x3FFFFFFull) << 38)
@@ -221,11 +212,7 @@ public:
         return value;
     }
 
-    // Inverse of PacketWriter::WritePosition - x top 26 bits, z next 26,
-    // y low 12, each sign-extended back out by shifting its field to the
-    // top of the 64-bit word and arithmetic-shifting back down (well-
-    // defined for a signed type as of C++20, which this project builds
-    // with).
+    // Inverse of PacketWriter::WritePosition
     void ReadPosition(int32_t& x, int32_t& y, int32_t& z)
     {
         int64_t val = ReadLong();

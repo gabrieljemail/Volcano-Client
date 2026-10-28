@@ -8,9 +8,7 @@
 namespace Volcano::Engine::Passes {
 
 // Opaque full-cube chunk geometry (GlobalState::renderList), frustum-culled
-// per chunk - the first pass of the frame, so it owns the terrain pipeline
-// (and the pipelineLayout NonCubicPass reuses) plus its F3+Z wireframe twin.
-// Shaders: terrain.vert / terrain.frag.
+// per chunk
 class TerrainPass : public ChunkMeshPass {
 public:
     static constexpr const char* NAME = "Terrain";
@@ -22,8 +20,7 @@ public:
     void Destroy() override;
 
 private:
-    // Graphics.IndirectDraw path - see ChunkDrawBatch. Only created when the
-    // indirect pipelines exist.
+    // Graphics.IndirectDraw path
     ChunkDrawBatch batch;
     VisibleCache cache;
 };

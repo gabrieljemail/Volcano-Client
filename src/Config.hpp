@@ -17,11 +17,7 @@ namespace Volcano {
 using ConfigValue = std::variant<std::string, uint32_t, bool>;
 
 // Key-value settings store backed by settings.json, kept next to the
-// running executable. A key is a dot-separated path - "Graphics.RenderDistance"
-// - that maps onto nested JSON objects on disk (Graphics: { RenderDistance:
-// ... }), so settings.json stays a clean, structured tree for a person to
-// read/edit while the rest of the client can still get/set any setting
-// through a single string.
+// running executable. A key is a dot-separated path
 class Config {
 public:
     // Loads settings.json from next to the executable. Missing or
@@ -36,10 +32,7 @@ public:
     void Save() const;
 
     // Returns the value stored at key, provided it's present and holds the
-    // same alternative as fallback. Otherwise - key missing, or holding
-    // some other type (e.g. a hand-edited settings.json with the wrong
-    // shape) - fallback is written to key and returned, so the first Get()
-    // for a key is also what defines and persists its default.
+    // same alternative as fallback. Otherwise
     ConfigValue Get(const std::string& key, const ConfigValue& fallback);
 
     // Writes value to key immediately (e.g. from a SettingsUpdateEvent).

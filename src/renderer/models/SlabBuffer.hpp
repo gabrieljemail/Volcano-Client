@@ -42,8 +42,7 @@ inline std::atomic<uint64_t> renderFrameCounter{0};
 // buffers - drawers must bind per buffer (see ChunkDrawBatch).
 //
 // Freed regions go on a free list (first-fit, adjacent ranges coalesced)
-// after a short delay - see FREE_DELAY_FRAMES - rather than being leaked
-// forever. Thread-safe: MeshingThread allocates/frees, the HUD reads stats.
+// after a short delay
 class SlabBuffer {
 public:
     // Frames a freed region waits before reuse: the render engine keeps at
@@ -66,7 +65,7 @@ public:
     bool Allocate(const void* data, VkDeviceSize size, VkDeviceSize alignment, VkBuffer& outBuffer, VkDeviceSize& outOffset);
 
     // Returns [offset, offset + size) of `buffer` - exactly what Allocate
-    // handed out - to the slab, reusable after FREE_DELAY_FRAMES more frames.
+    // handed out
     void Free(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size);
 
     // Whether `buffer` is one of this slab's blocks.

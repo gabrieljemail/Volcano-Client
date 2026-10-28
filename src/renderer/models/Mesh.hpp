@@ -57,7 +57,7 @@ struct Mesh {
 
     // Exact byte sizes of the slab regions above (0 if not slab-allocated),
     // so the region can be handed back via SlabBuffer::Free when this mesh
-    // is replaced or removed - see ReleaseMeshSlabs in GlobalState.hpp.
+    // is replaced or removed
     VkDeviceSize vertexBytes = 0;
     VkDeviceSize indexBytes = 0;
 

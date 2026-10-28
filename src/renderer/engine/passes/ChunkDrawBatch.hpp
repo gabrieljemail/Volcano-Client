@@ -16,13 +16,7 @@ namespace Volcano::Engine::Passes {
 // Every mesh of a list lives in the same two slab buffers (see SlabBuffer), so
 // a section is just a VkDrawIndexedIndirectCommand pointing into them
 // (firstIndex/vertexOffset from the mesh's slab offsets). What used to be the
-// per-draw push constant - the section's world origin and its fade - goes in a
-// per-instance vertex attribute instead: one vec4 (xyz origin, w fade) per
-// section, selected by firstInstance (needs drawIndirectFirstInstance). See
-// terrain_indirect.vert / misc_indirect.vert.
-//
-// Both buffers are host-visible and rewritten every frame, one set per frame
-// in flight so the GPU never reads what the CPU is writing. Render-thread only.
+// per-draw push constant
 class ChunkDrawBatch {
 public:
     static constexpr uint32_t FRAMES = 3;        // >= maxFramesInFlight

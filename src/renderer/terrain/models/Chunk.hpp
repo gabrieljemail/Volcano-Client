@@ -37,9 +37,7 @@ public:
         // Full-bright sky default: placeholder-generated chunks (no server
         // light data ever arrives for them) and any section a light packet
         // leaves uncovered should still render lit rather than going pitch
-        // black. Block light defaults to 0 (no artificial light) - nothing
-        // should glow until the server actually says something emits light
-        // there.
+        // black. Block light defaults to 0 (no artificial light)
         skyLight.resize(CHUNK_SIZE_X * CHUNK_SIZE_Y * CHUNK_SIZE_Z, 15);
         blockLight.resize(CHUNK_SIZE_X * CHUNK_SIZE_Y * CHUNK_SIZE_Z, 0);
     }
@@ -74,8 +72,7 @@ public:
     }
 
     // Full-block overload, for callers (ChunkParser) that also resolved a
-    // non-cube visual/collision flag - the uint16_t overload above only ever
-    // produces a plain opaque-or-nothing Block.
+    // non-cube visual/collision flag
     void setBlock(int bx, int by, int bz, const Block& block) {
         if (bx >= 0 && bx < CHUNK_SIZE_X &&
             by >= 0 && by < CHUNK_SIZE_Y &&
@@ -115,7 +112,7 @@ public:
         return InBounds(bx, by, bz) && blockEntities.count(Index(bx, by, bz)) != 0;
     }
 
-    // 0-15 each, kept separate - see LightSample's own comment.
+    // 0-15 each, kept separate
     uint8_t getSkyLight(int bx, int by, int bz) const {
         if (!InBounds(bx, by, bz)) return 15; // Out-of-bounds reads as full-bright, matching the default fill.
         return skyLight[Index(bx, by, bz)];
@@ -126,8 +123,7 @@ public:
         return blockLight[Index(bx, by, bz)];
     }
 
-    // Both channels in one call - see LightSample's own comment for why this
-    // beats calling the two getters above separately when both are needed.
+    // Both channels in one call
     LightSample getLightSample(int bx, int by, int bz) const {
         if (!InBounds(bx, by, bz)) return LightSample{};
         size_t index = Index(bx, by, bz);
@@ -144,8 +140,7 @@ public:
         if (InBounds(bx, by, bz)) skyLight[Index(bx, by, bz)] = value;
     }
 
-    // Overwrites (can lower) - for Update Light, unlike applyBlockLight's
-    // raise-only merge during initial chunk load.
+    // Overwrites (can lower)
     void setBlockLight(int bx, int by, int bz, uint8_t value) {
         if (InBounds(bx, by, bz)) blockLight[Index(bx, by, bz)] = value;
     }

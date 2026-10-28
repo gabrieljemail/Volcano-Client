@@ -33,9 +33,7 @@ struct Block {
     // collision at all (air, plants, fluids). Deliberately independent of
     // the two visual ids above: collision used to be derived from the render
     // model, which gave every block without drawable model geometry (shulker
-    // boxes, chests, beds, signs, ... - anything drawn by a block-entity
-    // renderer) no collision at all, so the client let the player sink
-    // into blocks the server treats as solid and got teleported back for it.
+    // boxes, chests, beds, signs, ...
     uint16_t collisionShapeId = UNKNOWN_COLLISION_SHAPE;
 
     // Index into BlockRegistry's BreakInfo table (hardness, tool class,
@@ -72,15 +70,12 @@ struct Block {
         return visualId != 0;
     }
 
-    // True air - neither a full-cube nor a non-cube visual. Used by
-    // Chunk::IsSectionEmpty to skip meshing/uploading a section that has
-    // nothing to draw at all (common near build-height limits).
+    // True air
     bool isAir() const {
         return visualId == 0 && nonCubeVisualId == 0;
     }
 
-    // Solid for collision purposes, per the real collision shape - see
-    // collisionShapeId.
+    // Solid for collision purposes, per the real collision shape
     bool hasCollision() const {
         return collisionShapeId == UNKNOWN_COLLISION_SHAPE ? isOpaque() : collisionShapeId != 0;
     }

@@ -34,7 +34,7 @@ struct ItemUseEvent {
     void Dispatch(GlobalState* /*state*/) const
     {
         // TODO: once ItemRegistry carries per-item behavior data, resolve it
-        // here instead of in InteractionManager - see the class comment.
+        // here instead of in InteractionManager
     }
 };
 

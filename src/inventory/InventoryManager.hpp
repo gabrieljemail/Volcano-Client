@@ -18,7 +18,7 @@ namespace Volcano {
 struct InventoryManager {
     static constexpr size_t MAIN_INVENTORY_SIZE = 27;
     static constexpr size_t HOTBAR_SIZE = 9;
-    static constexpr size_t ARMOR_SIZE = 4; // helmet, chestplate, leggings, boots - see SetSlot's protocol index mapping.
+    static constexpr size_t ARMOR_SIZE = 4; // helmet, chestplate, leggings, boots
     // Protocol MenuType ids. 26.1 inserted crafter_3x3 (7), shifting these up
     // by one from the 1.20 values (11/13). Unverified against the registry,
     // check the "Open window" log line if the layouts look wrong.

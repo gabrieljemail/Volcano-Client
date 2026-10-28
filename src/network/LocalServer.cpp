@@ -43,20 +43,13 @@ bool LocalServer::Start(const std::string& directory, const std::string& javaPat
         Log::Error("LocalServer: failed to create stdin pipe");
         return false;
     }
-    // Only the read end should be inherited by the child - if our own write-
-    // end handle were inheritable too, the child would hold a copy of it,
-    // and closing our copy in Stop() wouldn't actually close the pipe (the
-    // child's dangling copy would keep it open, and the child would never
-    // see EOF/our write take effect the way a real console's stdin would).
+    // Only the read end should be inherited by the child
     SetHandleInformation(stdinWrite, HANDLE_FLAG_INHERIT, 0);
 
     // Same story for stdout/stderr, in the other direction: one pipe, both
     // ends inheritable-write-side-only, so DrainOutputPipe (started below,
     // once the process actually exists) can log the server's own console
-    // output with a [SERVER] prefix instead of it going nowhere - javaw.exe
-    // has no console of its own to show it in, which is exactly why a
-    // crash-on-startup (bad JavaPath, unaccepted eula.txt, a port already in
-    // use, ...) was previously invisible.
+    // output with a [SERVER] prefix instead of it going nowhere
     HANDLE stdoutWrite = nullptr;
     if (!CreatePipe(&stdoutRead, &stdoutWrite, &pipeAttributes, 0))
     {
@@ -72,28 +65,18 @@ bool LocalServer::Start(const std::string& directory, const std::string& javaPat
     startupInfo.cb = sizeof(startupInfo);
     startupInfo.dwFlags = STARTF_USESTDHANDLES;
     startupInfo.hStdInput = stdinRead;
-    // Both stdout and stderr point at the same pipe - nothing here needs to
-    // tell them apart, and the server's own log lines already carry their
-    // own level (INFO/WARN/ERROR) as text.
+    // Both stdout and stderr point at the same pipe
     startupInfo.hStdOutput = stdoutWrite;
     startupInfo.hStdError = stdoutWrite;
 
     // javaw.exe (the JavaPath this project's settings.json expects) is
-    // Java's own windowless launcher - no console, so no flashing terminal
-    // window on top of this GUI app.
-    // javaArguments (JVM flags like -Xmx/-XX:...) must come BEFORE -jar -
-    // anything after -jar server.jar belongs to the jar's own main(), not
-    // the JVM. Putting them after it, as this used to, silently handed
-    // "-Xms512M" etc. to Minecraft's own (joptsimple-based) argument parser
-    // instead of the JVM, which doesn't recognize a "-X..." server option
-    // and fails outright - "X is not a recognized option".
+    // Java's own windowless launcher
     std::string commandLine = "\"" + javaPath + "\" " + javaArguments + " -jar server.jar"
         + " --port " + std::to_string(port) + " --nogui";
 
     PROCESS_INFORMATION processInfo{};
     // lpCommandLine must be a writable buffer per CreateProcess's own
-    // contract (it may modify it in place) - commandLine.data() on a
-    // non-const std::string is exactly that since C++17.
+    // contract (it may modify it in place)
     BOOL created = CreateProcessA(
         nullptr,
         commandLine.data(),
@@ -106,10 +89,7 @@ bool LocalServer::Start(const std::string& directory, const std::string& javaPat
         &startupInfo,
         &processInfo);
 
-    // Our copies - the child has its own now. stdoutWrite in particular
-    // must go, or DrainOutputPipe would never see EOF: a pipe only reports
-    // broken/closed once every write-end handle (ours AND the child's) is
-    // closed, and the child exiting only accounts for its own.
+    // Our copies
     CloseHandle(stdinRead);
     CloseHandle(stdoutWrite);
 
@@ -170,9 +150,7 @@ void LocalServer::DrainOutputPipe()
             if (!line.empty() && line.back() == '\r') line.pop_back();
             Log::Info("" + line);
             if (onOutputLine) onOutputLine(line);
-            // Vanilla's own "fully started, safe to log in" line - see
-            // WaitUntilReady's comment for why this (not a bare TCP
-            // connect, which succeeds far earlier) is the real signal.
+            // Vanilla's own "fully started, safe to log in" line
             if (line.find("Done (") != std::string::npos) serverReadyForLogin.store(true);
             lineBuffer.erase(0, newline + 1);
         }
@@ -226,8 +204,7 @@ void LocalServer::Stop()
     }
 
     // The process is gone either way by this point, so its copies of the
-    // stdout/stderr pipe are closed too - DrainOutputPipe's blocking
-    // ReadFile has already returned or is about to, so this won't hang.
+    // stdout/stderr pipe are closed too
     if (outputReaderThread.joinable()) outputReaderThread.join();
 
     CloseHandle(processHandle);

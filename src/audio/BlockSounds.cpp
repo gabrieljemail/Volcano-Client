@@ -92,7 +92,7 @@ void BlockSounds::Play(const char* folder, const Block& block, float volume, flo
     if (state->soundRegistry == nullptr || state->audioManager == nullptr) return;
     if (block.isAir()) return;
 
-    // Variants are <folder>/<material>1.ogg, 2, 3, ... - probe for how many exist.
+    // Variants are <folder>/<material>1.ogg, 2, 3, ...
     std::string base = std::string("minecraft:") + folder + "/" + MaterialFor(block);
     std::vector<std::string> variants;
     for (int i = 1; i <= 8; i++)

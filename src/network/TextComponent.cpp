@@ -50,8 +50,7 @@ std::shared_ptr<const LangMap> Lang()
 
 // Expands a lang format string's Java-style %s / %1$s / %% placeholders,
 // substituting each already-flattened "with" argument in order (plain %s)
-// or by explicit 1-based index (%1$s, %2$s, ...) - Minecraft lang strings
-// use both forms depending on the key.
+// or by explicit 1-based index (%1$s, %2$s, ...)
 void FormatTranslation(const std::string& format, const std::vector<std::vector<ChatSegment>>& args,
         uint32_t color, std::vector<ChatSegment>& out)
 {
@@ -85,7 +84,7 @@ void FormatTranslation(const std::string& format, const std::vector<std::vector<
             literal += '%';
             i = j;
         } else {
-            literal += format[i]; // Unrecognized specifier - show it literally rather than guessing.
+            literal += format[i]; // Unrecognized specifier
         }
     }
     flushLiteral();
@@ -163,7 +162,7 @@ void Flatten(const NBT::Tag& tag, uint32_t inheritedColor, std::vector<ChatSegme
                 if (auto langIt = lang->find(key); langIt != lang->end())
                     FormatTranslation(langIt->second, args, color, out);
                 else
-                    out.push_back(ChatSegment{ key, color }); // Unknown key - show it raw rather than nothing.
+                    out.push_back(ChatSegment{ key, color }); // Unknown key
             }
 
             if (auto it = compound.find("extra"); it != compound.end())
@@ -230,10 +229,7 @@ std::vector<ChatSegment> ReadTextComponent(PacketReader& reader)
     if (type == NBT::TagType::End) return {};
 
     // Network NBT (used for packet fields like this one) omits the tag
-    // name that file NBT always carries - read the payload straight off a
-    // view of the reader's remaining bytes via an istream (what NBT::
-    // ReadPayload expects), then re-sync `reader` by however many bytes
-    // that actually consumed.
+    // name that file NBT always carries
     std::string buffer(reinterpret_cast<const char*>(reader.Cursor()), reader.Remaining());
     std::istringstream stream(buffer, std::ios::binary);
     NBT::TagValue value = NBT::ReadPayload(stream, type);

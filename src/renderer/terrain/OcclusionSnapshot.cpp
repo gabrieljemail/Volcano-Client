@@ -55,7 +55,7 @@ bool OcclusionSnapshot::IsOccluded(const glm::vec3& min, const glm::vec3& max) c
         for (uint32_t x = tx0; x <= tx1; x++)
         {
             // Some part of the rectangle has drawn geometry at or beyond
-            // the box's nearest point (or sky, depth 1.0) - could be seen.
+            // the box's nearest point (or sky, depth 1.0)
             if (row[x] >= nearestDepth) return false;
         }
     }

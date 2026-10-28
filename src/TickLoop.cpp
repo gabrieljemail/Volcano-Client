@@ -27,16 +27,13 @@ namespace {
     constexpr float MAX_ACCUMULATED_TIME = 0.25f;
     // Vanilla's own step height: obstructions this tall or shorter (slabs,
     // snow layers/carpets, a staircase's first step) are auto-climbed on a
-    // horizontal move instead of blocking it - see MoveAxis/TryStepUp.
+    // horizontal move instead of blocking it
     constexpr float STEP_HEIGHT = 0.6f;
 
-    // Sneak eye-height dip - half of vanilla's real drop (1.62 standing to 1.27
-    // sneaking, a 0.35 dip), since a more subtle dip reads better
-    // once eased in over time instead of snapped.
+    // Sneak eye-height dip
     constexpr float STANDING_EYE_HEIGHT = 1.62f;
     constexpr float SNEAK_EYE_HEIGHT = STANDING_EYE_HEIGHT - (1.62f - 1.27f) * 0.5f;
-    // Exponential ease rate applied per-tick below - higher = snappier. Framerate
-    // (tick-rate) independent the same way RenderThread's FOV easing is.
+    // Exponential ease rate applied per-tick below
     constexpr float EYE_HEIGHT_EASE_RATE = 10.0f;
 
     bool IsFinite(glm::vec3 v)
@@ -69,8 +66,7 @@ namespace {
     constexpr float SPRINT_JUMP_BOOST = 0.2f;
 
     // A wall hit only stops a sprint if it blocked more than a sliver of the
-    // intended movement - sin(8 degrees), vanilla LocalPlayer's own "minor
-    // horizontal collision" angle.
+    // intended movement
     constexpr float MINOR_COLLISION_SIN = 0.1392f;
 
     // Vanilla's water physics (LivingEntity.travelInWater): flat 0.02 input
@@ -115,9 +111,7 @@ void TickLoop::Tick()
     // ordering guarantee that makes reading cached position state below
     // safe once this becomes true.
     //
-    // Must come before the lastTickTime read/write below - MeshingThread
-    // also writes lastTickTime (via SyncToPlayerPosition), and its right to
-    // do so rests on worldReady still being false at that moment.
+    // Must come before the lastTickTime read/write below
     if (!state->worldReady.load()) return;
 
     // Self-timed rather than fed a frame delta: measuring elapsed wall time
@@ -128,19 +122,7 @@ void TickLoop::Tick()
 
     // Apply any teleport the server sent since the last call. Done here, on
     // RenderThread, because past this point this thread owns the
-    // position/velocity state below - see QueueTeleport's comment.
-    //
-    // Velocity is deliberately left alone here. SynchronizePlayerPosition
-    // (see its handler's comment: "also every later teleport") is the same
-    // packet vanilla servers send both for an actual teleport and for a
-    // routine mid-flight resync - there's no way to tell those apart from
-    // the packet alone, and the server never includes a velocity to
-    // substitute in. Zeroing it unconditionally used to reset the player's
-    // fall speed to 0 whenever a routine resync happened to land mid-fall,
-    // which is most of the time a fall lasts long enough for one to arrive
-    // - that was this bug's actual cause, not anything physics-related.
-    // Vanilla's own client carries velocity across this packet too; grounded
-    // still resets, since the new position's ground contact is unknown.
+    // position/velocity state below
     {
         std::lock_guard<std::mutex> lock(teleportMutex);
         if (pendingTeleport.has_value())
@@ -167,8 +149,7 @@ void TickLoop::Tick()
     // checking it (discarding a jump attempt made while airborne), holding
     // the key means the very next call queues another attempt, and the
     // first FixedStep() where the player is grounded again actually jumps.
-    // Both stay gated behind inputAllowedNow - a screen/chat box being open
-    // must not also make the player jump underneath it.
+    // Both stay gated behind inputAllowedNow
     if (inputAllowedNow) {
         if (jumpRequested.exchange(false)) jumpQueued = true;
         if (jumpHeldActive.load()) jumpQueued = true;
@@ -285,8 +266,7 @@ void TickLoop::UpdateSprinting(bool inputAllowedNow, float forwardInput, bool sn
 
 glm::vec3 TickLoop::GetRenderPosition() const
 {
-    // Computed fresh every call, not cached - FixedStep() only advances at a
-    // fixed 20Hz, so a cached mix would sit frozen then visibly snap.
+    // Computed fresh every call, not cached
     std::lock_guard<std::mutex> lock(renderPositionMutex);
     float alpha = std::chrono::duration<float>(std::chrono::steady_clock::now() - lastFixedStepTime).count() / FIXED_DT;
     alpha = std::clamp(alpha, 0.0f, 1.0f);
@@ -552,13 +532,7 @@ void TickLoop::FixedStep(bool inputAllowedNow)
         }
     }
 
-    // See GlobalState::attackStrengthTicker's own comment - reset by
-    // InteractionManager::PrimaryTrigger on a swing, incremented here once
-    // per real fixed tick regardless of input, same as vanilla's own
-    // per-tick ticker.
-    // Switching items resets it at the start of the next tick, not on the
-    // switch itself, so a swing between the two still uses the old item's
-    // attributes (attribute swapping).
+    // See GlobalState::attackStrengthTicker's own comment
     int32_t mainhandItemId;
     {
         std::lock_guard<std::mutex> lock(state->inventory.mutex);
@@ -574,17 +548,7 @@ void TickLoop::FixedStep(bool inputAllowedNow)
 
     // Horizontal movement follows vanilla's real per-tick model: accelerate
     // toward the input direction, then apply momentum-preserving friction,
-    // rather than snapping straight to a target speed - this is what gives
-    // vanilla its short ramp-up/slide-to-a-stop feel instead of an instant
-    // start/stop. All constants below are vanilla's own (see
-    // PlayerAttributes::Defaults() for the attribute defaults they read):
-    // default block slipperiness (0.6) * 0.91 gives the well-known 0.546
-    // ground friction, which combined with the 0.098 blocks/tick ground
-    // acceleration converges to vanilla's documented terminal speed of
-    // 0.2159 blocks/tick (4.317 blocks/sec). Airborne friction/acceleration
-    // (0.91 / 0.02) are vanilla's own too - much less momentum lost per
-    // tick, and a much smaller push from input, which is exactly why
-    // vanilla air control feels so limited compared to ground movement.
+    // rather than snapping straight to a target speed
     float forwardInput = inputAllowedNow ? moveForwardInput.load() : 0.0f;
     float rightInput = inputAllowedNow ? moveRightInput.load() : 0.0f;
 
@@ -597,12 +561,11 @@ void TickLoop::FixedStep(bool inputAllowedNow)
 
     constexpr float GROUND_FRICTION = 0.546f; // default block slipperiness (0.6) * 0.91
     constexpr float AIR_FRICTION = 0.91f;
-    constexpr float AIR_ACCELERATION = 0.02f; // flat, unlike ground accel below - not attribute-scaled in vanilla either
+    constexpr float AIR_ACCELERATION = 0.02f; // flat, unlike ground accel below
 
     // Sprint/sneak speed: vanilla applies these as attribute modifiers, but
     // here it's simplest to just scale the speed used below directly.
-    // Sprinting itself is real state, not just "the key is held" - see
-    // UpdateSprinting - and it already excludes sneaking.
+    // Sprinting itself is real state, not just "the key is held"
     bool sneaking = sneakActive.load();
     UpdateSprinting(inputAllowedNow, forwardInput, sneaking);
     // Using an item (eating, blocking, ...) ends the sprint and slows to 0.2x.
@@ -675,16 +638,14 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     // Jump is an instant velocity set, exactly like vanilla's
     // jumpFromGround(). It has to land before this tick's move below, not
     // before gravity/drag, or the jump gets decayed before it ever displaces
-    // anything - vanilla moves with the raw 0.42 on the jump tick itself and
-    // only decays velocity afterward, in prep for next tick.
+    // anything
     if (jumpQueued)
     {
         if (grounded)
         {
             float jumpVelocity = static_cast<float>(state->attributes->GetDouble("generic.jump_strength", 0.42));
             velocity.y = jumpVelocity;
-            // Sprint-jumping adds a forward push on top - what makes it
-            // faster than sprinting on foot.
+            // Sprint-jumping adds a forward push on top
             if (sprinting)
             {
                 velocity.x += forward.x * SPRINT_JUMP_BOOST;
@@ -776,13 +737,7 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     eyeHeight.store(Math::Damp(currentEyeHeight, targetEyeHeight, EYE_HEIGHT_EASE_RATE, FIXED_DT), std::memory_order_relaxed);
 
     // Gravity + drag apply every tick regardless of grounded state, but only
-    // AFTER this tick's move - resting on the ground works because the
-    // resulting downward move next tick gets collided and zeroed back out,
-    // not because gravity itself stops. Applying this before the move (as a
-    // previous version did) decays the jump before it ever moves anything,
-    // shaving well over a third off the actual jump height. Constants and
-    // the sub-0.005 snap-to-zero are vanilla's own per-tick formula:
-    // velocity.y = (velocity.y - gravity) * 0.98.
+    // AFTER this tick's move
     constexpr float VERTICAL_DRAG = 0.98f;
     if (!inWater) velocity.y = (velocity.y - gravity) * VERTICAL_DRAG;
     if (std::fabs(velocity.y) < 0.005f && !inWater) velocity.y = 0.0f;
@@ -958,7 +913,7 @@ void TickLoop::MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float del
     if (moved != requested)
     {
         vel[axis] = 0.0f;
-        horizontalCollision = true; // MovementFlags bit 1 - see HasHorizontalCollision.
+        horizontalCollision = true; // MovementFlags bit 1
         horizontalCollisionAxes |= static_cast<uint8_t>(1u << axis);
         if (std::fabs(lastHorizontalDir[axis]) >= MINOR_COLLISION_SIN) majorHorizontalCollision = true;
     }

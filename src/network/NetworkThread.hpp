@@ -31,19 +31,11 @@ public:
     ~NetworkThread();
     void Start();
 
-    // Signals ThreadEntry to stop WITHOUT waiting for it - unlike
-    // destroying/replacing this object (which joins, and so blocks the
-    // caller for as long as shutdown takes, up to LocalServer::Stop()'s own
-    // 30s grace period), this is safe to call from the render thread even
-    // mid-startup. Used by the starting-server screen's Cancel button: it
-    // just needs the attempt abandoned, not confirmation it's fully torn
-    // down before the click handler returns.
+    // Signals ThreadEntry to stop WITHOUT waiting for it
     void RequestStop();
 
     // True once the connection is closed and (for singleplayer) the local
-    // server process has fully stopped - i.e. after RequestStop(), when it's
-    // safe to reset world state without packets still arriving. The thread
-    // itself stays alive/joinable after this, see ThreadEntry.
+    // server process has fully stopped
     bool HasSessionEnded() const { return sessionEnded.load(); }
 
 private:
@@ -62,11 +54,7 @@ private:
     // which is what guarantees ThreadEntry has actually exited before
     // ioContext (which the thread uses the whole time it runs) gets torn
     // down below it. Declared before ioContext, as it originally was here,
-    // meant reconnecting - destroying the previous NetworkThread instance
-    // via the connect button's unique_ptr reassignment - destroyed
-    // ioContext out from under a worker thread that could still be using
-    // it, which is undefined behavior for asio and hung the app
-    // indefinitely instead of crashing outright.
+    // meant reconnecting
     std::jthread worker;
 
     void ThreadEntry(std::stop_token stopToken);

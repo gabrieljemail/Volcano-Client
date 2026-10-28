@@ -19,13 +19,7 @@ namespace Volcano {
 namespace {
 
 // Meshes one section (both the cube and non-cubic passes) and upserts the
-// three render-list maps by SectionKey - shared by both the dirty-remesh
-// path and the initial chunk-load path below, which differ only in how they
-// get their Chunk& (already in World vs. not yet inserted) and whether they
-// skip an empty section. Returns the two timings for the caller's own log
-// line.
-// `retry` means a slab allocation failed for at least one of the section's meshes: its
-// old meshes were left in place, and the caller should remesh it again shortly.
+// three render-list maps by SectionKey
 struct SectionMeshTiming { double cubeMs; double nonCubicMs; bool retry; };
 
 SectionMeshTiming MeshAndUpsertSection(GlobalState* state, const TextureManager* textureManager,
@@ -76,7 +70,7 @@ SectionMeshTiming MeshAndUpsertSection(GlobalState* state, const TextureManager*
         retry
     };
 
-    // Smoothed for the debug HUD, which is the only reader - skipped while hidden.
+    // Smoothed for the debug HUD, which is the only reader
     if (state->debugHudVisible)
     {
         float total = static_cast<float>(timing.cubeMs + timing.nonCubicMs);
@@ -146,10 +140,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
     // Local to this connection attempt (mirrors what used to be
     // DrainNetworkInbox's static locals). Tracks which chunk the player is
     // actually spawning into, so worldReady only flips once *that* chunk has
-    // been meshed and inserted - not just whichever chunk happens to arrive
-    // first. The server has no obligation to send the spawn column first,
-    // and gating on "any chunk" let the player fall through empty space
-    // until it showed up.
+    // been meshed and inserted
     bool seenSpawn = false;
     std::optional<std::pair<int, int>> spawnChunk;
 
@@ -182,7 +173,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
         std::unique_ptr<Chunk> chunk;
         std::optional<SectionKey> dirtySection;
         std::optional<glm::vec3> spawnPosition;
-        size_t queueDepth = 0; // Remaining chunk-load backlog after this pop - see the timing log below.
+        size_t queueDepth = 0; // Remaining chunk-load backlog after this pop
         std::vector<std::pair<int, int>> pendingUnloads;
         std::vector<PendingBlockEdit> appliedEdits; // For BLOCK_CHANGED, fired once the inbox lock is dropped.
 
@@ -191,13 +182,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
 
             // Apply every pending server Block Update up front, each turning
             // into more dirtySections entries the same way a local edit
-            // does (see World::SetBlock) - these are rare/bursty (an
-            // explosion, a correction to a mispredicted local break) rather
-            // than a steady stream, so draining all of them here beats
-            // leaving a correction sitting unapplied behind whatever else
-            // is already queued. World's own mutex is separate from this
-            // one and nothing holds both in the other order, so nesting the
-            // SetBlock call inside this lock is safe.
+            // does (see World::SetBlock)
             while (!state->networkInbox.pendingBlockEdits.empty())
             {
                 PendingBlockEdit edit = state->networkInbox.pendingBlockEdits.front();
@@ -259,8 +244,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             // Dirty sections (a local block edit, or a Block Update just
             // applied above) take priority over ordinary chunk-load
             // traffic, so an edit near the player doesn't sit behind a
-            // backlog of newly-streaming chunks - see NetworkInbox::
-            // dirtySections' own comment.
+            // backlog of newly-streaming chunks
             if (!state->networkInbox.dirtySections.empty())
             {
                 dirtySection = state->networkInbox.dirtySections.front();
@@ -291,8 +275,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
         // Server-side unloads (walked out of render distance): drop the chunk
         // from World and every section of it from the three render lists,
         // handing their slab regions back. Done here, on the only thread
-        // that inserts chunks, so it's ordered against loads - see
-        // NetworkInbox::pendingUnloads.
+        // that inserts chunks, so it's ordered against loads
         for (const auto& [unloadX, unloadZ] : pendingUnloads)
         {
             state->world->RemoveChunk(unloadX, unloadZ);
@@ -365,11 +348,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             chunk->SetFadeStart(std::chrono::steady_clock::now());
 
             // Meshed section-by-section before InsertChunk below places this
-            // chunk itself into World, but that's fine - ChunkMesher only
-            // needs World for this chunk's neighbors (see its own comment),
-            // not itself. Sections with nothing to draw (common near
-            // build-height limits) are skipped entirely rather than
-            // producing (and slab-allocating) an empty mesh for them.
+            // chunk itself into World, but that's fine
             double totalCubeMs = 0.0, totalNonCubicMs = 0.0;
             int meshedSections = 0;
             for (int sectionY = 0; sectionY < SECTIONS_PER_CHUNK; sectionY++)
@@ -411,10 +390,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                 }
             }
 
-            // Diagnostic timing - see whether a slow-to-appear chunk is
-            // actually expensive to mesh, or just backed up behind
-            // queueDepth others in this single-threaded queue (see this
-            // loop's own comment on why there's no parallelism here yet).
+            // Diagnostic timing
             if (Log::MeshEventsEnabled())
             {
                 Log::Info("[MESH] chunk (" + std::to_string(chunkX) + "," + std::to_string(chunkZ) + "): "
@@ -423,9 +399,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                     + std::to_string(queueDepth) + " queued");
             }
 
-            // worldReady must be the last write of this transition - see
-            // its comment in GlobalState.hpp for why RenderThread relies on
-            // that order.
+            // worldReady must be the last write of this transition
             if (seenSpawn && spawnChunk.has_value()
                 && spawnChunk->first == chunkX && spawnChunk->second == chunkZ
                 && !state->worldReady.load())

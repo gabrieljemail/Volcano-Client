@@ -14,7 +14,7 @@ namespace Volcano::ItemRegistry {
 // One item type's static metadata, from minecraft-data's items.json plus a
 // texture-array layer resolved against the already-loaded TextureManager.
 struct ItemTypeInfo {
-    std::string name;          // e.g. "diamond_sword" - matches the resource-pack texture stem for the common case.
+    std::string name;          // e.g. "diamond_sword"
     std::string displayName;   // e.g. "Diamond Sword".
     uint16_t textureLayer = 0; // TextureManager::array layer to sample for this item's icon.
     bool hasTexture = false;   // false if GetLayerIndex() found nothing under this name (see Init()'s own note).

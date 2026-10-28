@@ -60,7 +60,7 @@ void NonCubicPass::Record(FrameContext& frame)
     // majority of the pass, but it still matters for whatever genuinely
     // blends, and it's per-CHUNK only: two overlapping translucent surfaces
     // WITHIN one chunk mesh still draw in mesher-emission order. The indirect
-    // path keeps this order too - commands are written in list order.
+    // path keeps this order too
     {
         std::lock_guard<std::mutex> lock(frame.state->nonCubicRenderListMutex);
         const bool indirect = wantIndirect && nonCubicIndirectPipeline != VK_NULL_HANDLE;
@@ -83,7 +83,7 @@ void NonCubicPass::Record(FrameContext& frame)
                 DrawMesh(cmd, *mesh, frame.state, GlobalState::TRIANGLES_CUTOUT);
             }
         }
-    } // nonCubicRenderListMutex released here - the translucent pass below
+    } // nonCubicRenderListMutex released here
       // only needs translucentRenderListMutex, and holding both at once
       // needlessly blocks MeshingThread's upsert() into nonCubicRenderList
       // for the whole translucent draw too.

@@ -18,31 +18,20 @@
 namespace Volcano::EntityJsonModel {
 
 // Data-driven replacement for what used to be HumanoidModel.hpp's hardcoded
-// BOXES array - one JSON file (resources/volcano/models/entity/*.json) per
-// species now supplies the box list instead of a new .hpp per mob. See
-// PigModel.hpp/CowModel.hpp/QuadrupedModel.hpp/GolemModel.hpp for the
-// flat-tinted procedural shapes this doesn't replace (yet) - this loader is
-// currently only used by the UV-textured humanoid path (player/zombie/
-// skeleton), which is the one that actually needs per-species box
-// dimensions (see skeleton.json's thinner arms/legs) and a real skin.
+// BOXES array
 
 struct Vertex {
-    glm::vec3 position; // World-local units (1.0 = 1 block), feet at the origin - see detail::ToWorldLocal.
+    glm::vec3 position; // World-local units (1.0 = 1 block), feet at the origin
     glm::vec3 normal;
     glm::vec2 uv; // 0..1, against this model's own textureWidth x textureHeight sheet.
 };
 
-// One box, straight from a model JSON's `boxes` entry - same fields as
-// vanilla's CubeListBuilder.addBox(x,y,z,w,h,d) + texOffs(u,v) + the containing
-// part's PartPose.offset, still in vanilla's own model-space units (Y
-// increasing DOWNWARD from a y=0 reference at the neck/shoulder line, 16
-// units = 1 block) exactly as the Java source declares them - BuildMesh
-// converts to this engine's Y-up, feet-at-origin, 1-unit-per-block space.
+// One box, straight from a model JSON's `boxes` entry
 struct BoxDef {
     glm::vec3 origin;
     glm::vec3 size;
     glm::vec2 uv;
-    bool mirror = false; // Flips U for this box's faces - vanilla's left_arm/left_leg reuse the right side's texOffs mirrored.
+    bool mirror = false; // Flips U for this box's faces
     glm::vec3 pivot{ 0.0f };
     glm::vec3 rotation{ 0.0f }; // Degrees (vanilla PartPose rotation), applied about pivot in Z,Y,X order.
     float inflate = 0.0f;       // CubeDeformation: grows the box on every side, UVs keep the original size.
@@ -108,9 +97,7 @@ namespace detail {
 // normal/u/v chosen so u x v == normal throughout, matching EntityBoxMesh.hpp
 // AppendBox's own winding rule (corners taken in order center -u-v, +u-v,
 // +u+v, -u+v are then CCW seen from outside). That convention is only valid
-// for a proper (non-reflecting) model-to-world transform, though - see
-// BuildMesh's own comment on why this file's index order is reversed
-// relative to AppendBox's.
+// for a proper (non-reflecting) model-to-world transform, though
 struct FaceDef { glm::vec3 normal, u, v; const char* name; };
 
 constexpr std::array<FaceDef, 6> FACES = {{
@@ -122,9 +109,7 @@ constexpr std::array<FaceDef, 6> FACES = {{
     { {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}, "west" },
 }};
 
-// Standard Minecraft entity-model box UV unwrap - see HumanoidModel.hpp's
-// git history (this file's predecessor) for the full derivation against
-// vanilla's real ModelPart.Cube/Polygon constructors.
+// Standard Minecraft entity-model box UV unwrap
 inline glm::vec4 FaceUVRect(const char* faceName, glm::vec2 uv, glm::vec3 size)
 {
     float w = size.x, h = size.y, d = size.z;
@@ -150,10 +135,7 @@ inline std::array<glm::vec2, 4> FaceUVCorners(const char* faceName, float u0, fl
 
 // Converts a point from vanilla's own coordinate space (Y-down, 16
 // units/block, y=0 at the neck/shoulder line) to this engine's world-local
-// space (Y-up, 1 unit/block, y=0 at the feet) - matches Entity::position's
-// "feet/base" convention. 24.0 is the model-space Y of the feet
-// (right_leg/left_leg's pivot.y + their box's own bottom edge), the same
-// constant vanilla's own model proportions use.
+// space (Y-up, 1 unit/block, y=0 at the feet)
 inline glm::vec3 ToWorldLocal(glm::vec3 modelSpace, float feetY = 24.0f)
 {
     constexpr float UNITS_PER_BLOCK = 16.0f;
@@ -178,10 +160,7 @@ struct MeshInfo {
 
 // Appends the full static mesh (in world-local space, feet at the origin -
 // see detail::ToWorldLocal) to `vertices`/`indices`. Call once per loaded
-// ModelDef; the result is a fixed shared mesh - nothing per-entity or
-// per-frame in it. Each part's boxes are contiguous so parts can be posed
-// separately. `vanillaHanded` is for entities that animate (see above);
-// chests keep the legacy mirrored layout their JSON was authored against.
+// ModelDef; the result is a fixed shared mesh
 inline MeshInfo BuildMesh(const ModelDef& model, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
     float scale = 1.0f, bool vanillaHanded = false)
 {

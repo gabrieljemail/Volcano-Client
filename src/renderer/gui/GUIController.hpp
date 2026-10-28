@@ -100,24 +100,7 @@ public:
     static float GetGUIScale() { return guiScale; }
     static float GetFrameTime() { return frameTime; }
 
-    // Debug display API (the F3 overlay) - usable by the codebase and mods alike.
-    //
-    // Shows "<name>: <value>" under `category`. Categories are sorted
-    // alphabetically (case-insensitive), as are the names inside each, and are
-    // spread over the left and right sides of the screen, filling the left
-    // first. `*update` is called only while the overlay is visible, a couple of
-    // times a second, on the render thread, and returns the current value. T is
-    // one of uint8_t, uint16_t, uint32_t, uint64_t, int32_t, int64_t, float,
-    // double, std::string, or std::array<std::string, N> (N lines).
-    //
-    // A string value may hold several lines: separate them with "\n\t" (tabs
-    // are drawn as 4 spaces), e.g. "3.4 ms\n\tTerrain: 1.2 ms\n\tGUI: 0.4 ms".
-    //
-    // Registering the same category and name again replaces the entry. The
-    // pointed-to std::function must outlive the entry: the caller owns it, so
-    // a mod must remove its entries (RemoveDebugDisplay, or SetDebugDisplay
-    // with a null pointer) before the function is destroyed. `update` must not
-    // call back into these functions.
+    // Debug display API (the F3 overlay)
     template <typename T>
     static void SetDebugDisplay(const std::string& category, const std::string& name, std::function<T()>* update)
     {
@@ -132,8 +115,7 @@ public:
 
     // API:
     // Render a window, pinned to a screen anchor plus a pixel offset from it
-    // (see GUI::ScreenAnchor) rather than an absolute position - so it stays
-    // correctly placed across resizes and window-mode changes.
+    // (see GUI::ScreenAnchor) rather than an absolute position
     static GUI::GUIWindow* CreateWindow(const std::string& name, GUI::ScreenAnchor anchor,
                                          float offsetX = 8.0f, float offsetY = 8.0f);
 
@@ -155,31 +137,13 @@ public:
     static void SetPauseScreen(GUI::Screen* screen) { pauseScreen = screen; }
     static GUI::Screen* GetPauseScreen() { return pauseScreen; }
 
-    // Chat input box - "T" (see VolcanoClient.cpp's "OpenChat" action)
-    // raises it; Enter sends the typed text (via NetworkClient::
-    // SendChatMessage, a no-op if there's no live connection) and closes
-    // it, Escape closes it without sending. Unlike a Screen this doesn't
-    // hide the HUD or the chat scrollback (which shifts up to make room
-    // for the input box instead) - it only needs to steal keyboard focus
-    // and stop the mouse-look/movement inputs RenderThread::PollInputs
-    // would otherwise also apply to whatever's being typed.
+    // Chat input box
     static bool IsChatInputOpen() { return chatInputOpen; }
     // `initialText` pre-fills the box (e.g. "/" to start a command).
     static void OpenChatInput(const char* initialText = "");
     static void CloseChatInput();
 
-    // Controls API - usable by the codebase and mods alike.
-    //
-    // The three standard controls, drawn the way the main menu draws its own:
-    // one height (GetControlHeight), one look. Call them anywhere inside an
-    // ImGui window (a HUD element, a Screen's customContent...); they work out
-    // their own padding, so no layout math is needed at the call site. Widths
-    // default to the main menu's (CONTROL_WIDTH); width <= 0 fits the label.
-    // Place them like any ImGui item (SameLine, SetCursorPosX), or use
-    // CenterNextControl / DrawMenuButton for the common centered column.
-    //
-    // `label` identifies the control: it must be unique within the window (add
-    // "##something" after the visible text to tell apart two with the same text).
+    // Controls API
     static constexpr float CONTROL_WIDTH = 240.0f;
 
     // Height of every standard control, in ImGui units.
@@ -271,7 +235,7 @@ private:
     static float frameTime;
     static int frameCount;
     static float fpsTimer;
-    // Debug display internals - see SetDebugDisplay. Entries live in the .cpp.
+    // Debug display internals
     static void RegisterDebugEntry(const std::string& category, const std::string& name, std::function<std::string()> format);
     static void RegisterBuiltinDebugDisplays();
     static void UpdateDebugDisplay(float deltaTime);
@@ -298,11 +262,7 @@ private:
     static std::unordered_map<uint16_t, ItemIcon> itemIconCache;
 
     // A single-image (not texture-array-layer) icon loaded straight from a
-    // PNG on disk - for standalone HUD art like the crosshair that isn't
-    // part of TextureManager's block/item atlas (wrong size, not a game
-    // block/item). Owns the whole image, unlike ItemIcon above (which only
-    // owns a view into TextureManager's shared image) - Shutdown() must
-    // destroy the image/allocation too, not just the view.
+    // PNG on disk
     struct StandaloneIcon {
         VkImage image = VK_NULL_HANDLE;
         VmaAllocation allocation = VK_NULL_HANDLE;
@@ -310,10 +270,9 @@ private:
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
     };
     // Loaded once in Init(); null (every field VK_NULL_HANDLE) if the PNG is
-    // missing or fails to load - RenderCrosshair() draws nothing in that
-    // case rather than crashing startup over missing HUD art.
+    // missing or fails to load
     static StandaloneIcon crosshairIcon;
-    static StandaloneIcon crosshairEntityIcon; // "Looking at an entity" variant - see GlobalState::lookingAtEntity.
+    static StandaloneIcon crosshairEntityIcon; // "Looking at an entity" variant
 
     // Vanilla GUI art (textures/gui/...). Same load/failure behavior as the
     // crosshair: null if missing, and callers fall back to a flat rect.
@@ -357,17 +316,9 @@ private:
     static std::unordered_map<uint16_t, GUI::Sprite> itemSprites; // Empty sprite = no icon.
     static ImTextureID ModelIconForItem(uint16_t itemId, const std::string& itemName);
 
-    // Loads one standalone PNG (path) into a StandaloneIcon - image, view,
-    // and an ImGui-registered descriptor set, uploaded via the same
-    // staging-buffer-then-copy path TextureManager::UploadLayer uses (see
-    // BeginOneShotCommands/TransitionImageLayout in VulkanInit.hpp). Never
-    // throws: any failure (missing file, Vulkan call failing) is logged and
-    // returns a default (all-null) StandaloneIcon - see its own comment.
-    // A non-zero outlineColor (IM_COL32) keeps only the sprite's black
-    // outline pixels, recolored, and clears the rest.
+    // Loads one standalone PNG (path) into a StandaloneIcon
     static StandaloneIcon LoadStandaloneIcon(const std::string& path, uint32_t outlineColor = 0);
-    // Draws the centered crosshair every HUD frame - plain or the
-    // "looking at an entity" variant, per GlobalState::lookingAtEntity.
+    // Draws the centered crosshair every HUD frame
     static void RenderCrosshair();
     // Debug nametags above every entity: type, name, position. Plain text, so
     // AddTextShadows gives it the UI's shadow. Graphics.Nametags toggles it.
@@ -379,9 +330,7 @@ private:
     // texture-array layer, for drawing an item icon via ImDrawList::
     // AddImage. ImGui's Vulkan backend draws a single flat 2D texture per
     // ImTextureID, not an indexed array layer the way the 3D world pass
-    // samples TextureManager::array - so each distinct layer needs its own
-    // narrow (single-layer, single-mip) VkImageView and a descriptor set
-    // registered via ImGui_ImplVulkan_AddTexture wrapping it.
+    // samples TextureManager::array
     static ImTextureID GetItemIcon(uint16_t textureLayer);
 
     // Resolves an inventory slot's contents straight to a drawable icon -
@@ -405,10 +354,7 @@ private:
     static void CloseInventoryWindow();
 
     // Top-left corner of the (still-placeholder) hotbar, resolved fresh
-    // every frame the same way every other HUD element is - see
-    // ResolveAnchor. The other three HUD methods above all derive their own
-    // position from this one point so they stay lined up with each other
-    // even if the hotbar's own anchor/margin ever changes.
+    // every frame the same way every other HUD element is
     static ImVec2 HotbarOrigin();
 
     // Resolves an anchor + inward pixel offset into an absolute top-left

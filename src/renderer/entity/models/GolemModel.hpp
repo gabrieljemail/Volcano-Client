@@ -7,13 +7,7 @@
 
 namespace Volcano::GolemModel {
 
-// Six-box static mesh (head, body, 2 arms, 2 legs) for the iron golem - its
-// own proportions (a big flat-topped body, arms almost as long as the body
-// is tall, short thick legs) rather than either the flat cube or
-// HumanoidModel's much slimmer player/zombie skeleton. Same normalized
-// -0.5..0.5 space and batched/instanced draw path as QuadrupedModel - see
-// its own comment for why (entity.vert rescales this per-instance against
-// EntityRegistry's iron_golem width/height entry).
+// Six-box static mesh (head, body, 2 arms, 2 legs) for the iron golem
 inline void BuildMesh(std::vector<EntityMeshVertex>& vertices, std::vector<uint32_t>& indices)
 {
     AppendBox(vertices, indices, {  0.00f,  0.42f,  0.15f }, { 0.30f, 0.16f, 0.30f }); // head

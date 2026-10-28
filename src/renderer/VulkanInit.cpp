@@ -35,8 +35,7 @@ static int g_windowedX = 0, g_windowedY = 0;
 // Init() - see the glfwGetWindowSize() call there.
 static int g_windowedWidth = 0, g_windowedHeight = 0;
 
-// Graphics.VSync/BufferCount from settings.json - read via g_globalState,
-// which Init() sets before either of these can be called.
+// Graphics.VSync/BufferCount from settings.json
 static VkPresentModeKHR DesiredPresentMode()
 {
     bool vsync = std::get<bool>(g_globalState->config->Get("Graphics.VSync", true));
@@ -69,23 +68,13 @@ static void FramebufferSizeCallback(GLFWwindow* /*win*/, int width, int height)
 }
 
 #ifdef _WIN32
-// Set once the render thread has presented at least one frame - see
-// NotifyFramePresented(). GLFW_FOCUSED can already read true immediately
-// after glfwCreateWindow() even though Windows hasn't actually shown/
-// composited the window yet, so a focus-gained event (or an eager check at
-// InputHandler construction - since removed) can fire before the window is
-// really up. Locking the cursor at that point clips it to a window the
-// desktop hasn't painted, which looks like a visible cursor trapped in a
-// "ghost" window until the user clicks it. Withholding the lock until a
-// frame has genuinely been presented fixes that ordering.
+// Set once the render thread has presented at least one frame
 static bool g_firstFramePresented = false;
 
 static void WindowFocusCallback(GLFWwindow* win, int focused)
 {
     // Only fires inside glfwPollEvents(), which only the main thread calls
-    // (VolcanoClient.cpp's message loop) - direct glfwSetInputMode calls
-    // here are fine. Also mirrors focus into GlobalState so render-thread
-    // code (NotifyFramePresented) can check it without calling GLFW itself.
+    // (VolcanoClient.cpp's message loop)
     if (g_globalState) g_globalState->windowFocused.store(focused != 0);
 
     if (focused)
@@ -113,10 +102,7 @@ void NotifyFramePresented()
 
     // The window may already have (real) focus by the time this first
     // frame lands, in which case no further WindowFocusCallback will ever
-    // fire to lock the cursor - so apply the same check here once, now
-    // that the window is genuinely on screen. Runs on the render thread
-    // (DrawFrame calls this), so it can't call glfwGetWindowAttrib/
-    // glfwSetInputMode itself - see GlobalState::pendingCursorMode.
+    // fire to lock the cursor
     if (g_globalState && g_globalState->windowFocused.load() && !GUIController::IsScreenOpen())
     {
         g_globalState->pendingCursorMode.store(GLFW_CURSOR_DISABLED);
@@ -155,7 +141,7 @@ VkShaderModule CreateShaderModule(const std::vector<char>& code, const std::stri
 // see ChunkDrawBatch). Shares base's layout, so the push constant range is
 // simply unused. Returns VK_NULL_HANDLE (and the caller keeps the per-section
 // path) when indirect draw isn't available, or when a shader pack replaces
-// `plainVert` - the pack's vertex shader has to keep running.
+// `plainVert`
 static VkPipeline CreateIndirectPipeline(const Volcano::Engine::ShaderLibrary& shaders,
     const char* plainVert, const char* indirectVert, const VkGraphicsPipelineCreateInfo& base,
     const VkVertexInputBindingDescription& vertexBinding,
@@ -292,29 +278,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     // textures), which flips that axis's winding handedness - fixed there
     // (see GreedyMeshAxis's handednessFlipped). All faces are now CCW from
     // outside in world space. If terrain renders inside-out, flip frontFace
-    // below between COUNTER_CLOCKWISE and CLOCKWISE - it's uniform now.
-    //
-    // Historical note - previously: no backface culling for terrain. This
-    // used to be VK_CULL_MODE_BACK_BIT
-    // with VK_FRONT_FACE_CLOCKWISE, on the theory that ChunkMesher's greedy
-    // quads are consistently wound CCW-from-outside in world space (see
-    // GreedyMeshAxis's positiveCorners) and RenderThread's p[1][1] *= -1
-    // projection flip (needed to land the image right-side-up) inverts that
-    // to CW in framebuffer space uniformly for every face. In practice that
-    // held for wall faces (X/Z-swept) but NOT for floor/ceiling faces
-    // (Y-swept) - after correcting for the wall case, floors still rendered
-    // inside-out (visible from below, culled from above, letting you see
-    // through solid ground to bedrock) - a per-axis asymmetry the theory
-    // above says shouldn't exist, and repeated attempts to hand-derive the
-    // actual rule didn't resolve it. Rather than continue guessing, terrain
-    // just draws both sides now: every face renders regardless of view
-    // angle, so whichever winding is nearer the camera wins the depth test
-    // and looks correct either way. This also means a player wedged inside
-    // a solid block sees that block's own surface (like any other wall)
-    // instead of every face flipping to show the far side of the world -
-    // no more "wallhack" view from getting stuck. Costs roughly double the
-    // fragment work versus perfectly-tuned culling; not worth chasing
-    // further on an already-60fps-capped integrated GPU.
+    // below between COUNTER_CLOCKWISE and CLOCKWISE
     rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
@@ -407,9 +371,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     // fill-mode result implies, e.g. telling "this face is missing
     // entirely" apart from "this face exists but lost the depth/winding
     // test" (which polygon fill alone can't distinguish). Shares every
-    // other piece of state with the pipeline above - only polygonMode
-    // differs - so it's built from the exact same CreateInfo, not a
-    // parallel hand-copied one that could quietly drift out of sync.
+    // other piece of state with the pipeline above
     VkPipelineRasterizationStateCreateInfo wireframeRasterizer = rasterizer;
     wireframeRasterizer.polygonMode = VK_POLYGON_MODE_LINE;
     wireframeRasterizer.cullMode = VK_CULL_MODE_NONE;
@@ -527,27 +489,7 @@ void DestroyGraphicsPipeline()
 // stairs, slabs, carpets and snow layers are fully OPAQUE solids that just
 // happen not to fill their voxel, and misc.frag discards every texel below
 // 1% alpha, so this is really a cutout pass, not a translucent one. With
-// writes off, nothing here could occlude anything else here - so a slab's
-// own far-side and underside faces (drawn, since culling is off) painted
-// straight over its near faces whenever they happened to be emitted later,
-// which is what read as stairs and slabs being "inside-out", having
-// "duplicate" surfaces against a neighbouring full cube, and flickering as
-// the draw order shifted. Writing depth lets the depth test resolve all of
-// that per-fragment, independent of emission order, without needing
-// backface culling that the cross billboards still can't tolerate.
-//
-// The trade-off is genuinely translucent texels (0 < alpha < 1, e.g.
-// stained glass) now write depth too and so can occlude translucent
-// geometry behind them. Fixing that properly needs a third pass that draws
-// truly translucent surfaces after this one with writes off - strictly
-// better than every opaque partial shape in the world being drawn
-// inside-out. That third pass now exists (CreateTranslucentPipeline, right
-// below this function) for water, the first thing that actually needed it;
-// stained glass still goes through this cutout pass unchanged.
-// Shadow-receiving twins of one misc pipeline (cutout or translucent): `base`
-// with misc_shadow.* and the shadowed layout terrain already built. Left null
-// when that layout is missing, a shader pack replaces the misc shaders, or a
-// shader fails to build.
+// writes off, nothing here could occlude anything else here
 static void CreateShadowedMiscPipelines(const Volcano::Engine::ShaderLibrary& shaders, const VkGraphicsPipelineCreateInfo& base,
     const VkVertexInputBindingDescription& binding, const VkVertexInputAttributeDescription* attributes,
     uint32_t attributeCount, VkPipeline& direct, VkPipeline& indirect)
@@ -700,7 +642,7 @@ void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicStateInfo;
-    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline - see this function's own comment.
+    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline
     pipelineInfo.renderPass = renderPass;
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
@@ -814,7 +756,7 @@ void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_FALSE; // The one difference from nonCubicPipeline - see this function's own comment.
+    depthStencil.depthWriteEnable = VK_FALSE; // The one difference from nonCubicPipeline
     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
@@ -850,7 +792,7 @@ void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicStateInfo;
-    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline - see CreateNonCubicPipeline's own comment.
+    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline
     pipelineInfo.renderPass = renderPass;
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
@@ -932,8 +874,7 @@ static void CreateDepthResources()
     depthImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     depthImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     // SAMPLED, on top of the attachment bit every frame's render pass needs,
-    // so HiZBuildPass can texelFetch it after the render pass ends - see
-    // CreateHiZResources' own comment.
+    // so HiZBuildPass can texelFetch it after the render pass ends
     depthImageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     depthImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     depthImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -967,10 +908,7 @@ static void CreateDepthResources()
 // specific mip, not the whole chain), the descriptor set layouts the
 // compute shaders bind against, and the actual descriptor sets (allocated
 // and pointed at those views here, since neither depends on which pipeline
-// eventually uses them - mirrors textureSetLayout/textureSet being created
-// here while graphicsPipeline itself is TerrainPass-owned). See
-// VulkanInit.hpp's own comment on the pyramid's mip 0 / max-reduction
-// convention.
+// eventually uses them
 void CreateHiZResources()
 {
     hizExtent = swapchainExtent;
@@ -1004,10 +942,7 @@ void CreateHiZResources()
     }
 
     // One-shot UNDEFINED -> GENERAL for every mip, maintained as a
-    // permanent invariant from here on - HiZBuildPass::Record only ever
-    // issues memory barriers against this image, never layout transitions,
-    // since GENERAL already supports both imageLoad/imageStore and being a
-    // vkCmdCopyImageToBuffer source (the diagnostic readback).
+    // permanent invariant from here on
     {
         VkCommandBuffer oneShot = BeginOneShotCommands();
         VkImageMemoryBarrier toGeneral{};
@@ -1197,10 +1132,7 @@ void DestroyHiZResources()
     hizMipLevels = 0;
 }
 
-// Shader-dependent Hi-Z compute pipelines - see CreateHiZResources' own
-// comment on the split between this and that. Neither shader takes push
-// constants: both derive their working size from imageSize() on the bound
-// images directly, so there's nothing per-dispatch to push.
+// Shader-dependent Hi-Z compute pipelines
 void CreateHiZPipelines(const Volcano::Engine::ShaderLibrary& shaders)
 {
     VkDevice dev = GetDevice();
@@ -1339,8 +1271,7 @@ void Init(GlobalState* state)
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE); // Show system window decorations.
 
-    // config must be ready before the window is created - the very next
-    // line reads Window.Width/Height from it.
+    // config must be ready before the window is created
     g_globalState = state;
 
     uint32_t windowWidth = std::get<uint32_t>(state->config->Get("Window.Width", uint32_t{854}));
@@ -1369,10 +1300,7 @@ void Init(GlobalState* state)
 
     // Window.Mode is NOT applied here: switching the display mode this early
     // (before the splash screen) meant the focus churn around startup could
-    // auto-iconify the fullscreen window - GLFW then restores the desktop
-    // mode and leaves the window at the old fullscreen size in the corner.
-    // RenderThread's first PollInputs applies it instead (see
-    // ApplyWindowSettings - g_appliedConfigVersion starts unset).
+    // auto-iconify the fullscreen window
 
     #ifdef _WIN32
         // Windows-only fallback: on some setups (seen on Intel Gen9 HD 530,
@@ -1389,23 +1317,7 @@ void Init(GlobalState* state)
     // imported through Vulkan::Vulkan/vulkan-1.lib, an ordinary PE import
     // table entry) makes vk-bootstrap skip its own internal
     // LoadLibrary("vulkan-1.dll") + a cascade of GetProcAddress-by-name
-    // calls to bootstrap itself - harmless and universal for any Vulkan
-    // app, but that exact runtime "load a system DLL, then walk its
-    // exports by string name" pattern is also what a reflective DLL
-    // loader/injector does, and it's what got this unsigned, no-reputation
-    // binary flagged as Trojan.Injector/Rootkit by Malwarebytes and Avast.
-    // Keep the instance's required API version at this project's existing
-    // 1.1 floor rather than whatever vkEnumerateInstanceVersion reports.
-    // That call returns the Vulkan LOADER's own compiled ceiling, which is
-    // not a guarantee that every installed ICD (GPU driver) actually
-    // implements it - requesting it via require_api_version() made
-    // vk-bootstrap's PhysicalDeviceSelector reject any physical device
-    // whose real VkPhysicalDeviceProperties::apiVersion fell short,
-    // producing "no_suitable_device" on this machine. The debug overlay's
-    // reported Vulkan version doesn't come from this requested value
-    // anyway - see physicalDevice.properties.apiVersion below, which is
-    // the selected device's own true supported version, independent of
-    // what we request here.
+    // calls to bootstrap itself
     vkb::InstanceBuilder instanceBuilder(vkGetInstanceProcAddr);
     FullscreenExclusive::ConfigureInstance(instanceBuilder);
     auto instanceReturn = instanceBuilder
@@ -1454,15 +1366,7 @@ void Init(GlobalState* state)
     // Graphics.PreferredDevice (settings.json): when non-empty, pick the
     // device whose name contains it (case-insensitively, so "nvidia" is
     // enough for "NVIDIA GeForce RTX 4070") instead of whatever
-    // vk-bootstrap's own ranking puts first - the usual reason to set it
-    // being a laptop where the default pick is the integrated GPU. Empty
-    // (the default this Get() writes on first run) keeps that ranking.
-    //
-    // A name matching nothing is a warning, not a failure: set_name() would
-    // make selection fail outright, which turns a stale settings.json into
-    // a client that won't start. Falling through to the default device and
-    // logging the names that *were* available makes the setting
-    // self-correcting instead.
+    // vk-bootstrap's own ranking puts first
     std::string preferredDevice = std::get<std::string>(
         g_globalState->config->Get("Graphics.PreferredDevice", std::string{}));
     if (!preferredDevice.empty())
@@ -1475,7 +1379,7 @@ void Init(GlobalState* state)
 
         // select_devices() applies the same surface/feature requirements as
         // select() below, so anything it returns is already a device this
-        // client can actually run on - the name match only reorders them.
+        // client can actually run on
         auto candidates = physDeviceSelector.select_devices();
         if (candidates)
         {
@@ -1570,8 +1474,7 @@ void Init(GlobalState* state)
     swapchain = swapchainBuilderReturn.value();
     FullscreenExclusive::Acquire(device.device, swapchain.swapchain);
     // Records what vk-bootstrap actually granted, not just what
-    // DesiredPresentMode() asked for - see GlobalState::presentMode's own
-    // comment for why those can differ.
+    // DesiredPresentMode() asked for
     g_globalState->presentMode = static_cast<uint8_t>(swapchain.present_mode);
     Log::Info(std::string("[GFX] Present mode " + std::to_string(static_cast<int>(swapchain.present_mode)) + " (requested " + std::to_string(static_cast<int>(DesiredPresentMode())) + "; 0 = immediate, 1 = mailbox, 2 = FIFO)"));
 
@@ -1604,8 +1507,7 @@ void Init(GlobalState* state)
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     // STORE, not DONT_CARE: HiZBuildPass samples this after the render pass
-    // ends to build the Hi-Z pyramid - DONT_CARE let the driver discard it
-    // (read back as a constant 0).
+    // ends to build the Hi-Z pyramid
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -1774,18 +1676,12 @@ void Init(GlobalState* state)
     vkAllocateDescriptorSets(GetDevice(), &shadowAllocInfo, &shadowSet);
 
     // Pipelines (terrain, non-cubic, translucent, entities, selection, ...)
-    // are no longer built here - each belongs to a RenderPass the engine
-    // creates right after this returns (see VulkanRenderEngine::Init), so a
-    // shader reload can rebuild them without touching the device/swapchain
-    // set up here.
+    // are no longer built here
 
     // Create command pool and command buffers. Must happen before
     // EntityRenderer::Init() (EntityPass::Create): its UploadCubeMesh() uses
     // BeginOneShotCommands()/EndOneShotCommands(), which allocate from the
-    // global `commandPool` - with no error checking on either the pool or
-    // the command-buffer allocation, running it against a not-yet-created
-    // (VK_NULL_HANDLE) pool crashed outright instead of throwing, which is
-    // why it showed no error log at all before the process just exited.
+    // global `commandPool`
     VkCommandPoolCreateInfo cmdPoolInfo{};
     cmdPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     cmdPoolInfo.queueFamilyIndex = graphicsQueueFamilyIndex;
@@ -1805,14 +1701,7 @@ void Init(GlobalState* state)
         throw std::runtime_error("Failed to allocate command buffers!");
     }
 
-    // Must come after commandPool exists - CreateHiZResources() uses
-    // BeginOneShotCommands()/EndOneShotCommands() for its one-shot layout
-    // transition, which allocate from `commandPool` (see the comment on
-    // command pool creation above for what running this against a
-    // not-yet-created pool actually does: crashes outright, no error log).
-    // RecreateSwapchain() calls this same function right after
-    // CreateDepthResources() instead - commandPool already exists there,
-    // since Init() has always run once before any resize.
+    // Must come after commandPool exists
     CreateHiZResources();
 
     // Create semaphores and fences.
@@ -1849,7 +1738,7 @@ void Init(GlobalState* state)
 // the render thread, between frames.
 void RecreateSwapchain(int width, int height)
 {
-    if (width <= 0 || height <= 0) return; // Minimized - nothing to rebuild yet.
+    if (width <= 0 || height <= 0) return; // Minimized
 
     vkDeviceWaitIdle(device.device);
 
@@ -1918,9 +1807,7 @@ WindowMode GetWindowMode()
     return g_windowMode;
 }
 
-// Settings ApplyWindowSettings last applied - compared against config so
-// only real changes touch the window (a settings write to some unrelated
-// key shouldn't re-set the window size or re-enter fullscreen).
+// Settings ApplyWindowSettings last applied
 struct AppliedWindowSettings {
     WindowMode mode = WindowMode::Windowed;
     uint32_t width = 0, height = 0;                        // Window.Width/Height (windowed size)
@@ -2168,10 +2055,7 @@ void Cleanup()
 VkCommandBuffer BeginOneShotCommands()
 {
     // commandPool must already exist (Init() creates it before anything
-    // that calls this - see EntityRenderer::Init()'s own comment on why
-    // that order matters) - a null pool here used to fail both calls below
-    // silently and hand back/begin-record a garbage command buffer, which
-    // crashed the process outright instead of throwing.
+    // that calls this
     if (commandPool == VK_NULL_HANDLE) {
         throw std::runtime_error("[ERROR] BeginOneShotCommands called before commandPool was created.");
     }

@@ -19,7 +19,7 @@ namespace Volcano {
 // handler writes the local player's resolved attributes (attack speed from
 // the held weapon, reach, movement speed, ...) here from NetworkThread,
 // while TickLoop (NetworkThread) and InteractionManager (render thread)
-// read them - so every access goes through `mutex`.
+// read them
 class PlayerAttributes {
 public:
     PlayerAttributes() = default;

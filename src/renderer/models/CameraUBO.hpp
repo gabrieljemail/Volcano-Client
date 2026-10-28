@@ -30,9 +30,7 @@ struct CameraUBO {
     // Configurable via Graphics.Shading.* rather than hardcoded in the
     // shader so a shader pack (or a future "flat lighting" toggle) can
     // override it. Indexed in terrain.frag by the packed vertex's
-    // normalIndex - see ChunkMesher's FaceIndexFor for the Up/Down/North/
-    // South/East/West -> 0-5 mapping this must match (North and South share
-    // shadeNorthSouth, East and West share shadeEastWest, same as vanilla).
+    // normalIndex
     float shadeTop = 1.0f;
     float shadeBottom = 0.4f;
     float shadeNorthSouth = 0.8f;
@@ -40,7 +38,7 @@ struct CameraUBO {
 
     // Distance fog toward the horizon sky color (rgb; w unused), measured
     // cylindrically from cameraPosition (xyz; w unused). std140 offsets 160,
-    // 176, 192, 196 - must match every shader that declares them.
+    // 176, 192, 196
     glm::vec4 fogColor{0.0f};
     glm::vec4 cameraPosition{0.0f};
     float fogStart = 0.0f;

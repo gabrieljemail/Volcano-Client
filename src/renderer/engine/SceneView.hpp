@@ -15,9 +15,7 @@ struct SceneView {
     glm::mat4 view{1.0f};
     glm::mat4 proj{1.0f};
 
-    // Eye position in world space - the same point view was built from,
-    // passed separately so passes that sort or cull by distance (non-cubic,
-    // entities) don't have to invert the view matrix to recover it.
+    // Eye position in world space
     glm::vec3 cameraPosition{0.0f};
 
     // The walk's sway, already in `view` (identity without view bobbing). The
@@ -25,10 +23,7 @@ struct SceneView {
     glm::mat4 viewBob{1.0f};
 
     // Clear color for the main pass (already gamma-corrected by
-    // Graphics.Brightness - see RenderThread::BuildSceneView), and the raw
-    // linear 0 (midnight) .. 1 (noon) brightness it was mixed from - see
-    // RenderThread's DayBrightness(). CameraUBO's skyLightFactor reads this
-    // raw value directly, not skyColor's gamma-corrected one.
+    // Graphics.Brightness
     glm::vec3 skyColor{0.0f};
     float dayBrightness = 1.0f;
 
@@ -47,7 +42,7 @@ struct SceneView {
     float fogEnd = 0.0f;
 
     // Vanilla's per-face diffuse shading (Graphics.Shading.*), forwarded
-    // into CameraUBO - see that struct's own comment.
+    // into CameraUBO
     float shadeTop = 1.0f;
     float shadeBottom = 0.4f;
     float shadeNorthSouth = 0.8f;
@@ -72,8 +67,7 @@ struct SceneView {
 
     // Graphics.IndirectDraw: draw chunk sections with one multi-draw indirect
     // call per list instead of a draw per section. Ignored (per-section draws)
-    // where the device or shader pack can't do it - see VulkanInit's
-    // *IndirectPipeline handles.
+    // where the device or shader pack can't do it
     bool indirectDraw = true;
 };
 

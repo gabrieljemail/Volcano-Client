@@ -35,9 +35,7 @@ public:
 
 private:
     // Untouched until MeshingThread applies the server's real spawn
-    // position (see GlobalState::worldReady) - nothing reads this before
-    // then that needs it to look like a plausible spawn point, so it's just
-    // the zero value rather than a guess.
+    // position (see GlobalState::worldReady)
     std::atomic<float> x{0.0f}, y{0.0f}, z{0.0f};
 };
 

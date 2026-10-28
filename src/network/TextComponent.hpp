@@ -21,11 +21,7 @@ struct ChatSegment {
 
 // Flattens a text component already parsed as an NBT::Tag (a String tag for
 // plain text, a Compound tag for anything styled, or a List tag for an
-// implicit array of components - see the protocol's Text Component
-// encoding) into styled runs, resolving each segment's Minecraft color
-// name/hex code and inheriting the nearest ancestor's color into children
-// that don't override it. "translate" components fall back to showing the
-// raw translation key - no lang-file lookup is done.
+// implicit array of components
 std::vector<ChatSegment> ParseTextComponent(const NBT::Tag& tag);
 
 // Reads one network-encoded (unnamed - network NBT omits the root tag's

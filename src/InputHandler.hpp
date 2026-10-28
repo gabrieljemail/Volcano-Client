@@ -17,10 +17,7 @@ constexpr size_t MAX_KEYS = 512; // covers GLFW_KEY_LAST (~348) with headroom fo
 
 // Mouse buttons share the same keysDown/keysPressedThisFrame/
 // keysReleasedThisFrame bitsets as keyboard keys (see InputState) rather
-// than getting their own - offsetting them past GLFW_KEY_LAST, instead of
-// using GLFW's own 0-7 button codes directly, means they stay unambiguous
-// even if a future GLFW header widens the key range. RegisterAction's
-// `triggers` accepts these the same as any GLFW_KEY_* constant.
+// than getting their own
 constexpr size_t MOUSE_BUTTON_OFFSET = GLFW_KEY_LAST + 1;
 constexpr uint16_t MOUSE_BUTTON_LEFT = static_cast<uint16_t>(MOUSE_BUTTON_OFFSET + GLFW_MOUSE_BUTTON_LEFT);
 constexpr uint16_t MOUSE_BUTTON_RIGHT = static_cast<uint16_t>(MOUSE_BUTTON_OFFSET + GLFW_MOUSE_BUTTON_RIGHT);
@@ -58,13 +55,7 @@ struct InputAxis {
 // with unrelated data, per the spec's InputState design.
 //
 // Owned exclusively by the main/render thread: KeyCallback (fired by
-// glfwPollEvents(), called from PollInputs() at the top of every frame - see
-// the tick-loop plan's thread-merge step) and every IsKeyDown/WasActivated/
-// GetAxis reader all run on that one thread now, so there's nothing left to
-// race. This used to be a snapshot ProcessFrame() copied from a
-// mutex-guarded live/pending split written by GLFW callbacks on a genuinely
-// different (main, pre-merge) thread - see git history for that shape if
-// the render loop is ever split back onto its own thread.
+// glfwPollEvents(), called from PollInputs() at the top of every frame
 struct alignas(64) InputState {
     std::bitset<MAX_KEYS> keysDown;
     std::bitset<MAX_KEYS> keysPressedThisFrame;
@@ -120,7 +111,7 @@ public:
         }
     }
 
-    // Drains buffered raw motion - call right before glfwPollEvents().
+    // Drains buffered raw motion
     void PollRawMouse()
     {
         if (bufferedRawMouse) Platform::OS::ReadBufferedRawMouse(rawMouseDeltaX, rawMouseDeltaY);
@@ -256,8 +247,7 @@ private:
         // GLFW_REPEAT: keysDown already true, nothing to change.
     }
 
-    // Fired by glfwPollEvents(), same as KeyCallback - writes into the same
-    // bitsets, offset by MOUSE_BUTTON_OFFSET (see its own comment).
+    // Fired by glfwPollEvents(), same as KeyCallback
     static void MouseButtonCallback(GLFWwindow* win, int button, int action, int mods)
     {
         (void)mods;

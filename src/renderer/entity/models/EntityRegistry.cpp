@@ -18,15 +18,7 @@ const std::string ENTITIES_JSON_PATH = std::string("resources/minecraft-data/dat
 
 std::unordered_map<uint32_t, EntityTypeInfo> g_entitiesById;
 
-// Picks EntityRenderer's procedural shape for a type by name - minecraft-
-// data has no shape/model hint of its own (its "category" field is far too
-// coarse, e.g. "Passive mobs" covers both cows and bats), so this is a
-// curated list against the handful of shapes EntityRenderer actually knows
-// how to build. `entityKind` is minecraft-data's "type" field, checked first
-// as a cheap correctness net: only living things (animal/hostile/player/
-// mob/living/water_creature/ambient) are ever eligible, so a name collision
-// with something inanimate (items, projectiles, vehicles) can't accidentally
-// pick up a shape. Anything not listed below keeps the flat placeholder cube.
+// Picks EntityRenderer's procedural shape for a type by name
 ShapeKind ClassifyShape(const std::string& name, const std::string& entityKind)
 {
     // Inanimate, so checked before the living-only gate below.
@@ -37,11 +29,7 @@ ShapeKind ClassifyShape(const std::string& name, const std::string& entityKind)
     };
     if (!LIVING_KINDS.count(entityKind)) return ShapeKind::Cube;
 
-    // Kept in sync with EntityRenderer.cpp's SkinForEntityType - that's what
-    // actually resolves a bound skin texture for each of these; a name added
-    // here with no matching skin still renders (falls back to the flat cube
-    // for that one type, see EntityRenderer::RecordDraw), it just won't look
-    // humanoid until a skin is wired up too.
+    // Kept in sync with EntityRenderer.cpp's SkinForEntityType
     static const std::unordered_set<std::string> HUMANOID_NAMES = {
         "player", "mannequin", "zombie", "skeleton"
     };
@@ -63,8 +51,7 @@ ShapeKind ClassifyShape(const std::string& name, const std::string& entityKind)
     return ShapeKind::Cube;
 }
 
-// Split out so the public Init() below can wrap it in a catch-all - a single
-// malformed entity entry must never be able to crash the whole app.
+// Split out so the public Init() below can wrap it in a catch-all
 void InitImpl() {
     g_entitiesById.clear();
 

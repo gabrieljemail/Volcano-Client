@@ -15,11 +15,7 @@ namespace Volcano {
 // AABBs against it.
 //
 // Testing with the snapshot's OWN viewProj (not this frame's) keeps depth
-// and projection consistent with each other - no reprojection needed. The
-// cost is that something newly revealed pops in a frame or two late.
-//
-// Render-thread only: written in SubmitFrame before any pass records, and
-// read by TerrainPass/NonCubicPass during that same frame.
+// and projection consistent with each other
 struct OcclusionSnapshot {
     bool valid = false;
     // Bumped by HiZBuildPass::BeginFrame only when a published snapshot
@@ -53,7 +49,7 @@ struct OcclusionSnapshot {
     }
 };
 
-// Single instance, owned by the render thread - see the comment above.
+// Single instance, owned by the render thread
 inline OcclusionSnapshot occlusionSnapshot;
 
 } // namespace Volcano

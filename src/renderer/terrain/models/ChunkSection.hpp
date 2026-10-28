@@ -13,15 +13,11 @@ namespace Volcano {
 
 // A chunk's mesh is now built and stored in 16-tall vertical slices
 // ("sections", matching vanilla's own render-chunk granularity) instead of
-// one mesh per full 16x384x16 column - see ChunkMesher::MeshChunkSection's
-// own comment for why. Block STORAGE (Chunk.hpp/World.hpp) stays
-// full-column; only the mesh is sliced.
+// one mesh per full 16x384x16 column
 constexpr int SECTION_SIZE_Y = 16;
 constexpr int SECTIONS_PER_CHUNK = CHUNK_SIZE_Y / SECTION_SIZE_Y; // 24
 
-// Identifies one chunk section - the key every section-granularity render
-// list (GlobalState::renderList/nonCubicRenderList/translucentRenderList)
-// and the dirty-remesh queue (NetworkInbox::dirtySections) use.
+// Identifies one chunk section
 struct SectionKey {
     int32_t chunkX;
     int32_t chunkZ;
@@ -46,9 +42,7 @@ struct PendingLightUpdate {
 struct SectionKeyHash {
     size_t operator()(const SectionKey& key) const
     {
-        // Plain combine - chunk coordinates and section indices are all
-        // small enough (well under 2^20) that a naive shift-and-xor spreads
-        // fine; this isn't a hot path worth a fancier mixer.
+        // Plain combine
         size_t h = std::hash<int32_t>()(key.chunkX);
         h = h * 31 + std::hash<int32_t>()(key.chunkZ);
         h = h * 31 + std::hash<int32_t>()(key.sectionY);

@@ -61,8 +61,7 @@ void RenderThread::RunFrame()
     DrawFrame();
     // Both PollInputs (F11, TickLoop's jump check) and DrawFrame (via
     // GUIController::Update()'s Escape check) read this frame's
-    // press/release edges above - only clear them now that both have
-    // had their chance, not before.
+    // press/release edges above
     state->input->EndFrame();
 
     // Everything above except pacing, split into real CPU work and time
@@ -82,7 +81,7 @@ void RenderThread::RunFrame()
 
 void RenderThread::Shutdown()
 {
-    // Waits for the GPU before destroying anything - see StopRendering.
+    // Waits for the GPU before destroying anything
     state->renderEngine->StopRendering();
 }
 
@@ -210,19 +209,13 @@ void RenderThread::PollInputs()
         sprintToggled = !sprintToggled;
     }
 
-    // F9 rebuilds every render pass's pipelines from disk - picks up edited
-    // shader pack (or built-in) .spv files without restarting. Applied at
-    // the start of the next frame, between frames, by the engine itself.
+    // F9 rebuilds every render pass's pipelines from disk
     if (state->input->WasActivated("ReloadShaders"))
     {
         state->renderEngine->RequestShaderReload();
     }
 
-    // "G" toggles Graphics.Lighting - see SceneView::lightingEnabled, read
-    // fresh from config every frame in BuildSceneView, so flipping it
-    // here just needs to persist the new value. Gated on chat/screen being
-    // closed so typing "g" into the chat box or a text field doesn't also
-    // toggle it.
+    // "G" toggles Graphics.Lighting
     if (!GUIController::IsChatInputOpen() && !GUIController::IsScreenOpen()
         && state->input->WasActivated("ToggleLighting"))
     {
@@ -269,9 +262,7 @@ void RenderThread::PollInputs()
         }
     }
 
-    // Drop key: a tap drops one item, holding it (or Ctrl) drops the stack - see
-    // DropKeyTracker. The count is reduced locally at once; the server's slot
-    // update corrects it. Spectators have nothing to drop.
+    // Drop key: a tap drops one item, holding it (or Ctrl) drops the stack
     static DropKeyTracker dropKey;
     if (inputAllowed && state->localGameMode.load() != 3)
     {
@@ -415,14 +406,7 @@ constexpr glm::vec3 SKY_TOP_DAY(0.471f, 0.655f, 1.0f);
 constexpr glm::vec3 SKY_HORIZON_NIGHT(0.02f, 0.02f, 0.05f);
 constexpr glm::vec3 SKY_HORIZON_DAY(0.753f, 0.847f, 1.0f);
 
-// C++ mirror of terrain.frag's NotGamma - see its own comment for the
-// curve's shape and where it comes from (the real notGamma(vec3) in
-// resources/minecraft/assets/minecraft/shaders/core/lightmap.fsh). Used
-// here to apply the same "Bright" curve to the sky clear color that the
-// shader applies to per-block lighting, so raising Graphics.Brightness
-// actually lifts the night sky instead of leaving it exactly as dark as a
-// pure day/night color lerp would - the "clear color interpolation is
-// linear" gap this was added to close.
+// C++ mirror of terrain.frag's NotGamma
 float NotGamma(float level)
 {
     float inverted = 1.0f - level;
@@ -530,9 +514,7 @@ Engine::SceneView RenderThread::BuildSceneView()
 
     // Same γ/NotGamma blend terrain.frag applies to per-block lighting, so
     // raising Graphics.Brightness lifts the night sky too instead of only
-    // affecting terrain - this is the "clear color interpolation is linear"
-    // gap. Skipped entirely (not just blended toward brightnessFactor=0)
-    // when lighting is off, matching "G"'s existing all-or-nothing meaning.
+    // affecting terrain
     float skyColorBrightness = lightingEnabled
         ? glm::mix(scene.dayBrightness, NotGamma(scene.dayBrightness), brightnessFactor)
         : scene.dayBrightness;
@@ -581,8 +563,7 @@ glm::mat4 RenderThread::BuildProjection(const Engine::RenderExtent& extent)
     currentFovOffset = glm::mix(currentFovOffset, targetFovOffset,
         1.0f - std::exp(-FOV_EASE_RATE * frameDeltaTime));
 
-    // Vulkan's clip space has Y pointing down - flip it so the image lands
-    // right-side-up.
+    // Vulkan's clip space has Y pointing down
     glm::mat4 p = glm::perspective(glm::radians(baseFov + currentFovOffset), aspect, 0.05f, 1000.0f);
     p[1][1] *= -1.0f;
     return p;

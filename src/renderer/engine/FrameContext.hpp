@@ -6,10 +6,7 @@
 #include <glm/glm.hpp>
 #include "SceneView.hpp"
 
-// Same opaque-handle typedef vulkan_core.h itself declares - repeating an
-// identical typedef is legal, and it keeps this header (and therefore
-// RenderPass.hpp and everything client-side that includes it) free of the
-// full Vulkan headers.
+// Same opaque-handle typedef vulkan_core.h itself declares
 typedef struct VkCommandBuffer_T* VkCommandBuffer;
 
 namespace Volcano {
@@ -27,7 +24,7 @@ enum class PassStage : uint8_t {
     OVERLAY,  // After the main pass, inside an overlay render pass that keeps its contents.
 };
 
-// Output size in pixels - the swapchain extent on the Vulkan backend.
+// Output size in pixels
 struct RenderExtent {
     uint32_t width = 0;
     uint32_t height = 0;

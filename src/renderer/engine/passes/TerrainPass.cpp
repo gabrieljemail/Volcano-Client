@@ -47,10 +47,7 @@ void TerrainPass::Record(FrameContext& frame)
     }
 
     // Locked against MeshingThread, which appends to renderList as chunks
-    // stream in - see the mutex's comment in GlobalState.hpp. Frustum
-    // culling runs inside the lock (cheap: a handful of dot products per
-    // chunk) so the filtered list doesn't outlive renderList's own Mesh
-    // storage.
+    // stream in
     std::lock_guard<std::mutex> lock(frame.state->renderListMutex);
     const std::vector<const Mesh*>& visible = GetVisible(cache, frame.state->renderList, frame, false);
 

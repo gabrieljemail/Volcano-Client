@@ -15,9 +15,7 @@ void ShaderPackPass::Create(const ShaderLibrary& shaders)
     std::vector<char> fragCode = shaders.LoadFromPack(FRAGMENT_SHADER);
     if (vertCode.empty() || fragCode.empty())
     {
-        // Present but not SPIR-V - ShaderLibrary already logged which one.
-        // A missing optional overlay isn't worth abandoning the whole pack
-        // over, so this doesn't throw.
+        // Present but not SPIR-V
         return;
     }
 
@@ -44,7 +42,7 @@ void ShaderPackPass::Create(const ShaderLibrary& shaders)
     stages[1].module = fragModule;
     stages[1].pName = "main";
 
-    // No vertex buffer - the fullscreen triangle comes from gl_VertexIndex.
+    // No vertex buffer
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 

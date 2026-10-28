@@ -20,11 +20,7 @@ namespace Engine::Vulkan { class VulkanRenderEngine; }
 // the CPU never issues one draw call per entity.
 class EntityRenderer {
 public:
-    // Maximum entities drawn in a single frame - also the capacity of the
-    // per-frame instance SSBO. Frustum culling plus this distance-sorted cap
-    // are the "three culling methods" from the entity renderer plan, minus
-    // depth testing (already free: entities share the chunk pass's
-    // depth-tested pipeline/attachment).
+    // Maximum entities drawn in a single frame
     static constexpr uint32_t MAX_VISIBLE_ENTITIES = 256;
 
     // Creates the entity pipelines (entity.* and entity_textured.*,
@@ -34,8 +30,7 @@ public:
     // layout, command pool) - EntityPass::Create() calls it.
     static void Init(const Engine::ShaderLibrary& shaders);
 
-    // Rebuilds just the two pipelines - for a shader reload. Meshes, skins
-    // and buffers are left alone. The GPU must be idle.
+    // Rebuilds just the two pipelines
     static void ReloadPipelines(const Engine::ShaderLibrary& shaders);
 
     // Rebuilds every pack-sourced texture (mob/chest skins, block-entity
@@ -43,8 +38,7 @@ public:
     static void ReloadTextures();
 
     // Destroys everything Init() created. Must run before the VMA allocator
-    // is destroyed - EntityPass::Destroy() calls it from
-    // RenderEngine::StopRendering().
+    // is destroyed
     static void Shutdown();
 
     // The default (Steve) skin as a sampler2D descriptor set, and its layout,
@@ -105,8 +99,7 @@ public:
     // draw call per shape for the flat-shaded ones. Textured mobs, players and
     // block entities are grouped by mesh and skin and drawn instanced, through
     // indirect draws when `indirect` is set and the device supports it. Must be
-    // called inside an active render pass with viewport/scissor already set - binds its own pipeline and descriptor
-    // sets but relies on the caller's dynamic state.
+    // called inside an active render pass with viewport/scissor already set
     static void RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state,
         const glm::mat4& view, const glm::mat4& proj, const glm::vec3& cameraPosition, bool indirect = true);
 };

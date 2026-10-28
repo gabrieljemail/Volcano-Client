@@ -16,22 +16,7 @@ namespace Volcano::Engine::Passes {
 
 // Builds this frame's Hi-Z occlusion pyramid (VulkanInit's hizImage) from
 // the just-finished depth buffer: a same-resolution copy into mip 0, then a
-// max-reduction mip chain above it - see hiz_copy.comp/hiz_downsample.comp
-// for the per-texel math, and VulkanInit.hpp's own comment on the pyramid
-// itself.
-//
-// One small mip (at most READBACK_MAX_DIM on each side) is then copied into
-// a per-frame-slot host buffer. When that slot comes around again, its fence
-// has signaled, so BeginFrame() can safely copy it into occlusionSnapshot
-// (see OcclusionSnapshot.hpp), which VisibleChunkController tests chunk
-// sections against on the CPU.
-//
-// NOT a RenderPass: compute dispatches can't run inside a render pass
-// instance, and this engine's entire pass list is recorded inside one
-// single vkCmdBeginRenderPass/vkCmdEndRenderPass pair (see
-// VulkanRenderEngine::SubmitFrame). So this is called directly from
-// SubmitFrame, after EndMainPass, rather than registered in RenderEngine's
-// pass list like every other pass.
+// max-reduction mip chain above it
 class HiZBuildPass {
 public:
     static constexpr uint32_t MAX_SLOTS = 3; // >= maxFramesInFlight

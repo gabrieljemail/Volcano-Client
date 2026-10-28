@@ -8,11 +8,7 @@
 
 namespace Volcano {
 
-// A secondary-trigger click with nothing targeted - no block or entity in
-// reach (see InteractionManager::SecondaryTriggerStart/Hold). Eating,
-// drinking, drawing a bow, throwing an ender pearl, blocking with a shield,
-// etc. all go through this same packet; what actually happens is entirely
-// server-side based on what's in `hand`.
+// A secondary-trigger click with nothing targeted
 struct UseItemEvent {
     Hand hand;
     float yaw;
