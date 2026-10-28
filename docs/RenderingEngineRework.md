@@ -167,7 +167,7 @@ Design notes:
 | FOV easing and projection | `RenderThread::BuildProjection` (client side) |
 | `CameraUBO` memcpy | `VulkanRenderEngine::UploadCamera` |
 | Begin render pass with clear values, viewport, scissor | `VulkanRenderEngine::BeginMainPass` |
-| Terrain pipeline bind (incl. F3 wireframe), descriptor binds, frustum-culled `renderList` draw | `Passes::TerrainPass::Record` |
+| Terrain pipeline bind (incl. F3+Z wireframe), descriptor binds, frustum-culled `renderList` draw | `Passes::TerrainPass::Record` |
 | `EntityRenderer::RecordDraw(...)` | `Passes::EntityPass::Record` |
 | Non-cubic pipeline, back-to-front sort, draws | `Passes::NonCubicPass::Record` |
 | `SelectionRenderer::RecordDraw(...)` | `Passes::SelectionPass::Record` |
@@ -432,7 +432,7 @@ Before merging, please build and check that:
 
 - the world, entities, non-cubic blocks, selection outline and GUI look the
   same as before;
-- F3, F9 and F11 work;
+- F3 (debug HUD), F3+Z (wireframe), F9 and F11 work;
 - resizing works;
 - the Example pack's vignette shows up.
 

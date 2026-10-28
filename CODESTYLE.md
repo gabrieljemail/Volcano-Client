@@ -155,6 +155,15 @@ functions). It's a fallback for that specific case, not a second pattern to
 reach for — new code should take a `GlobalState*` rather than inventing its
 own static/singleton accessor.
 
+## Public API for mods
+
+There is no separate mod layer: the API is the public methods of the classes it belongs to (`GUIController::AddHudElement`, `AudioManager::AddSoundListener`, `PacketEvents`, `RenderEngine::AddPass`...), used by internal code the same way mods use it. See `sdk/docs/MODDING.md`.
+
+* Every `Volcano::` function is exported from the exe (`tools/gen_exports.py`). Keep entry points mods may want to detour with MinHook non-inline.
+* Mark a class `VC_API` (`mods/VolcanoModAPI.h`) if mods derive from it (it has virtual functions): vtables are data and need a real export.
+* Document the thread a callback runs on, and which lock it holds, in the header.
+* Changing `GlobalState`'s layout breaks existing mods: bump `VC_API_VERSION_MAJOR`.
+
 ## Shader Languages
 This project uses two source shader languages: GLSL (for most things) and HLSL (for compute shaders and PBR). All of these are compiled into SPIR-V bytecode for use with the Vulkan backend, and optionally OpenGL 4.6 and DirectX 12 backends in the future.
 
