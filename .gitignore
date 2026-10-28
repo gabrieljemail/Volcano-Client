@@ -53,3 +53,7 @@ resources/shaders/*.spv
 *.cap
 client.err
 imgui.ini
+
+# Personal: saved servers and a private SSH helper.
+servers.json
+server-ssh.ps1
