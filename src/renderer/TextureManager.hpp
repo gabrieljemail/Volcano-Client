@@ -4,9 +4,10 @@
 #define TEXTURE_MANAGER_H
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 #include "VulkanInit.hpp"
 
 namespace Volcano {
@@ -30,7 +31,12 @@ public:
     // Loads every PNG under resourcePackRoot/assets/minecraft/textures/{block,item}/,
     // uploads into a single 2D array image, and returns a name->layer lookup.
     // Static textures only for now — .mcmeta animation frames are ignored (frame 0 used).
-    void LoadResourcePack(const std::string& resourcePackRoot);
+    // onProgress, if given, is called with 0..1 as textures are uploaded.
+    void LoadResourcePack(const std::string& resourcePackRoot, const std::function<void(float)>& onProgress = nullptr);
+
+    // Frees the texture array. Must run after rendering stops and before
+    // the VMA allocator is destroyed (RenderEngine::Shutdown).
+    void Destroy();
 
     uint16_t GetLayerIndex(const std::string& textureName) const;
 

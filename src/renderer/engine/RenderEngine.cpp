@@ -130,6 +130,10 @@ void RenderEngine::ReloadPassShaders()
 
 void RenderEngine::RecordPasses(FrameContext& frame)
 {
+    // See GlobalState::trianglesDrawn's own comment — each pass adds to this
+    // as it records its own draw calls.
+    if (frame.state) frame.state->trianglesDrawn = 0;
+
     for (auto& pass : passes)
     {
         if (pass->IsEnabled()) pass->Record(frame);

@@ -8,6 +8,10 @@
 
 namespace Volcano {
 
+// Hands a render-list mesh's slab regions back to whichever mesher owns
+// them. Call with the owning render-list mutex held, as the mesh leaves it.
+void ReleaseMeshSlabs(const Mesh& mesh);
+
 // Consumes GlobalState::NetworkInbox (chunks + the one-time spawn position)
 // on its own thread, decoupled from the network thread (which only parses
 // bytes into plain Chunks) and from the main/render threads. Greedy meshing

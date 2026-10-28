@@ -5,6 +5,7 @@
 #include <memory>
 #include "../../network/VarInt.hpp"
 #include "models/Chunk.hpp"
+#include "models/ChunkSection.hpp"
 
 namespace Volcano::ChunkParser {
 
@@ -17,6 +18,11 @@ namespace Volcano::ChunkParser {
 // block entities yet. Assumes a standard overworld dimension (24 sections,
 // world Y -64..319); other dimension heights aren't handled yet.
 std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader);
+
+// Parses a standalone "Update Light" packet — the server's follow-up after a
+// block change alters light. Sections in the "empty" masks come back as
+// zeroed arrays so light removal applies.
+PendingLightUpdate ParseLightUpdatePacket(PacketReader& reader);
 
 } // namespace Volcano::ChunkParser
 

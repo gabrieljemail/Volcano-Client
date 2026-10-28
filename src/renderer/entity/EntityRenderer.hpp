@@ -3,7 +3,7 @@
 #define ENTITY_RENDERER_H
 
 #include <cstdint>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "../../GlobalState.hpp"
 #include "../engine/ShaderLibrary.hpp"
@@ -39,6 +39,11 @@ public:
     // is destroyed — EntityPass::Destroy() calls it from
     // RenderEngine::StopRendering().
     static void Shutdown();
+
+    // The default (Steve) skin as a sampler2D descriptor set, and its layout,
+    // for the first-person arm. Valid between Init() and Shutdown().
+    static VkDescriptorSet GetDefaultSkinSet();
+    static VkDescriptorSetLayout GetSkinSetLayout();
 
     // Culls state->entities (frustum + distance limit), uploads the
     // survivors into frameIndex's instance SSBO, and issues one indirect

@@ -48,6 +48,27 @@ list(APPEND SOURCES
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# Mods resolve VC_EventHandler and the client's own classes from the exe:
+# on Windows this emits an import library, on Linux it adds -rdynamic.
+set_target_properties(${PROJECT_NAME} PROPERTIES ENABLE_EXPORTS ON)
+
+# 32-bit ImGui indices: GUIController::AddTextShadows appends vertices to
+# draw lists, which could overflow 16-bit indices on a busy frame.
+target_compile_definitions(${PROJECT_NAME} PRIVATE "ImDrawIdx=unsigned int")
+
+# Precompiled headers: vulkan.h and glm.hpp are both large, near-universally
+# included across src/renderer, and stable (no per-TU #define gates the way
+# vk_mem_alloc.h/stb_image.h need VMA_IMPLEMENTATION/STB_IMAGE_IMPLEMENTATION
+# in exactly one .cpp — those two are deliberately left out of this list,
+# since precompiling them would bake in whichever #define state happened to
+# be active first and silently break the single file that needs the other
+# state). Cuts redundant parsing across ~150 translation units, which
+# matters more than usual on this machine's tight RAM budget.
+target_precompile_headers(${PROJECT_NAME} PRIVATE
+    <vulkan/vulkan.h>
+    <glm/glm.hpp>
+)
+
 # Third-party sources compiled directly into this target: silence their
 # warnings too, since -Wall -Wextra below applies per translation unit
 # and SYSTEM include dirs don't cover a file's own warnings.
@@ -85,6 +106,33 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
     "C:/Apps/Libraries/ImGui/backends"
 )
 
+# --- OPENAL ---
+if(WIN32)
+    target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
+        "C:/Apps/Libraries/OpenAL/include"
+    )
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(OPENAL_LIBRARY "C:/Apps/Libraries/OpenAL/libs/Win64/OpenAL32.lib")
+    else()
+        set(OPENAL_LIBRARY "C:/Apps/Libraries/OpenAL/libs/Win32/OpenAL32.lib")
+    endif()
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        "${OPENAL_LIBRARY}"
+    )
+elseif(UNIX)
+    find_package(OpenAL REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE OpenAL::OpenAL ${CMAKE_DL_LIBS})
+endif()
+
+# --- PLATFORM LIBRARIES (src/platform) ---
+# DbgHelp symbolizes crash stack traces on Windows; -rdynamic exports symbol
+# names so backtrace_symbols can on Linux.
+if(WIN32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Dbghelp Winmm)
+elseif(UNIX)
+    target_link_options(${PROJECT_NAME} PRIVATE -rdynamic)
+endif()
+
 # --- MANUAL LINK LIBRARIES ---
 target_link_libraries(${PROJECT_NAME} PRIVATE
     "C:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib"
@@ -116,8 +164,12 @@ if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(${PROJECT_NAME} PRIVATE
         -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions
         $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
-        $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-gcodeview> $<$<NOT:$<CONFIG:Release>>:-O0>
+        -g -gcodeview
+        $<$<NOT:$<CONFIG:Release>>:-O0>
     )
+    # Release keeps debug info (no effect on speed) so crash reports name
+    # real functions; the PDB just has to sit next to the exe.
+    target_link_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Release>:-Wl,/DEBUG>)
 else()
     # -march=native only makes sense for a Debug build run on the same
     # machine that built it — a Release build is meant to run on other
@@ -157,10 +209,12 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 #    for iterating on the Configuration/Play packet exchange against a real
 #    server without needing the full client. Not part of the shipped app.
 # =============================================================================
+#[[
 add_executable(NetDiag
     tools/netdiag_main.cpp
     src/Logger.cpp
     src/Config.cpp
+    src/PlayerAttributes.cpp
     src/network/Connection.cpp
     src/network/NBT.cpp
     src/network/NetworkClient.cpp
@@ -216,3 +270,4 @@ add_custom_command(TARGET NetDiag POST_BUILD
         "C:/Apps/Libraries/OpenSSL/bin/libssl-4-x64.dll"
         $<TARGET_FILE_DIR:NetDiag>
 )
+]]

@@ -5,6 +5,8 @@
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <chrono>
+#include <unordered_set>
 #include "Block.hpp"
 
 namespace Volcano {
@@ -44,6 +46,8 @@ public:
 
     int getX() const { return x; }
     int getZ() const { return z; }
+    void SetFadeStart(std::chrono::steady_clock::time_point time) { fadeStart = time; }
+    std::chrono::steady_clock::time_point GetFadeStart() const { return fadeStart; }
 
     Block getBlock(int bx, int by, int bz) const {
         if (bx < 0 || bx >= CHUNK_SIZE_X ||
@@ -71,6 +75,37 @@ public:
             bz >= 0 && bz < CHUNK_SIZE_Z) {
             blocks[bx + bz * CHUNK_SIZE_X + by * CHUNK_SIZE_X * CHUNK_SIZE_Z] = block;
         }
+    }
+
+    // True if every block in local Y range [sectionY*16, sectionY*16+16) is
+    // air — lets MeshingThread skip greedy-sweeping/uploading a section
+    // with nothing to draw (common near build-height limits) instead of
+    // producing (and slab-allocating) an empty mesh for it every time.
+    // sectionY out of [0, CHUNK_SIZE_Y/16) reads as empty, matching
+    // getBlock's own out-of-bounds-is-Air convention.
+    bool IsSectionEmpty(int sectionY) const {
+        int yStart = sectionY * 16;
+        if (yStart < 0 || yStart >= CHUNK_SIZE_Y) return true;
+        int yEnd = yStart + 16;
+        for (int by = yStart; by < yEnd; by++) {
+            for (int bz = 0; bz < CHUNK_SIZE_Z; bz++) {
+                for (int bx = 0; bx < CHUNK_SIZE_X; bx++) {
+                    if (!blocks[Index(bx, by, bz)].isAir()) return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Cells holding a block entity (chest, furnace, sign, ...), from chunk
+    // data. Not updated by later Block Updates, so a broken chest leaves a
+    // stale entry until the chunk reloads.
+    void AddBlockEntity(int bx, int by, int bz) {
+        if (InBounds(bx, by, bz)) blockEntities.insert(Index(bx, by, bz));
+    }
+
+    bool HasBlockEntity(int bx, int by, int bz) const {
+        return InBounds(bx, by, bz) && blockEntities.count(Index(bx, by, bz)) != 0;
     }
 
     // 0-15 each, kept separate — see LightSample's own comment.
@@ -102,6 +137,12 @@ public:
         if (InBounds(bx, by, bz)) skyLight[Index(bx, by, bz)] = value;
     }
 
+    // Overwrites (can lower) — for Update Light, unlike applyBlockLight's
+    // raise-only merge during initial chunk load.
+    void setBlockLight(int bx, int by, int bz, uint8_t value) {
+        if (InBounds(bx, by, bz)) blockLight[Index(bx, by, bz)] = value;
+    }
+
     void applyBlockLight(int bx, int by, int bz, uint8_t value) {
         if (InBounds(bx, by, bz)) {
             uint8_t& cell = blockLight[Index(bx, by, bz)];
@@ -111,9 +152,11 @@ public:
 
 private:
     int x, z; // Chunk coordinates
+    std::chrono::steady_clock::time_point fadeStart{};
     std::vector<Block> blocks;
     std::vector<uint8_t> skyLight;
     std::vector<uint8_t> blockLight;
+    std::unordered_set<size_t> blockEntities;
 
     static bool InBounds(int bx, int by, int bz) {
         return bx >= 0 && bx < CHUNK_SIZE_X && by >= 0 && by < CHUNK_SIZE_Y && bz >= 0 && bz < CHUNK_SIZE_Z;

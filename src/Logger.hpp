@@ -20,6 +20,11 @@ void Error(const std::string& message);
 // alt-tabbing to a terminal.
 void Debug(const std::string& message);
 
+// Debug.LogMeshEvents: whether the per-chunk/section "[MESH]" timing lines
+// and the periodic "[HIZ]" culling stats get logged. Off by default (they
+// fire constantly while moving); check it before building the message.
+bool MeshEventsEnabled();
+
 } // namespace Log
 
 } // namespace Volcano

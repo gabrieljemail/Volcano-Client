@@ -2,13 +2,16 @@
 #ifndef VOLCANO_INTERACTION_MANAGER_H
 #define VOLCANO_INTERACTION_MANAGER_H
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <glm/glm.hpp>
 #include "../GlobalState.hpp"
 #include "../Helpers.hpp"
 #include "../InputHandler.hpp"
+#include "../inventory/ItemBehavior.hpp"
 #include "../inventory/ItemStack.hpp"
+#include "InteractionTypes.hpp"
 #include "../TickLoop.hpp"
 
 namespace Volcano {
@@ -70,7 +73,7 @@ enum class AttackType : uint8_t {
 // state->entities (a cheap distance reject before a real ray/AABB test),
 // keeping whichever of the two the ray reaches first. A primary click on a
 // targeted entity attacks it (PrimaryTriggerStart/AttackEntity); block
-// breaking and the secondary use/place actions don't dispatch anything yet.
+// breaking and secondary use/place actions dispatch serverbound packets.
 class InteractionManager {
 public:
     explicit InteractionManager(GlobalState* globalState);
@@ -117,9 +120,10 @@ private:
     // would race a future inventory-packet write from NetworkThread.
     ItemStack mainhand;
     ItemStack offhand;
+    uint8_t selectedSlot = 0;
 
-    // True if the offhand item has a secondary action (e.g. a shield).
-    // Always false for now — ItemRegistry has no such flag yet.
+    // True if the offhand item has a continuous use (e.g. a shield) and the
+    // mainhand doesn't claim the click first. Refreshed with the snapshot.
     bool offhandInteractible = false;
 
     // True if the mainhand slot is Air and the hand model
@@ -134,6 +138,26 @@ private:
     // comment on picking whichever the ray reaches first).
     std::optional<TargetedBlock> targetedBlock;
     std::optional<uint32_t> targetedEntityId;
+
+    // A real (non-instant, non-creative) mining hold in progress — see
+    // BeginMining/ContinueMining/CancelMining. Absent whenever nothing's
+    // being mined: between clicks, during an instant break (creative or
+    // hardness-0), or while a real hold's dig timer hasn't started yet.
+    struct MiningState {
+        glm::ivec3 position;
+        glm::ivec3 face;
+        int32_t ticksRequired; // See BlockRegistry::MapStateIdBreakTicks.
+        std::chrono::steady_clock::time_point startTime;
+    };
+    std::optional<MiningState> mining;
+
+    // Vanilla's hold-to-repeat pacing: destroyDelay (5 ticks after any break)
+    // and rightClickDelay (4 ticks between uses). A fresh click skips it.
+    static constexpr std::chrono::milliseconds BREAK_REPEAT_DELAY{250};
+    static constexpr std::chrono::milliseconds PLACE_REPEAT_DELAY{200};
+    std::chrono::steady_clock::time_point lastBreakTime{};
+    std::chrono::steady_clock::time_point lastPlaceTime{};
+    bool primaryPressedThisFrame = false;
 
     // Reach distance, in blocks.
     // Synced with server NBT attributes.
@@ -162,7 +186,10 @@ private:
     // click (PrimaryActionPress) and is where attacks happen — vanilla only
     // attacks on a click, never on a held button, which is what makes the
     // attack cooldown something you time yourself. Hold (PrimaryAction) is
-    // where continuing to break a block will go once block breaking exists.
+    // where the mining state machine below keeps running across frames,
+    // since mining needs to keep going for as long as the button stays
+    // down. Update() handles the release-edge cancel neither of these sees,
+    // since Hold simply isn't called once the button is up.
     void PrimaryTriggerStart();
     void PrimaryTriggerHold();
 
@@ -175,13 +202,74 @@ private:
     // state, and whether the target is a living entity (crits need one).
     AttackType ClassifyAttack(float strength, const TickLoop::MovementSnapshot& movement, bool targetIsLiving) const;
 
+    // Starts mining `target` (after BREAK_REPEAT_DELAY when held). Instabuild
+    // or hardness-0 blocks break instantly; unbreakable ones do nothing;
+    // anything else sends StartDigging and arms `mining` for ContinueMining.
+    void BeginMining(const TargetedBlock& target);
+    // Ticks to break `block` with the held item: Block::breakTicks (bare
+    // hand) scaled by tool tier/type. -1 unbreakable, 0 instant.
+    int32_t BreakTicksFor(const Block& block) const;
+
+    // Called every frame a hold continues targeting the same block/face
+    // `mining` was armed for. Once enough real time has passed (ticksRequired
+    // / 20 seconds), dispatches BreakBlockEvent with sendStart=false (the
+    // StartDigging already went out from BeginMining) and clears `mining`.
+    // No-op (returns early) while still within the required time.
+    void ContinueMining();
+
+    // Ends `mining` early without breaking anything: sends CancelDigging (if
+    // a hold was actually in progress — a no-op otherwise) and clears it.
+    // Called whenever a hold stops being valid: the button was released, the
+    // crosshair moved off the block/face being mined, or an entity/nothing
+    // is now targeted instead.
+    void CancelMining();
+
+    // Mirrors `mining` into GlobalState::miningTicksRequired/miningStartNs
+    // for the tick thread's crosshair indicator.
+    void PublishMining();
+
     // Secondary is a use, not just a click — split the same way Jump/
     // JumpHold are, but three ways: an instant item (a block, a bucket)
-    // only ever needs Start; a continuous one (food, a shield, a bow) needs
-    // Hold to keep going and Release to know when it stopped early.
+    // only ever needs Start plus Hold's own repeat (see DispatchUse); a
+    // continuous one (food, a shield, a bow) needs Hold to keep going and
+    // Release to know when it stopped early.
     void SecondaryTriggerStart();
     void SecondaryTriggerHold();
     void SecondaryTriggerRelease();
+
+    // The click dispatch SecondaryTriggerStart/Hold share. Vanilla's order:
+    // entity interact, then block use (block entity or place), then, if
+    // neither consumed the click, the held item's own use (equip armor, eat,
+    // raise a shield, draw a bow). Hold repeats it, paced by PLACE_REPEAT_DELAY.
+    void DispatchUse();
+
+    // The item-use half of DispatchUse: picks the hand (mainhand unless it
+    // has nothing to do, then the offhand), gates eating on hunger, sends
+    // UseItem and, for a continuous use, starts tracking it in `usingState`.
+    void UseHeldItem();
+
+    // Ends a continuous use early: sends ReleaseUseItem and clears the state.
+    void StopUsingItem();
+
+    // Per-frame upkeep of `usingState`: ends the use when the button came up,
+    // the held item changed, or a timed use (food) ran its course.
+    void UpdateUsingItem(bool inputAllowed);
+
+    void PublishUsing();
+
+    // The item in `hand`, from the per-frame snapshot.
+    const ItemStack& HeldItem(Hand hand) const { return hand == Hand::Main ? mainhand : offhand; }
+
+    // A continuous use in progress — see UseHeldItem.
+    struct UsingState {
+        Hand hand;
+        int32_t itemId;
+        uint8_t hotbarSlot;
+        UseAction action;
+        int32_t useTicks; // 0 = until released.
+        std::chrono::steady_clock::time_point startTime;
+    };
+    std::optional<UsingState> usingState;
 
     // Resolves the camera's look ray against blocks/entities within reach
     // and updates targetedBlock/targetedEntityId (and GlobalState::

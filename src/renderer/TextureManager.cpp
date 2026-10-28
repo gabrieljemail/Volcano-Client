@@ -19,6 +19,14 @@ TextureManager::~TextureManager() {
     //
 }
 
+void TextureManager::Destroy()
+{
+    if (array.sampler != VK_NULL_HANDLE) vkDestroySampler(GetDevice(), array.sampler, nullptr);
+    if (array.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), array.view, nullptr);
+    if (array.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, array.image, array.allocation);
+    array = TextureArray{};
+}
+
 void TextureManager::CreateArrayImage(uint32_t layerCount)
 {
     VkImageCreateInfo imageInfo{};
@@ -26,7 +34,7 @@ void TextureManager::CreateArrayImage(uint32_t layerCount)
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
     imageInfo.extent = { TEXTURE_LAYER_SIZE, TEXTURE_LAYER_SIZE, 1 };
     imageInfo.mipLevels = TEXTURE_MIP_LEVELS;
-    imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -43,7 +51,7 @@ void TextureManager::CreateArrayImage(uint32_t layerCount)
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = array.image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-    viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = TEXTURE_MIP_LEVELS;
@@ -81,7 +89,7 @@ void TextureManager::UploadLayer(uint32_t layerIndex, const uint8_t* rgbaPixels,
     vmaDestroyBuffer(vmaAllocator, staging.buffer, staging.allocation);
 }
 
-void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
+void TextureManager::LoadResourcePack(const std::string& resourcePackRoot, const std::function<void(float)>& onProgress)
 {
     std::vector<fs::path> texturePaths;
     for (const auto& subdir : { "block", "item" })
@@ -95,10 +103,10 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
                 texturePaths.push_back(entry.path());
     }
 
-    Log::Info("[INFO] Found " + std::to_string(texturePaths.size()) + " texture files");
+    Log::Info("Found " + std::to_string(texturePaths.size()) + " texture files");
 
     if (texturePaths.empty()) {
-        Log::Error("[ERROR] No textures found! Cannot create texture array.");
+        Log::Error("No textures found! Cannot create texture array.");
         return;
     }
 
@@ -131,7 +139,7 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
     }
 
     if (skipped > 0) {
-        Log::Info("[WARN] Skipped " + std::to_string(skipped) + " non-16x16 textures");
+        Log::Info("Skipped " + std::to_string(skipped) + " non-16x16 textures");
     }
 
     CreateArrayImage(static_cast<uint32_t>(validPaths.size()));
@@ -143,7 +151,7 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
         uint8_t* pixels = stbi_load(path.string().c_str(), &w, &h, &channels, STBI_rgb_alpha);
         if (!pixels)
         {
-            Log::Error("[WARN] Failed to load texture: " + path.string());
+            Log::Error("Failed to load texture: " + path.string());
             continue;
         }
 
@@ -153,12 +161,14 @@ void TextureManager::LoadResourcePack(const std::string& resourcePackRoot)
         layer++;
 
         stbi_image_free(pixels);
+
+        if (onProgress) onProgress(static_cast<float>(layer) / static_cast<float>(validPaths.size()));
     }
 
     GenerateMipmaps();
     CreateSampler();
 
-    Log::Info("[INFO] Loaded " + std::to_string(layer) + " textures into array.");
+    Log::Info("Loaded " + std::to_string(layer) + " textures into array.");
 }
 
 uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
@@ -166,7 +176,7 @@ uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
     auto it = layerLookup.find(textureName);
     // return it != layerLookup.end() ? it->second : 0;
     if (it == layerLookup.end()) {
-        Log::Error("[WARN] Texture not found: " + textureName);
+        Log::Error("Texture not found: " + textureName);
         return 0;
     }
     return it->second;

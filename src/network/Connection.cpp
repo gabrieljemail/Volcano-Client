@@ -1,6 +1,11 @@
 #include "Connection.hpp"
 #include "VarInt.hpp"
+#include "../Config.hpp"
+#include "../Logger.hpp"
 #include <zlib.h>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 
 namespace Volcano {
@@ -55,6 +60,7 @@ std::vector<uint8_t> ZlibDecompress(const uint8_t* data, size_t size, int32_t un
 
 void Connection::SendPacket(int32_t packetId, const std::vector<uint8_t>& payload)
 {
+    LogPacket("C2S", packetId, payload.data(), payload.size());
     if (threshold < 0) SendUncompressed(packetId, payload);
     else SendCompressed(packetId, payload);
 }
@@ -132,7 +138,9 @@ uint8_t Connection::ReadByteBlocking()
 
 int32_t Connection::ReadPacket(std::vector<uint8_t>& outPayload)
 {
-    return threshold < 0 ? ReadPacketRaw(outPayload) : ReadPacketCompressed(outPayload);
+    int32_t packetId = threshold < 0 ? ReadPacketRaw(outPayload) : ReadPacketCompressed(outPayload);
+    LogPacket("S2C", packetId, outPayload.data(), outPayload.size());
+    return packetId;
 }
 
 bool Connection::WaitForReadable(std::chrono::milliseconds timeout)
@@ -231,6 +239,49 @@ int32_t Connection::ReadPacketCompressed(std::vector<uint8_t>& outPayload)
     outPayload.assign(idAndPayload.data() + (idAndPayload.size() - inner.Remaining()),
                        idAndPayload.data() + idAndPayload.size());
     return packetId;
+}
+
+void Connection::LogPacket(const char* direction, int32_t packetId, const uint8_t* data, size_t size)
+{
+    if (!packetLoggingChecked)
+    {
+        packetLoggingChecked = true;
+        packetLogStartTime = std::chrono::steady_clock::now();
+
+        Config* config = Config::Active();
+        std::string relativePath = config
+            ? std::get<std::string>(config->Get("Network.LogPackets", std::string("")))
+            : std::string();
+
+        if (!relativePath.empty())
+        {
+            std::string fullPath = config->ResolvePath(relativePath);
+            std::error_code ec;
+            std::filesystem::create_directories(std::filesystem::path(fullPath).parent_path(), ec);
+
+            packetLogFile.emplace(fullPath, std::ios::out | std::ios::app);
+            if (!packetLogFile->is_open())
+            {
+                Log::Error("[NET] Failed to open Network.LogPackets file: " + fullPath);
+                packetLogFile.reset();
+            }
+        }
+    }
+
+    if (!packetLogFile.has_value()) return;
+
+    double elapsedMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - packetLogStartTime).count();
+
+    std::ostringstream oss;
+    oss << "t=" << std::fixed << std::setprecision(2) << elapsedMs << "ms "
+        << direction << " id=0x" << std::hex << std::setw(2) << std::setfill('0') << packetId
+        << " len=" << std::dec << size << " ";
+    oss << std::hex << std::setfill('0');
+    for (size_t i = 0; i < size; i++) oss << std::setw(2) << static_cast<int>(data[i]) << ' ';
+
+    *packetLogFile << oss.str() << '\n';
+    packetLogFile->flush();
 }
 
 } // namespace Volcano

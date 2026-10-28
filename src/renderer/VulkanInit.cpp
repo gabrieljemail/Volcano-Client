@@ -1,4 +1,5 @@
 #include <cctype>
+#include <chrono>
 #include <thread>
 #include <memory>
 #include <vector>
@@ -9,6 +10,7 @@
 #include "Logger.hpp"
 #include "VulkanInit.hpp"
 #include "RenderThread.hpp"
+#include "gui/GUIController.hpp"
 #include "../Helpers.hpp"
 #include "models/Mesh.hpp"
 #include "models/CameraUBO.hpp"
@@ -16,6 +18,7 @@
 #include "terrain/ChunkMesher.hpp"
 #include "misc/MiscVertex.hpp"
 #include "misc/NonCubicMesher.hpp"
+#include "FullscreenExclusive.hpp"
 
 using namespace std;
 
@@ -43,6 +46,18 @@ static VkPresentModeKHR DesiredPresentMode()
 static uint32_t DesiredBufferCount()
 {
     return std::get<uint32_t>(g_globalState->config->Get("Graphics.BufferCount", uint32_t{2}));
+}
+
+// Settings every swapchain build shares. UNORM, not sRGB: textures are UNORM
+// too and all lighting math is in gamma space, like vanilla.
+static void ConfigureSwapchainBuilder(vkb::SwapchainBuilder& builder, uint32_t width, uint32_t height, bool exclusive)
+{
+    builder.set_desired_extent(width, height);
+    builder.set_desired_format({ VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR });
+    builder.set_desired_present_mode(DesiredPresentMode());
+    builder.set_desired_min_image_count(DesiredBufferCount());
+    builder.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT); // F2 screenshots
+    FullscreenExclusive::ConfigureSwapchain(builder, window, exclusive);
 }
 
 static void FramebufferSizeCallback(GLFWwindow* /*win*/, int width, int height)
@@ -210,7 +225,15 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     rasterizer.rasterizerDiscardEnable = VK_FALSE;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    // No backface culling for terrain. This used to be VK_CULL_MODE_BACK_BIT
+    // Backface culling is back ON: the asymmetry described below turned out
+    // to be ChunkMesher's X axis using swapped u/v (for upright wall
+    // textures), which flips that axis's winding handedness — fixed there
+    // (see GreedyMeshAxis's handednessFlipped). All faces are now CCW from
+    // outside in world space. If terrain renders inside-out, flip frontFace
+    // below between COUNTER_CLOCKWISE and CLOCKWISE — it's uniform now.
+    //
+    // Historical note — previously: no backface culling for terrain. This
+    // used to be VK_CULL_MODE_BACK_BIT
     // with VK_FRONT_FACE_CLOCKWISE, on the theory that ChunkMesher's greedy
     // quads are consistently wound CCW-from-outside in world space (see
     // GreedyMeshAxis's positiveCorners) and RenderThread's p[1][1] *= -1
@@ -230,7 +253,8 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     // no more "wallhack" view from getting stuck. Costs roughly double the
     // fragment work versus perfectly-tuned culling; not worth chasing
     // further on an already-60fps-capped integrated GPU.
-    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     // 7. SINGLE-PASS SAMPLING (MULTISAMPLING)
@@ -266,7 +290,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     VkPushConstantRange pushRange{};
     pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pushRange.offset = 0;
-    pushRange.size = sizeof(glm::mat4);
+    pushRange.size = sizeof(glm::mat4) + sizeof(float);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -341,7 +365,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     // 11. CLEANUP TEMPORARY SHADER MODULES
     destroyModules();
 
-    Volcano::Log::Info("[INFO] Graphics pipeline successfully initialized.");
+    Volcano::Log::Info("Graphics pipeline successfully initialized.");
 }
 
 void DestroyGraphicsPipeline()
@@ -385,9 +409,11 @@ void DestroyGraphicsPipeline()
 // The trade-off is genuinely translucent texels (0 < alpha < 1, e.g.
 // stained glass) now write depth too and so can occlude translucent
 // geometry behind them. Fixing that properly needs a third pass that draws
-// truly translucent surfaces after this one with writes off — worth doing
-// when stained glass/water actually render, but strictly better than every
-// opaque partial shape in the world being drawn inside-out.
+// truly translucent surfaces after this one with writes off — strictly
+// better than every opaque partial shape in the world being drawn
+// inside-out. That third pass now exists (CreateTranslucentPipeline, right
+// below this function) for water, the first thing that actually needed it;
+// stained glass still goes through this cutout pass unchanged.
 void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
 {
     VkDevice dev = GetDevice();
@@ -520,13 +546,165 @@ void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     Volcano::Log::Info("[INFO] Non-cubic graphics pipeline successfully initialized.");
 }
 
+// Third pass, for geometry that's genuinely translucent rather than cutout —
+// currently just water (NonCubicMesher's Liquid shape). Identical to
+// CreateNonCubicPipeline in every way (same shaders, same MiscVertex layout,
+// same pipelineLayout, same alpha blend factors, no backface culling) except
+// depth WRITE is off here: two overlapping translucent surfaces (looking
+// through one water surface at another, or at stained glass once that also
+// moves to this pass) need to actually blend, not have the nearer one win
+// the depth test outright the way the cutout pass's writes-on approach needs
+// for stairs/slabs — see CreateNonCubicPipeline's own comment for why THAT
+// pass writes depth. Depth TEST stays on, so this still draws correctly
+// behind opaque terrain/entities/cutout geometry; NonCubicPass::Record draws
+// this pass right after the cutout pass (and sorts its meshes back-to-front
+// by chunk) so translucency reads right at least at chunk granularity — see
+// its own comment for the per-chunk-only caveat that leaves.
+void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders)
+{
+    VkDevice dev = GetDevice();
+
+    VkShaderModule vertShaderModule = CreateShaderModule(shaders, "misc.vert");
+    VkShaderModule fragShaderModule = VK_NULL_HANDLE;
+    try
+    {
+        fragShaderModule = CreateShaderModule(shaders, "misc.frag");
+    }
+    catch (...)
+    {
+        vkDestroyShaderModule(dev, vertShaderModule, nullptr);
+        throw;
+    }
+
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShaderModule;
+    vertShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShaderModule;
+    fragShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+    auto bindingDescription = Volcano::MiscVertex::getBindingDescription();
+    auto attributeDescriptions = Volcano::MiscVertex::getAttributeDescriptions();
+
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+
+    VkPipelineDynamicStateCreateInfo dynamicStateInfo{};
+    dynamicStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicStateInfo.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicStateInfo.pDynamicStates = dynamicStates.data();
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE; // Same reasoning as CreateNonCubicPipeline's own comment.
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE; // The one difference from nonCubicPipeline — see this function's own comment.
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthBoundsTestEnable = VK_FALSE;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                          VK_COLOR_COMPONENT_G_BIT |
+                                          VK_COLOR_COMPONENT_B_BIT |
+                                          VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+    VkPipelineColorBlendStateCreateInfo colorBlending{};
+    colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlending.logicOpEnable = VK_FALSE;
+    colorBlending.attachmentCount = 1;
+    colorBlending.pAttachments = &colorBlendAttachment;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.pDynamicState = &dynamicStateInfo;
+    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline — see CreateNonCubicPipeline's own comment.
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    VkResult translucentPipelineResult = vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &translucentPipeline);
+
+    vkDestroyShaderModule(dev, fragShaderModule, nullptr);
+    vkDestroyShaderModule(dev, vertShaderModule, nullptr);
+
+    if (translucentPipelineResult != VK_SUCCESS) {
+        translucentPipeline = VK_NULL_HANDLE;
+        throw std::runtime_error("Failed to create translucent graphics pipeline!");
+    }
+
+    Volcano::Log::Info("[INFO] Translucent graphics pipeline successfully initialized.");
+}
+
 void DestroyNonCubicPipeline()
 {
     if (nonCubicPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), nonCubicPipeline, nullptr);
     nonCubicPipeline = VK_NULL_HANDLE;
 }
 
-// Create a buffer with VMA.
+void DestroyTranslucentPipeline()
+{
+    if (translucentPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), translucentPipeline, nullptr);
+    translucentPipeline = VK_NULL_HANDLE;
+}
+
+// Create a buffer with VMA. The caller owns it and must vmaDestroyBuffer it.
 AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA)
 {
     VkBufferCreateInfo bufferInfo{};
@@ -540,7 +718,6 @@ AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool i
 
     AllocatedBuffer result{};
     vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &result.buffer, &result.allocation, &result.info);
-    allocatedBuffers.push_back(result);
     return result;
 }
 
@@ -562,7 +739,10 @@ static void CreateDepthResources()
     depthImageInfo.format = depthFormat;
     depthImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     depthImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    depthImageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    // SAMPLED, on top of the attachment bit every frame's render pass needs,
+    // so HiZBuildPass can texelFetch it after the render pass ends — see
+    // CreateHiZResources' own comment.
+    depthImageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     depthImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     depthImageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -588,6 +768,309 @@ static void CreateDepthResources()
     if (vkCreateImageView(device.device, &depthViewInfo, nullptr, &depthImageView) != VK_SUCCESS) {
         throw std::runtime_error("[ERROR] Failed to create depth image view!");
     }
+}
+
+// Resolution-dependent Hi-Z resources: the pyramid image itself, one
+// VK_IMAGE_USAGE_STORAGE_BIT view per mip (imageLoad/imageStore need a
+// specific mip, not the whole chain), the descriptor set layouts the
+// compute shaders bind against, and the actual descriptor sets (allocated
+// and pointed at those views here, since neither depends on which pipeline
+// eventually uses them — mirrors textureSetLayout/textureSet being created
+// here while graphicsPipeline itself is TerrainPass-owned). See
+// VulkanInit.hpp's own comment on the pyramid's mip 0 / max-reduction
+// convention.
+void CreateHiZResources()
+{
+    hizExtent = swapchainExtent;
+    // floor(log2(max dimension)) + 1 — the classic full mip chain count,
+    // capped so an unusually large window doesn't walk all the way down to
+    // 1x1 (nothing meaningful to cull against at that point, and it's more
+    // mips than any of this frame's chunk AABBs would ever need to query).
+    uint32_t maxDim = std::max(hizExtent.width, hizExtent.height);
+    hizMipLevels = 1;
+    while ((maxDim >> hizMipLevels) > 0 && hizMipLevels < 10) hizMipLevels++;
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent = { hizExtent.width, hizExtent.height, 1 };
+    imageInfo.mipLevels = hizMipLevels;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = VK_FORMAT_R32_SFLOAT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    allocInfo.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+    if (vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &hizImage, &hizImageAllocation, nullptr) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create Hi-Z pyramid image!");
+    }
+
+    // One-shot UNDEFINED -> GENERAL for every mip, maintained as a
+    // permanent invariant from here on — HiZBuildPass::Record only ever
+    // issues memory barriers against this image, never layout transitions,
+    // since GENERAL already supports both imageLoad/imageStore and being a
+    // vkCmdCopyImageToBuffer source (the diagnostic readback).
+    {
+        VkCommandBuffer oneShot = BeginOneShotCommands();
+        VkImageMemoryBarrier toGeneral{};
+        toGeneral.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toGeneral.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral.image = hizImage;
+        toGeneral.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, hizMipLevels, 0, 1 };
+        toGeneral.srcAccessMask = 0;
+        toGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(oneShot, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+        EndOneShotCommands(oneShot);
+    }
+
+    hizMipViews.resize(hizMipLevels);
+    for (uint32_t i = 0; i < hizMipLevels; i++) {
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = hizImage;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = VK_FORMAT_R32_SFLOAT;
+        viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, i, 1, 0, 1 };
+        if (vkCreateImageView(device.device, &viewInfo, nullptr, &hizMipViews[i]) != VK_SUCCESS) {
+            throw std::runtime_error("[ERROR] Failed to create Hi-Z mip image view!");
+        }
+    }
+
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_NEAREST;
+    samplerInfo.minFilter = VK_FILTER_NEAREST;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.maxLod = 0.0f;
+    if (vkCreateSampler(device.device, &samplerInfo, nullptr, &hizDepthSampler) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create Hi-Z depth sampler!");
+    }
+
+    VkDescriptorSetLayoutBinding bindings[2]{};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 2;
+    layoutInfo.pBindings = bindings;
+    if (vkCreateDescriptorSetLayout(device.device, &layoutInfo, nullptr, &hizCopySetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create Hi-Z copy descriptor set layout!");
+    }
+
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; // src mip, instead of the depth sampler.
+    if (vkCreateDescriptorSetLayout(device.device, &layoutInfo, nullptr, &hizDownsampleSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create Hi-Z downsample descriptor set layout!");
+    }
+
+    // hizDownsampleSets[i] reads mip i, writes mip i+1 — one set per
+    // mip-to-mip transition, plus one more for the depth-to-mip-0 copy.
+    uint32_t downsampleCount = hizMipLevels > 0 ? hizMipLevels - 1 : 0;
+    VkDescriptorPoolSize poolSizes[2]{};
+    poolSizes[0] = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+    poolSizes[1] = { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 + downsampleCount * 2 };
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1 + downsampleCount;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
+    if (vkCreateDescriptorPool(device.device, &poolInfo, nullptr, &hizDescriptorPool) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create Hi-Z descriptor pool!");
+    }
+
+    VkDescriptorSetAllocateInfo copyAllocInfo{};
+    copyAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    copyAllocInfo.descriptorPool = hizDescriptorPool;
+    copyAllocInfo.descriptorSetCount = 1;
+    copyAllocInfo.pSetLayouts = &hizCopySetLayout;
+    if (vkAllocateDescriptorSets(device.device, &copyAllocInfo, &hizCopySet) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to allocate Hi-Z copy descriptor set!");
+    }
+
+    VkDescriptorImageInfo depthInfo{};
+    depthInfo.sampler = hizDepthSampler;
+    depthInfo.imageView = depthImageView;
+    depthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorImageInfo mip0Info{};
+    mip0Info.imageView = hizMipViews[0];
+    mip0Info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet copyWrites[2]{};
+    copyWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    copyWrites[0].dstSet = hizCopySet;
+    copyWrites[0].dstBinding = 0;
+    copyWrites[0].descriptorCount = 1;
+    copyWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    copyWrites[0].pImageInfo = &depthInfo;
+    copyWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    copyWrites[1].dstSet = hizCopySet;
+    copyWrites[1].dstBinding = 1;
+    copyWrites[1].descriptorCount = 1;
+    copyWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    copyWrites[1].pImageInfo = &mip0Info;
+    vkUpdateDescriptorSets(device.device, 2, copyWrites, 0, nullptr);
+
+    hizDownsampleSets.resize(downsampleCount);
+    std::vector<VkDescriptorSetLayout> downsampleLayouts(downsampleCount, hizDownsampleSetLayout);
+    if (downsampleCount > 0) {
+        VkDescriptorSetAllocateInfo downsampleAllocInfo{};
+        downsampleAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        downsampleAllocInfo.descriptorPool = hizDescriptorPool;
+        downsampleAllocInfo.descriptorSetCount = downsampleCount;
+        downsampleAllocInfo.pSetLayouts = downsampleLayouts.data();
+        if (vkAllocateDescriptorSets(device.device, &downsampleAllocInfo, hizDownsampleSets.data()) != VK_SUCCESS) {
+            throw std::runtime_error("[ERROR] Failed to allocate Hi-Z downsample descriptor sets!");
+        }
+
+        for (uint32_t i = 0; i < downsampleCount; i++) {
+            VkDescriptorImageInfo srcInfo{};
+            srcInfo.imageView = hizMipViews[i];
+            srcInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            VkDescriptorImageInfo dstInfo{};
+            dstInfo.imageView = hizMipViews[i + 1];
+            dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            VkWriteDescriptorSet writes[2]{};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = hizDownsampleSets[i];
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[0].pImageInfo = &srcInfo;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = hizDownsampleSets[i];
+            writes[1].dstBinding = 1;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[1].pImageInfo = &dstInfo;
+            vkUpdateDescriptorSets(device.device, 2, writes, 0, nullptr);
+        }
+    }
+
+    // The CPU readback buffers live in HiZBuildPass (per frame slot), not
+    // here — they're a fixed size regardless of resolution.
+}
+
+void DestroyHiZResources()
+{
+    if (hizDescriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(device.device, hizDescriptorPool, nullptr);
+        hizDescriptorPool = VK_NULL_HANDLE;
+    }
+    hizCopySet = VK_NULL_HANDLE;
+    hizDownsampleSets.clear();
+
+    if (hizCopySetLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device.device, hizCopySetLayout, nullptr);
+        hizCopySetLayout = VK_NULL_HANDLE;
+    }
+    if (hizDownsampleSetLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device.device, hizDownsampleSetLayout, nullptr);
+        hizDownsampleSetLayout = VK_NULL_HANDLE;
+    }
+    if (hizDepthSampler != VK_NULL_HANDLE) {
+        vkDestroySampler(device.device, hizDepthSampler, nullptr);
+        hizDepthSampler = VK_NULL_HANDLE;
+    }
+
+    for (VkImageView view : hizMipViews) {
+        if (view != VK_NULL_HANDLE) vkDestroyImageView(device.device, view, nullptr);
+    }
+    hizMipViews.clear();
+
+    if (hizImage != VK_NULL_HANDLE) {
+        vmaDestroyImage(vmaAllocator, hizImage, hizImageAllocation);
+        hizImage = VK_NULL_HANDLE;
+    }
+    hizMipLevels = 0;
+}
+
+// Shader-dependent Hi-Z compute pipelines — see CreateHiZResources' own
+// comment on the split between this and that. Neither shader takes push
+// constants: both derive their working size from imageSize() on the bound
+// images directly, so there's nothing per-dispatch to push.
+void CreateHiZPipelines(const Volcano::Engine::ShaderLibrary& shaders)
+{
+    VkDevice dev = GetDevice();
+
+    VkPipelineLayoutCreateInfo copyLayoutInfo{};
+    copyLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    copyLayoutInfo.setLayoutCount = 1;
+    copyLayoutInfo.pSetLayouts = &hizCopySetLayout;
+    if (vkCreatePipelineLayout(dev, &copyLayoutInfo, nullptr, &hizCopyPipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create Hi-Z copy pipeline layout!");
+    }
+
+    VkPipelineLayoutCreateInfo downsampleLayoutInfo{};
+    downsampleLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    downsampleLayoutInfo.setLayoutCount = 1;
+    downsampleLayoutInfo.pSetLayouts = &hizDownsampleSetLayout;
+    if (vkCreatePipelineLayout(dev, &downsampleLayoutInfo, nullptr, &hizDownsamplePipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create Hi-Z downsample pipeline layout!");
+    }
+
+    VkShaderModule copyModule = CreateShaderModule(shaders, "hiz_copy.comp");
+    VkPipelineShaderStageCreateInfo copyStage{};
+    copyStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    copyStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    copyStage.module = copyModule;
+    copyStage.pName = "main";
+
+    VkComputePipelineCreateInfo copyPipelineInfo{};
+    copyPipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    copyPipelineInfo.stage = copyStage;
+    copyPipelineInfo.layout = hizCopyPipelineLayout;
+    VkResult copyResult = vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &copyPipelineInfo, nullptr, &hizCopyPipeline);
+    vkDestroyShaderModule(dev, copyModule, nullptr);
+    if (copyResult != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create Hi-Z copy pipeline!");
+    }
+
+    VkShaderModule downsampleModule = CreateShaderModule(shaders, "hiz_downsample.comp");
+    VkPipelineShaderStageCreateInfo downsampleStage{};
+    downsampleStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    downsampleStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    downsampleStage.module = downsampleModule;
+    downsampleStage.pName = "main";
+
+    VkComputePipelineCreateInfo downsamplePipelineInfo{};
+    downsamplePipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    downsamplePipelineInfo.stage = downsampleStage;
+    downsamplePipelineInfo.layout = hizDownsamplePipelineLayout;
+    VkResult downsampleResult = vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &downsamplePipelineInfo, nullptr, &hizDownsamplePipeline);
+    vkDestroyShaderModule(dev, downsampleModule, nullptr);
+    if (downsampleResult != VK_SUCCESS) {
+        throw std::runtime_error("[ERROR] Failed to create Hi-Z downsample pipeline!");
+    }
+}
+
+void DestroyHiZPipelines()
+{
+    VkDevice dev = GetDevice();
+    if (hizCopyPipeline != VK_NULL_HANDLE) { vkDestroyPipeline(dev, hizCopyPipeline, nullptr); hizCopyPipeline = VK_NULL_HANDLE; }
+    if (hizDownsamplePipeline != VK_NULL_HANDLE) { vkDestroyPipeline(dev, hizDownsamplePipeline, nullptr); hizDownsamplePipeline = VK_NULL_HANDLE; }
+    if (hizCopyPipelineLayout != VK_NULL_HANDLE) { vkDestroyPipelineLayout(dev, hizCopyPipelineLayout, nullptr); hizCopyPipelineLayout = VK_NULL_HANDLE; }
+    if (hizDownsamplePipelineLayout != VK_NULL_HANDLE) { vkDestroyPipelineLayout(dev, hizDownsamplePipelineLayout, nullptr); hizDownsamplePipelineLayout = VK_NULL_HANDLE; }
 }
 
 static void CreateSwapchainImageViews()
@@ -692,6 +1175,13 @@ void Init(GlobalState* state)
     // only thread allowed to touch it.
     glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
 
+    // Window.Mode is NOT applied here: switching the display mode this early
+    // (before the splash screen) meant the focus churn around startup could
+    // auto-iconify the fullscreen window — GLFW then restores the desktop
+    // mode and leaves the window at the old fullscreen size in the corner.
+    // RenderThread's first PollInputs applies it instead (see
+    // ApplyWindowSettings — g_appliedConfigVersion starts unset).
+
     #ifdef _WIN32
         // Windows-only fallback: on some setups (seen on Intel Gen9 HD 530,
         // driver 31.0.101.2115) the window doesn't actually have input focus
@@ -725,6 +1215,7 @@ void Init(GlobalState* state)
     // the selected device's own true supported version, independent of
     // what we request here.
     vkb::InstanceBuilder instanceBuilder(vkGetInstanceProcAddr);
+    FullscreenExclusive::ConfigureInstance(instanceBuilder);
     auto instanceReturn = instanceBuilder
         .set_app_name(APP_NAME)
         .set_app_version(APP_VERSION)
@@ -834,6 +1325,7 @@ void Init(GlobalState* state)
         return;
     }
     physicalDevice = physDeviceSelectorReturn.value();
+    FullscreenExclusive::ConfigureDevice(physicalDevice);
     cout << "[INFO] Found Vulkan GPU: " << physicalDevice.name << endl;
     cout << "[INFO] Vulkan API version: " << physicalDevice.properties.apiVersion << endl;
     g_globalState->systemInfo.DetectGPU(physicalDevice.properties.deviceName,
@@ -863,9 +1355,7 @@ void Init(GlobalState* state)
 
     // Create the swapchain.
     vkb::SwapchainBuilder swapchainBuilder{device, surface};
-    swapchainBuilder.set_desired_extent(windowWidth, windowHeight);
-    swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
-    swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
+    ConfigureSwapchainBuilder(swapchainBuilder, windowWidth, windowHeight, g_windowMode == WindowMode::ExclusiveFullscreen);
     auto swapchainBuilderReturn = swapchainBuilder.build();
 
     if (!swapchainBuilderReturn)
@@ -877,6 +1367,7 @@ void Init(GlobalState* state)
         return;
     }
     swapchain = swapchainBuilderReturn.value();
+    FullscreenExclusive::Acquire(device.device, swapchain.swapchain);
     // Records what vk-bootstrap actually granted, not just what
     // DesiredPresentMode() asked for — see GlobalState::presentMode's own
     // comment for why those can differ.
@@ -910,7 +1401,10 @@ void Init(GlobalState* state)
     depthAttachment.format = depthFormat;
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // STORE, not DONT_CARE: HiZBuildPass samples this after the render pass
+    // ends to build the Hi-Z pyramid — DONT_CARE let the driver discard it
+    // (read back as a constant 0).
+    depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -964,7 +1458,8 @@ void Init(GlobalState* state)
     cameraBinding.binding = 0;
     cameraBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     cameraBinding.descriptorCount = 1;
-    cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    // Fragment too: terrain.frag/misc.frag read lighting and fog from it.
+    cameraBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutBinding textureBinding{};
     textureBinding.binding = 0;
@@ -1023,6 +1518,7 @@ void Init(GlobalState* state)
         vkUpdateDescriptorSets(GetDevice(), 1, &write, 0, nullptr);
     }
 
+
     // Allocate texture descriptor set
     VkDescriptorSetAllocateInfo textureAllocInfo{};
     textureAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1031,10 +1527,11 @@ void Init(GlobalState* state)
     textureAllocInfo.pSetLayouts = &textureSetLayout;
     vkAllocateDescriptorSets(GetDevice(), &textureAllocInfo, &textureSet);
 
-    // Pipelines (terrain, non-cubic, entities, selection, ...) are no longer
-    // built here — each belongs to a RenderPass the engine creates right
-    // after this returns (see VulkanRenderEngine::Init), so a shader reload
-    // can rebuild them without touching the device/swapchain set up here.
+    // Pipelines (terrain, non-cubic, translucent, entities, selection, ...)
+    // are no longer built here — each belongs to a RenderPass the engine
+    // creates right after this returns (see VulkanRenderEngine::Init), so a
+    // shader reload can rebuild them without touching the device/swapchain
+    // set up here.
 
     // Create command pool and command buffers. Must happen before
     // EntityRenderer::Init() (EntityPass::Create): its UploadCubeMesh() uses
@@ -1061,6 +1558,16 @@ void Init(GlobalState* state)
     if (vkAllocateCommandBuffers(device.device, &bufferAllocInfo, commandBuffers)) {
         throw std::runtime_error("Failed to allocate command buffers!");
     }
+
+    // Must come after commandPool exists — CreateHiZResources() uses
+    // BeginOneShotCommands()/EndOneShotCommands() for its one-shot layout
+    // transition, which allocate from `commandPool` (see the comment on
+    // command pool creation above for what running this against a
+    // not-yet-created pool actually does: crashes outright, no error log).
+    // RecreateSwapchain() calls this same function right after
+    // CreateDepthResources() instead — commandPool already exists there,
+    // since Init() has always run once before any resize.
+    CreateHiZResources();
 
     // Create semaphores and fences.
     VkSemaphoreCreateInfo semaphoreInfo{};
@@ -1118,28 +1625,43 @@ void RecreateSwapchain(int width, int height)
         vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
         depthImage = VK_NULL_HANDLE;
     }
+    DestroyHiZResources(); // Recreated below at the new resolution, alongside CreateDepthResources().
 
     vkb::Swapchain oldSwapchain = swapchain;
+    FullscreenExclusive::Release(device.device, oldSwapchain.swapchain);
 
-    vkb::SwapchainBuilder swapchainBuilder{device, surface};
-    swapchainBuilder.set_desired_extent(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
-    swapchainBuilder.set_desired_present_mode(DesiredPresentMode());
-    swapchainBuilder.set_desired_min_image_count(DesiredBufferCount());
-    swapchainBuilder.set_old_swapchain(oldSwapchain);
-    auto swapchainBuilderReturn = swapchainBuilder.build();
+    auto buildSwapchain = [&](bool exclusive, const vkb::Swapchain* previous)
+    {
+        vkb::SwapchainBuilder swapchainBuilder{device, surface};
+        ConfigureSwapchainBuilder(swapchainBuilder, static_cast<uint32_t>(width), static_cast<uint32_t>(height), exclusive);
+        if (previous) swapchainBuilder.set_old_swapchain(*previous);
+        return swapchainBuilder.build();
+    };
 
+    auto swapchainBuilderReturn = buildSwapchain(g_windowMode == WindowMode::ExclusiveFullscreen, &oldSwapchain);
+    // A failed create still retires the old swapchain, so it can't be reused.
     vkb::destroy_swapchain(oldSwapchain);
 
     if (!swapchainBuilderReturn)
     {
-        throw std::runtime_error("[ERROR] Failed to recreate swapchain: " + swapchainBuilderReturn.error().message());
+        Log::Error("[ERROR] Swapchain recreation failed (" + swapchainBuilderReturn.error().message()
+            + ", VkResult " + std::to_string(static_cast<int>(swapchainBuilderReturn.vk_result()))
+            + ") — retrying without exclusive fullscreen.");
+        swapchainBuilderReturn = buildSwapchain(false, nullptr);
+    }
+    if (!swapchainBuilderReturn)
+    {
+        throw std::runtime_error("Failed to recreate the swapchain: " + swapchainBuilderReturn.error().message()
+            + " (VkResult " + std::to_string(static_cast<int>(swapchainBuilderReturn.vk_result())) + ")");
     }
     swapchain = swapchainBuilderReturn.value();
+    FullscreenExclusive::Acquire(device.device, swapchain.swapchain);
     swapchainExtent = swapchain.extent;
     // See the Init() call site's own comment on this same line.
     g_globalState->presentMode = static_cast<uint8_t>(swapchain.present_mode);
 
     CreateDepthResources();
+    CreateHiZResources();
     CreateSwapchainImageViews();
     CreateFramebuffers();
 }
@@ -1149,47 +1671,170 @@ WindowMode GetWindowMode()
     return g_windowMode;
 }
 
-// F11 handler. Cycles Windowed <-> BorderlessFullscreen; ExclusiveFullscreen
-// is deliberately skipped for now (see SetExclusiveFullscreen below) but the
-// mode still exists so enabling it later doesn't need to reshape this enum
-// or the cycle logic — just add it back into the switch.
-void ToggleWindowMode()
+// Settings ApplyWindowSettings last applied — compared against config so
+// only real changes touch the window (a settings write to some unrelated
+// key shouldn't re-set the window size or re-enter fullscreen).
+struct AppliedWindowSettings {
+    WindowMode mode = WindowMode::Windowed;
+    uint32_t width = 0, height = 0;                        // Window.Width/Height (windowed size)
+    uint32_t fsWidth = 0, fsHeight = 0, fsRefreshRate = 0; // Window.FullscreenMode.*
+    bool vsync = true;                                     // Graphics.VSync
+    uint32_t bufferCount = 0;                              // Graphics.BufferCount
+};
+static AppliedWindowSettings g_appliedWindow;
+static uint64_t g_appliedConfigVersion = UINT64_MAX;
+
+// Moves the window into `target`, using the given exclusive-fullscreen video
+// mode (0 = the monitor's current width/height/refresh rate).
+static void SetWindowMode(WindowMode target, uint32_t fsWidth, uint32_t fsHeight, uint32_t fsRefreshRate)
 {
-    switch (g_windowMode)
+    // Remember windowed geometry before leaving Windowed, to restore later.
+    if (g_windowMode == WindowMode::Windowed && target != WindowMode::Windowed)
+    {
+        glfwGetWindowPos(window, &g_windowedX, &g_windowedY);
+        glfwGetWindowSize(window, &g_windowedWidth, &g_windowedHeight);
+    }
+
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    const GLFWvidmode* current = monitor ? glfwGetVideoMode(monitor) : nullptr;
+    if (target != WindowMode::Windowed && (!monitor || !current)) return;
+
+    switch (target)
     {
         case WindowMode::Windowed:
-        {
-            GLFWmonitor* monitor = glfwGetPrimaryMonitor();
-            if (!monitor) return;
-            const GLFWvidmode* mode = glfwGetVideoMode(monitor);
-
-            // Remember the windowed geometry so we can restore it later.
-            glfwGetWindowPos(window, &g_windowedX, &g_windowedY);
-            glfwGetWindowSize(window, &g_windowedWidth, &g_windowedHeight);
-
-            int monitorX, monitorY;
-            glfwGetMonitorPos(monitor, &monitorX, &monitorY);
-
-            // "Borderless fullscreen" here means a plain undecorated window
-            // sized to cover the monitor, not a real (exclusive) mode
-            // switch — this avoids the driver/OS display-mode change that
-            // exclusive fullscreen would need.
-            glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_FALSE);
-            glfwSetWindowMonitor(window, nullptr, monitorX, monitorY, mode->width, mode->height, 0);
-
-            g_windowMode = WindowMode::BorderlessFullscreen;
-            break;
-        }
-        case WindowMode::BorderlessFullscreen:
-        case WindowMode::ExclusiveFullscreen:
-        {
             glfwSetWindowMonitor(window, nullptr, g_windowedX, g_windowedY, g_windowedWidth, g_windowedHeight, 0);
             glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_TRUE);
+            break;
 
-            g_windowMode = WindowMode::Windowed;
+        case WindowMode::BorderlessFullscreen:
+        {
+            // A plain undecorated window covering the monitor at its current
+            // mode — no display-mode change, so alt-tab is instant.
+            int monitorX, monitorY;
+            glfwGetMonitorPos(monitor, &monitorX, &monitorY);
+            glfwSetWindowMonitor(window, nullptr, monitorX, monitorY, current->width, current->height, 0);
+            glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_FALSE);
+            break;
+        }
+
+        case WindowMode::ExclusiveFullscreen:
+        {
+            // Real fullscreen at Window.FullscreenMode.*. GLFW would silently
+            // pick the "closest" mode to anything unsupported (a swapped
+            // 768x1366 landed on a 4:3 mode), so require an exact match from
+            // the monitor's own mode list and otherwise fall back to the
+            // desktop mode, which never needs a display-mode change.
+            int width = fsWidth > 0 ? static_cast<int>(fsWidth) : current->width;
+            int height = fsHeight > 0 ? static_cast<int>(fsHeight) : current->height;
+            int refresh = fsRefreshRate > 0 ? static_cast<int>(fsRefreshRate) : current->refreshRate;
+
+            int modeCount = 0;
+            const GLFWvidmode* modes = glfwGetVideoModes(monitor, &modeCount);
+            bool supported = false;
+            for (int i = 0; i < modeCount; i++)
+            {
+                if (modes[i].width == width && modes[i].height == height && modes[i].refreshRate == refresh)
+                {
+                    supported = true;
+                    break;
+                }
+            }
+            if (!supported)
+            {
+                Log::Error("[WINDOW] Fullscreen mode " + std::to_string(width) + "x" + std::to_string(height)
+                    + "@" + std::to_string(refresh) + " isn't supported by this monitor"
+                    + (height > width ? " (width/height swapped?)" : "") + " — using the desktop mode "
+                    + std::to_string(current->width) + "x" + std::to_string(current->height)
+                    + "@" + std::to_string(current->refreshRate) + " instead.");
+                width = current->width;
+                height = current->height;
+                refresh = current->refreshRate;
+            }
+
+            glfwSetWindowMonitor(window, monitor, 0, 0, width, height, refresh);
             break;
         }
     }
+
+    g_windowMode = target;
+
+    // Force a swapchain rebuild even if the size didn't change, so the
+    // exclusive-fullscreen request (see FullscreenExclusive) follows the mode.
+    int framebufferWidth, framebufferHeight;
+    glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+    FramebufferSizeCallback(window, framebufferWidth, framebufferHeight);
+}
+
+// Reads Window.Mode (0 windowed, 1 borderless, 2 fullscreen), Window.Width/
+// Height and Window.FullscreenMode.Width/Height/RefreshRate, and applies
+// whatever changed since last time. Cheap when nothing changed (one atomic
+// compare), so RenderThread calls it every frame — that's what lets a
+// Settings screen change any of these live. Main thread only (GLFW).
+void ApplyWindowSettings()
+{
+    Config* config = g_globalState ? g_globalState->config : nullptr;
+    if (!config || !window) return;
+    uint64_t configVersion = config->GetVersion();
+    if (configVersion == g_appliedConfigVersion) return;
+    g_appliedConfigVersion = configVersion;
+
+    uint32_t modeValue = std::get<uint32_t>(config->Get("Window.Mode", uint32_t{0}));
+    AppliedWindowSettings wanted;
+    wanted.mode = modeValue == 1 ? WindowMode::BorderlessFullscreen
+                : modeValue == 2 ? WindowMode::ExclusiveFullscreen
+                : WindowMode::Windowed;
+    wanted.width = std::get<uint32_t>(config->Get("Window.Width", uint32_t{854}));
+    wanted.height = std::get<uint32_t>(config->Get("Window.Height", uint32_t{480}));
+    wanted.fsWidth = std::get<uint32_t>(config->Get("Window.FullscreenMode.Width", uint32_t{0}));
+    wanted.fsHeight = std::get<uint32_t>(config->Get("Window.FullscreenMode.Height", uint32_t{0}));
+    wanted.fsRefreshRate = std::get<uint32_t>(config->Get("Window.FullscreenMode.RefreshRate", uint32_t{0}));
+    wanted.vsync = std::get<bool>(config->Get("Graphics.VSync", true));
+    wanted.bufferCount = DesiredBufferCount();
+
+    // Present mode and image count are baked into the swapchain: rebuild it.
+    bool firstApply = g_appliedWindow.bufferCount == 0;
+    if (!firstApply && (wanted.vsync != g_appliedWindow.vsync || wanted.bufferCount != g_appliedWindow.bufferCount))
+    {
+        int framebufferWidth, framebufferHeight;
+        glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+        FramebufferSizeCallback(window, framebufferWidth, framebufferHeight);
+    }
+
+    // A changed windowed size applies right away if windowed, otherwise it's
+    // just what Windowed restores to later.
+    bool windowedSizeChanged = wanted.width != g_appliedWindow.width || wanted.height != g_appliedWindow.height;
+    if (windowedSizeChanged && wanted.width > 0 && wanted.height > 0)
+    {
+        g_windowedWidth = static_cast<int>(wanted.width);
+        g_windowedHeight = static_cast<int>(wanted.height);
+        if (g_windowMode == WindowMode::Windowed && wanted.mode == WindowMode::Windowed)
+        {
+            glfwSetWindowSize(window, g_windowedWidth, g_windowedHeight);
+        }
+    }
+
+    bool fullscreenModeChanged = wanted.fsWidth != g_appliedWindow.fsWidth
+        || wanted.fsHeight != g_appliedWindow.fsHeight
+        || wanted.fsRefreshRate != g_appliedWindow.fsRefreshRate;
+    if (wanted.mode != g_windowMode
+        || (wanted.mode == WindowMode::ExclusiveFullscreen && fullscreenModeChanged))
+    {
+        SetWindowMode(wanted.mode, wanted.fsWidth, wanted.fsHeight, wanted.fsRefreshRate);
+    }
+
+    g_appliedWindow = wanted;
+}
+
+// F11 handler: Windowed -> borderless, anything else -> Windowed. Goes
+// through Window.Mode (persisted) so the Settings screen and settings.json
+// always agree with what's on screen; ApplyWindowSettings does the switch.
+void ToggleWindowMode()
+{
+    Config* config = g_globalState ? g_globalState->config : nullptr;
+    if (!config) return;
+    uint32_t next = g_windowMode == WindowMode::Windowed ? 1u : 0u;
+    config->Set("Window.Mode", next);
+    ApplyWindowSettings();
 }
 
 void Cleanup()
@@ -1217,6 +1862,7 @@ void Cleanup()
     // StopRendering destroys every pass) — these are idempotent, and only
     // matter if startup failed before the passes could be torn down.
     DestroyNonCubicPipeline();
+    DestroyTranslucentPipeline();
     DestroyGraphicsPipeline();
     vkDestroyCommandPool(device.device, commandPool, nullptr);
     vkDestroyRenderPass(device.device, renderPass, nullptr);
@@ -1228,20 +1874,26 @@ void Cleanup()
         vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
     }
 
-    // The camera UBOs (in allocatedBuffers, below) were left persistently
-    // mapped by Init() — vmaDestroyBuffer asserts if its allocation still
-    // has an outstanding map, so unmap them first.
-    for (int i = 0; i < 3; i++) {
-        if (cameraUBOsMapped[i] != nullptr) {
+    // HiZBuildPass::Destroy() normally already ran this (RenderEngine's
+    // shutdown path), same "idempotent, only matters if startup failed
+    // early" reasoning as the other pass-owned pipeline destroys above.
+    DestroyHiZPipelines();
+    DestroyHiZResources();
+
+    // Camera UBOs stay mapped from Init(); unmap before destroying.
+    for (int i = 0; i < 3; i++)
+    {
+        if (cameraUBOsMapped[i] != nullptr)
+        {
             vmaUnmapMemory(vmaAllocator, cameraUBOs[i].allocation);
             cameraUBOsMapped[i] = nullptr;
         }
+        if (cameraUBOs[i].buffer != VK_NULL_HANDLE)
+        {
+            vmaDestroyBuffer(vmaAllocator, cameraUBOs[i].buffer, cameraUBOs[i].allocation);
+            cameraUBOs[i] = AllocatedBuffer{};
+        }
     }
-    for (auto& buf : allocatedBuffers)
-    {
-        vmaDestroyBuffer(vmaAllocator, buf.buffer, buf.allocation);
-    }
-    allocatedBuffers.clear();
 
     // EntityRenderer/SelectionRenderer are shut down by their passes
     // (EntityPass/SelectionPass::Destroy), not here.

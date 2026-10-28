@@ -1,0 +1,13 @@
+{
+    "_comment": "resources/minecraft-code/.../monster/skeleton/SkeletonModel.java createDefaultSkeletonMesh() — head/body inherited unchanged from HumanoidModel.createMesh (see humanoid.json), but arms/legs are real vanilla skeleton proportions: 2x12x2 (not 4x12x4), and the leg pivot is +-2.0 (not +-1.9 like humanoid.json's legs). textureHeight 32 matches createBodyLayer()'s LayerDefinition.create(mesh, 64, 32) — this is the legacy 64x32 skin format.",
+    "textureWidth": 64,
+    "textureHeight": 32,
+    "boxes": [
+        { "name": "head",      "origin": [-4.0, -8.0, -4.0], "size": [8.0, 8.0, 8.0], "uv": [0.0, 0.0],   "pivot": [0.0, 0.0, 0.0] },
+        { "name": "body",      "origin": [-4.0,  0.0, -2.0], "size": [8.0, 12.0, 4.0], "uv": [16.0, 16.0], "pivot": [0.0, 0.0, 0.0] },
+        { "name": "right_arm", "origin": [-1.0, -2.0, -1.0], "size": [2.0, 12.0, 2.0], "uv": [40.0, 16.0], "pivot": [-5.0, 2.0, 0.0] },
+        { "name": "left_arm",  "origin": [-1.0, -2.0, -1.0], "size": [2.0, 12.0, 2.0], "uv": [40.0, 16.0], "mirror": true, "pivot": [5.0, 2.0, 0.0] },
+        { "name": "right_leg", "origin": [-1.0,  0.0, -1.0], "size": [2.0, 12.0, 2.0], "uv": [0.0, 16.0],  "pivot": [-2.0, 12.0, 0.0] },
+        { "name": "left_leg",  "origin": [-1.0,  0.0, -1.0], "size": [2.0, 12.0, 2.0], "uv": [0.0, 16.0],  "mirror": true, "pivot": [2.0, 12.0, 0.0] }
+    ]
+}

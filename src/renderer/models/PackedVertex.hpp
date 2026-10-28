@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <array>
 #include <glm/glm.hpp>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 
 namespace Volcano {
 
@@ -19,10 +19,14 @@ struct PackedVertex {
             uint8_t blockLight, uint8_t skyLight, bool biomeTinted = false)
     {
         PackedVertex vert{};
-        // word0: x (6 bits, 0-15), z (6 bits, 0-15), y (9 bits, 0-383 —
-        // chunks now span the full -64..319 world-height range, offset into
-        // local Y by the chunk's model matrix), normalIndex (3 bits), ao (2
-        // bits), biomeTinted (1 bit), padding (5 bits)
+        // word0: x (6 bits, 0-15), z (6 bits, 0-15), y (9 bits — section-
+        // relative 0-15 for terrain, since ChunkMesher now meshes one
+        // 16-tall section at a time; the field stayed 9 bits, wide enough
+        // for the old 0-383 whole-column range too, rather than shrinking
+        // it for a few unused bits), normalIndex (3 bits), ao (2 bits),
+        // biomeTinted (1 bit), padding (5 bits). World Y comes from the
+        // mesh's own model matrix, which now translates to the section's
+        // own Y origin instead of always WORLD_MIN_Y.
         vert.word0 = (localPos.x & 0x3Fu)
             | ((localPos.z & 0x3Fu) << 6)
             | ((localPos.y & 0x1FFu) << 12)

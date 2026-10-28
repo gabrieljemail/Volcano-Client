@@ -1,5 +1,7 @@
 #include "VisibleChunkController.hpp"
 #include "models/Chunk.hpp"
+#include "models/ChunkSection.hpp"
+#include "OcclusionSnapshot.hpp"
 #include <cmath>
 
 namespace Volcano {
@@ -51,21 +53,35 @@ bool VisibleChunkController::AabbIntersectsFrustum(const glm::vec3& min, const g
     return true;
 }
 
-std::vector<const Mesh*> VisibleChunkController::GetVisibleMeshes(const std::vector<Mesh>& meshes, const glm::mat4& viewProj)
+std::vector<const Mesh*> VisibleChunkController::GetVisibleMeshes(
+    const std::unordered_map<SectionKey, Mesh, SectionKeyHash>& meshes, const glm::mat4& viewProj)
 {
     Frustum frustum = ExtractFrustum(viewProj);
 
     std::vector<const Mesh*> visible;
     visible.reserve(meshes.size());
 
-    for (const Mesh& mesh : meshes)
+    for (const auto& [key, mesh] : meshes)
     {
-        // Chunk meshes are only ever translated (never scaled/rotated), so
-        // the translation column plus the fixed chunk extents is the AABB.
-        glm::vec3 chunkMin(mesh.modelMatrix[3]);
-        glm::vec3 chunkMax = chunkMin + glm::vec3(CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z);
+        // Chunk section meshes are only ever translated (never
+        // scaled/rotated), so the translation column plus the fixed
+        // section extents is the AABB.
+        glm::vec3 sectionMin(mesh.modelMatrix[3]);
+        glm::vec3 sectionMax = sectionMin + glm::vec3(CHUNK_SIZE_X, SECTION_SIZE_Y, CHUNK_SIZE_Z);
 
-        if (AabbIntersectsFrustum(chunkMin, chunkMax, frustum)) visible.push_back(&mesh);
+        if (!AabbIntersectsFrustum(sectionMin, sectionMax, frustum)) continue;
+
+        // Hi-Z occlusion: drop sections fully hidden behind nearer
+        // geometry, per the pyramid from a couple of frames ago — see
+        // OcclusionSnapshot's own comment on the lag and why it's safe.
+        occlusionSnapshot.tested++;
+        if (occlusionSnapshot.IsOccluded(sectionMin, sectionMax))
+        {
+            occlusionSnapshot.occluded++;
+            continue;
+        }
+
+        visible.push_back(&mesh);
     }
 
     return visible;

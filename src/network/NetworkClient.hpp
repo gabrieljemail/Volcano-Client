@@ -4,12 +4,12 @@
 
 #include <asio.hpp>
 #include <cstdint>
-#include <functional>
 #include <stop_token>
 #include <string>
 #include <glm/glm.hpp>
 #include "Connection.hpp"
 #include "../GlobalState.hpp"
+#include "../interaction/InteractionTypes.hpp"
 
 namespace Volcano {
 
@@ -19,16 +19,6 @@ namespace Volcano {
 // This only changes what we tell the server; it doesn't help against one
 // that's genuinely running 26.2.
 constexpr int32_t PROTOCOL_VERSION = 775;
-
-// What NetworkClient needs to report to the server after each TickLoop::
-// Tick() — see NetworkClient::SetTickCallback. Plain data so NetworkClient
-// never has to know TickLoop exists (NetDiag links this file without it).
-struct TickReport {
-    bool grounded = false;            // MovementFlags bit 0.
-    bool horizontalCollision = false; // MovementFlags bit 1.
-    bool sprinting = false;           // PlayC2S::PlayerCommand start/stop_sprinting, sent on change.
-    uint8_t inputFlags = 0;           // PlayC2S::PlayerInput bitflags, sent on change.
-};
 
 class NetworkClient {
 public:
@@ -52,27 +42,6 @@ public:
     // NetworkClient::SendChatMessage reach it from another thread.
     Connection& GetConnection() { return connection; }
 
-    // Called once per RunPlayLoop iteration (see its own comment) instead
-    // of RunPlayLoop reaching into state->tickLoop directly — deliberately
-    // decoupling NetworkClient from TickLoop entirely, the same reason
-    // GUIController.cpp forward-declares SendChatMessage rather than
-    // including NetworkClient.hpp: NetDiag (tools/netdiag_main.cpp) links
-    // this same RunPlayLoop without ever compiling TickLoop.cpp, since it's
-    // a headless network-only diagnostic with no Player/World/TickLoop at
-    // all. Returns whether the player is grounded as of that Tick() call
-    // (TickLoop::IsGrounded(), read right after Tick() on the same thread —
-    // see its own comment) — RunPlayLoop's periodic position report needs
-    // this for MovementFlags.onGround; folded into this callback rather
-    // than a second one, since both are one Tick()-adjacent fact read from
-    // the same place. The same goes for the rest of TickReport (wall
-    // collision, sprinting, held movement keys) — all read off TickLoop
-    // right after Tick() returns. NetworkThread wires this up before calling
-    // RunSession(); NetDiag never sets it, so it just stays the default
-    // no-op (position reports go out with onGround=false, same as before
-    // this existed — NetDiag never runs RunPlayLoop's position report at
-    // all, see its own null check on state->player).
-    void SetTickCallback(std::function<TickReport()> callback) { tickCallback = std::move(callback); }
-
     // Human-readable reason the session ended (a kick's chat-component
     // text, an exception message, ...) — set alongside every disconnect/
     // error Log::Error() call in ConnectAndLogin/RunSession/RunConfiguration
@@ -84,13 +53,6 @@ public:
 private:
     Connection connection;
     std::string lastError;
-    std::function<TickReport()> tickCallback; // See SetTickCallback's own comment.
-
-    // What the server was last told about sprinting and held movement keys
-    // — ReportMovementState only sends a packet when these change, like
-    // vanilla's LocalPlayer.sendIsSprintingIfNeeded/sendInput.
-    bool reportedSprinting = false;
-    uint8_t reportedInputFlags = 0;
 
     // Reads Graphics.RenderDistance from state->config for the Client
     // Information packet — see the definition for why it's declared to the
@@ -98,30 +60,20 @@ private:
     bool RunConfiguration(GlobalState* state);
     void RunPlayLoop(GlobalState* state, std::stop_token stopToken);
 
-    // Reports the player's current position via PlayC2S::SetPlayerPosition.
-    // Called both right after the server's initial teleport (to kick off
-    // chunk streaming — see RunPlayLoop's own comment) and periodically
-    // from RunPlayLoop's own loop thereafter, since the server needs an
-    // up-to-date position continuously, not just once, to track fall
-    // distance (fall damage) and sprint distance (hunger exhaustion) — see
-    // RunPlayLoop's own comment on why this used to be a one-shot call.
+    // Reports the player's current position+rotation via
+    // PlayC2S::SetPlayerPositionAndRotation. Called once, right after the
+    // server's initial teleport, to kick off chunk streaming on a server
+    // that doesn't push chunks unprompted — see RunPlayLoop's own comment.
+    // Every report after this first one is TickThread's job now (queued on
+    // a steady per-tick cadence, not sent directly here) — see TickThread's
+    // own comment for why that moved off this (network) thread entirely.
+    //
+    // yaw/pitch (degrees, Camera's own convention — see Camera.hpp).
     // `onGround` feeds MovementFlags.onGround — get this wrong (e.g.
     // hardcode false) and a server that cross-checks it against the
     // reported Y will treat every tick spent standing still as
     // inconsistent and rubber-band the position back.
-    //
-    // Sent with rotation (PlayC2S::SetPlayerPositionAndRotation) using the
-    // camera's current yaw/pitch, converted to Minecraft's convention — the
-    // server aims our knockback hits along it. `horizontalCollision` is
-    // MovementFlags bit 1.
-    void SendPlayerPosition(GlobalState* state, glm::vec3 position, bool onGround, bool horizontalCollision);
-
-    // Sends PlayerCommand (start/stop_sprinting) and PlayerInput whenever
-    // the report differs from what the server was last told. Queued rather
-    // than written directly, so they stay ordered after any Attack packet
-    // the render thread queued first — a sprint hit has to reach the server
-    // before the stop_sprinting it causes, or the server sees a plain hit.
-    void ReportMovementState(GlobalState* state, const TickReport& report);
+    void SendPlayerPosition(glm::vec3 position, float yaw, float pitch, bool onGround);
 };
 
 // Sends a plain (unsigned) chat message via state->activeConnection — a
@@ -149,16 +101,57 @@ void SendRespawnRequest(GlobalState* state);
 // SendChatMessage above; in practice always called from the render thread.
 void SendHeldItemSlot(GlobalState* state, uint8_t slot);
 
-// Attacks an entity (PlayC2S::Attack). The server decides for itself
-// whether this lands as a plain, critical, sprint-knockback or sweep hit,
-// from its own copy of our state (sprinting, falling, held weapon, attack
-// cooldown) — which is why RunPlayLoop keeps it current. Callable from any
-// thread (queued, like SendChatMessage); in practice called by
-// InteractionManager on the render thread, followed by SendSwing.
-void SendAttack(GlobalState* state, uint32_t targetEntityId);
+// Reports one predicted player-inventory click and its resulting slot/cursor
+// state. `stateId` is the latest revision received from the server.
+void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+                        uint8_t button, const ItemStack& slotItem, const ItemStack& carriedItem);
 
-// Swings an arm (PlayC2S::SwingArm) — the animation other players see.
-// hand: 0 = main hand, 1 = offhand.
+// Closes an open server container window. Opening the player's own inventory
+// with E is local-only and does not send a packet.
+void SendInventoryClose(GlobalState* state, int32_t windowId);
+
+// Interaction packets — one function per wire packet (not per gameplay
+// event; see src/interaction/events/*.hpp for the higher-level "what does
+// an attack/break/place/use actually do" objects that call these). Same
+// call-from-any-thread contract as SendChatMessage above; in practice these
+// are all called from InteractionManager on the render thread.
+
+// PlayC2S::Attack — melee-attacking an entity. The server decides for
+// itself whether this lands as a plain, critical, sprint-knockback or sweep
+// hit, from its own copy of our state (sprinting, falling, held weapon,
+// attack cooldown) — which is why TickThread keeps it current. In practice
+// called by InteractionManager, followed by SendSwing.
+void SendAttack(GlobalState* state, uint32_t entityId);
+
+// PlayC2S::UseEntity — right-clicking an entity. See its own PacketIds.hpp
+// comment for why location is always (0,0,0) for now.
+void SendInteractEntity(GlobalState* state, uint32_t entityId, Hand hand, bool sneaking);
+
+// PlayC2S::BlockDig — one step of breaking a block (see DigStatus). `face`
+// is the block face being mined, e.g. TargetedBlock::face.
+void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position, glm::ivec3 face);
+
+// PlayC2S::ArmAnimation — the visual swing. Vanilla sends this alongside
+// every attack/dig/use/place, not as a substitute for one.
+void SendArmAnimation(GlobalState* state, Hand hand);
+
+// PlayC2S::BlockPlace — using an item against a targeted block (placing a
+// block, using a bucket/bonemeal/etc. on one). `position`/`face` describe
+// the EXISTING block being clicked, same as TargetedBlock; `cursor` is the
+// 0..1 hit point within that face (see PlaceBlockEvent for how it's
+// approximated without real per-pixel raycast precision).
+void SendBlockPlace(GlobalState* state, Hand hand, glm::ivec3 position, glm::ivec3 face, glm::vec3 cursor);
+
+// PlayC2S::UseItem — right-click with nothing targeted (eat, drink, draw a
+// bow, ...). `yaw`/`pitch` are the player's own current look rotation
+// (degrees) — the packet's `rotation` field.
+void SendUseItem(GlobalState* state, Hand hand, float yaw, float pitch);
+
+// Swings an arm (PlayC2S::SwingArm — an alias of ArmAnimation, see
+// PacketIds.hpp) — the animation other players see. hand: 0 = main hand,
+// 1 = offhand. Same wire packet as SendArmAnimation above; kept as its own
+// function since AttackEntity's callers pass a raw hand index rather than
+// the Hand enum.
 void SendSwing(GlobalState* state, int32_t hand);
 
 } // namespace Volcano

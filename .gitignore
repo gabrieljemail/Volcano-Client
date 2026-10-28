@@ -9,6 +9,7 @@ node_modules/
 # extracted assets/resource pack (resources/minecraft), and anything else
 # under this prefix. Not ours to redistribute.
 resources/minecraft*
+resources/paperclip
 
 # Linux build output at repo root (the in-source build produces an
 # extensionless binary here) — VolcanoClient.exe (Windows) is tracked
@@ -16,3 +17,14 @@ resources/minecraft*
 /VolcanoClient
 
 settings.json
+
+# Local run/output directories
+dist/
+logs/
+run/
+screenshots/
+crash-report*
+
+# Bash on Linux devices and Git Bash for coding agents might make this file.
+# This is a reserved device on Windows, so it won't work there.
+nul

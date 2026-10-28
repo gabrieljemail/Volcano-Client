@@ -11,16 +11,16 @@ layout(set = 0, binding = 0) uniform CameraUBO {
 // EntityRenderer.cpp's own comment on why.
 layout(push_constant) uniform PushConstants {
     vec4 positionYaw; // xyz: world position (feet), w: yaw radians.
-    float hurtAmount; // 0-1 red hit-flash intensity, same convention as the placeholder cube.
+    vec4 hurtColor;   // rgb: hit-flash color, a: blend amount — same as entity.vert.
 } pc;
 
-layout(location = 0) in vec3 inPosition; // HumanoidModel::Vertex — world-local, feet at origin.
+layout(location = 0) in vec3 inPosition; // EntityJsonModel::Vertex — world-local, feet at origin.
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
 
 layout(location = 0) out vec3 fragNormal;
 layout(location = 1) out vec2 fragUV;
-layout(location = 2) out float fragHurt;
+layout(location = 2) out vec4 fragHurt;
 
 void main() {
     float s = sin(pc.positionYaw.w);
@@ -36,5 +36,5 @@ void main() {
 
     fragNormal = yawRotation * inNormal;
     fragUV = inUV;
-    fragHurt = pc.hurtAmount;
+    fragHurt = pc.hurtColor;
 }

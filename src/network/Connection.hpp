@@ -5,7 +5,9 @@
 #include <asio.hpp>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -75,6 +77,14 @@ public:
     // accumulated since the last call, in order. Called once per RunPlayLoop
     // iteration. Throws whatever SendPacket throws (a dead socket) — the
     // same failure the loop's own sends would hit on that iteration anyway.
+    //
+    // Order is load-bearing for TickThread's traffic: each tick's movement
+    // packet has to reach the server ahead of that same tick's
+    // PlayC2S::ClientTickEnd, since that marker is what delimits one client
+    // tick from the next server-side. A backlog is fine — several
+    // fully-delimited ticks flushed back-to-back is exactly what a real
+    // client's stream looks like when its own sends bunch up — but
+    // reordering or dropping one half of a pair is not.
     void FlushOutbound();
 
     // Blocks for one full packet. Returns its packet ID; `outPayload` is set
@@ -121,6 +131,27 @@ private:
     void SendCompressed(int32_t packetId, const std::vector<uint8_t>& payload);
     int32_t ReadPacketRaw(std::vector<uint8_t>& outPayload);      // no compression framing
     int32_t ReadPacketCompressed(std::vector<uint8_t>& outPayload);
+
+    // Appends one line ("C2S"/"S2C", packet id, payload hex) to
+    // settings.json's Network.LogPackets file — added to chase down a server
+    // kicking this client for an invalid packet ("write: An established
+    // connection was aborted..."), with no indication which packet or field
+    // was malformed. Checked once per Connection (packetLoggingChecked) since
+    // this runs on every single packet in/out; empty (the default) means no
+    // logging and this becomes a single bool check per call.
+    void LogPacket(const char* direction, int32_t packetId, const uint8_t* data, size_t size);
+    bool packetLoggingChecked = false;
+    std::optional<std::ofstream> packetLogFile;
+
+    // t=0 for every line's leading timestamp — set once, on this
+    // Connection's first logged packet (the Handshake), so gaps between
+    // consecutive lines are directly readable without doing date-time math.
+    // Added specifically to measure real elapsed time between this client's
+    // own movement-packet sends, to confirm/rule out a receivedPositionThisTick-
+    // style server-side tick-stall collision (see RunPlayLoop's comment on
+    // the worldReady edge trigger) rather than guessing from send order
+    // alone.
+    std::chrono::steady_clock::time_point packetLogStartTime;
 };
 
 } // namespace Volcano

@@ -21,7 +21,7 @@ const std::unordered_map<std::string, std::string>& Lang()
         std::unordered_map<std::string, std::string> result;
         std::ifstream file("resources/minecraft/assets/minecraft/lang/en_us.json");
         if (!file) {
-            Log::Error("[ERROR] TextComponent: couldn't open en_us.json — translation keys will show raw.");
+            Log::Error("TextComponent: couldn't open en_us.json — translation keys will show raw.");
             return result;
         }
         try {

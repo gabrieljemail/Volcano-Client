@@ -117,7 +117,7 @@ void Config::Save() const
     std::ofstream file(path);
     if (!file.is_open())
     {
-        Log::Error("[CONFIG] Failed to write settings to " + path);
+        Log::Error("Failed to write settings to " + path);
         return;
     }
     file << data.dump(4);
@@ -140,6 +140,27 @@ void Config::Set(const std::string& key, const ConfigValue& value)
 {
     Assign(data, key, ToJson(value));
     Save();
+    version++;
+}
+
+std::string Config::ResolvePath(const std::string& relativePath) const
+{
+    size_t slash = path.find_last_of("/\\");
+    std::string dir = slash == std::string::npos ? "." : path.substr(0, slash);
+    return dir + "/" + relativePath;
+}
+
+std::vector<std::string> Config::GetStringArray(const std::string& key) const
+{
+    std::vector<std::string> result;
+    const nlohmann::json* node = Find(data, key);
+    if (node == nullptr || !node->is_array()) return result;
+
+    for (const auto& entry : *node)
+    {
+        if (entry.is_string()) result.push_back(entry.get<std::string>());
+    }
+    return result;
 }
 
 } // namespace Volcano

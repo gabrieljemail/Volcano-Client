@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <chrono>
 #include <cmath>
@@ -11,6 +12,7 @@
 #include "gui/GUIController.hpp"
 #include "../TickLoop.hpp"
 #include "../interaction/InteractionManager.hpp"
+#include "../platform/OS.hpp"
 
 using namespace std;
 
@@ -47,6 +49,7 @@ RenderThread::~RenderThread()
 void RenderThread::RunFrame()
 {
     WaitForTargetFrame();
+    auto workStart = chrono::steady_clock::now();
     UpdateDeltaTime();
     PollInputs();
     DrawFrame();
@@ -55,6 +58,18 @@ void RenderThread::RunFrame()
     // press/release edges above — only clear them now that both have
     // had their chance, not before.
     state->input->EndFrame();
+
+    // Everything above except pacing, split into real CPU work and time
+    // blocked on the GPU (fence/acquire, reported by the engine).
+    float totalMs = chrono::duration<float, std::milli>(chrono::steady_clock::now() - workStart).count();
+    float waitMs = state->timings.waitRawMs.load();
+    constexpr float smoothing = 0.05f;
+    auto smooth = [](std::atomic<float>& field, float sample)
+    {
+        field.store(field.load() + (sample - field.load()) * smoothing);
+    };
+    smooth(state->timings.renderCpuMs, std::max(0.0f, totalMs - waitMs));
+    smooth(state->timings.gpuWaitMs, waitMs);
 }
 
 void RenderThread::Shutdown()
@@ -75,7 +90,7 @@ void RenderThread::WaitForTargetFrame()
     // Add safety padding to make sure the scheduler doesn't make us oversleep.
     if (remaining > 2000)
     {
-        this_thread::sleep_for(microseconds(remaining - 1500)); // Time remaining - 1.5ms.
+        Platform::OS::PreciseSleep(remaining - 1500); // Time remaining - 1.5ms.
     }
 
     // Spin-wait the final microseconds.
@@ -84,6 +99,12 @@ void RenderThread::WaitForTargetFrame()
 
     while (steady_clock::now() < spinTarget)
     {
+        // Note: Even yield() can be off because this hands off to the scheduler,
+        // which can take as long as it wants. It's still better than sleep though.
+        // In the future, we can replace yield() with a no-op like a useless while loop.
+        // However, yield() resets the execution timer to fit all of our operations, while
+        // the no-op method does not and might cause the timer to interrupt mid-frame.
+        // Ideally, we want to keep interrupts off-frame, except for inputs.
         this_thread::yield();
     }
 }
@@ -97,13 +118,7 @@ void RenderThread::UpdateDeltaTime()
 
 void RenderThread::PollInputs()
 {
-    // Dispatches the KeyCallback/CursorPosCallback that feed InputHandler's
-    // state, plus window-manager events (resize, focus, close). Used to run
-    // in main()'s own separate loop, on the same (GLFW-owning) thread as
-    // this one now was a *different* thread — see the class comment. Polling
-    // here, immediately before this frame's input is read below, keeps the
-    // latency-minimizing order intact: capture as late as possible,
-    // immediately before the frame that uses it.
+    state->input->PollRawMouse();
     glfwPollEvents();
 
     // Bind the close button (and Alt+F4).
@@ -140,10 +155,25 @@ void RenderThread::PollInputs()
     {
         state->renderEngine->ToggleWindowMode();
     }
+    if (state->input->IsKeyPressed(GLFW_KEY_F2))
+    {
+        state->renderEngine->RequestScreenshot();
+    }
+    // Picks up Window.* changes from a Settings screen (no-op otherwise).
+    state->renderEngine->ApplyWindowSettings();
 
     if (state->input->WasActivated("ToggleWireframe"))
     {
         wireframeMode = !wireframeMode;
+    }
+
+    // Controls.ToggleSprint: a Sprint press latches sprinting on/off instead
+    // of needing the key held. Read every frame, same as Graphics.Lighting
+    // below — this isn't hot enough to bother caching.
+    bool toggleSprint = std::get<bool>(state->config->Get("Controls.ToggleSprint", false));
+    if (toggleSprint && state->input->WasActivated("Sprint"))
+    {
+        sprintToggled = !sprintToggled;
     }
 
     // F9 rebuilds every render pass's pipelines from disk — picks up edited
@@ -206,21 +236,19 @@ void RenderThread::PollInputs()
         // there's exactly one sensitivity knob, not two multiplied together.
         float dx = state->input->GetAxis("Camera.X");
         float dy = state->input->GetAxis("Camera.Y");
-        state->player->camera.ApplyMouseDelta(dx, dy, 1.0f);
+        float sensitivity = static_cast<float>(
+            std::get<uint32_t>(state->config->Get("Controls.Mouse.Sensitivity", uint32_t{100}))) / 100.0f;
+        state->player->camera.ApplyMouseDelta(dx, dy, sensitivity);
     }
 
     // Mainhand/offhand interaction (attack; block breaking/placing once
     // added) — same inputAllowed gate as Hotbar/Camera above.
     state->interaction->Update(inputAllowed);
 
-    // Gravity/collision/movement run on NetworkThread's own steady 20Hz
-    // clock now (see the tick-loop plan), not here — this just publishes
-    // what Tick() needs from this frame's input. Jump/JumpHold are gated by
-    // inputAllowed right at this read site (a screen/chat box being open
-    // means a jump press is never even latched, not latched-and-ignored),
-    // matching TickLoop::RequestJump's own comment; Move/Sneak/Sprint are
-    // published unconditionally, same as before — FixedStep() zeroes the
-    // movement axes itself when input isn't allowed.
+    // Publish this frame's input, then drive TickLoop with it immediately —
+    // gravity/collision/movement run right here (see TickLoop's class
+    // comment). Jump is gated by inputAllowed at this read site; Move/Sneak/
+    // Sprint publish unconditionally, since FixedStep() zeroes them itself.
     if (inputAllowed && state->input->WasActivated("Jump"))
     {
         state->tickLoop->RequestJump();
@@ -230,8 +258,9 @@ void RenderThread::PollInputs()
         state->input->GetAxis("Move.Forward"),
         state->input->GetAxis("Move.Right"),
         state->input->IsActive("Sneak"),
-        state->input->IsActive("Sprint"),
+        toggleSprint ? sprintToggled : state->input->IsActive("Sprint"),
         inputAllowed && state->input->IsActive("JumpHold"));
+    state->tickLoop->Tick();
 }
 
 void RenderThread::DrawFrame()
@@ -252,13 +281,28 @@ void RenderThread::DrawFrame()
     {
         engine->SubmitFrame(BuildSceneView());
     }
+    else
+    {
+        // Close the ImGui frame NewFrame opened, or the next one asserts.
+        GUIController::DiscardFrame();
+    }
 
     auto workEnd = chrono::steady_clock::now();
 
     // Schedule the next frame.
     double frameWorkTime = std::chrono::duration<double, std::milli>(workEnd - workStart).count();
     averageWorkTime = (averageWorkTime * 0.9) + (frameWorkTime * 0.1);
+    // Re-read each frame so the Max FPS setting applies live.
+    uint16_t targetFPS = state->targetFPS;
+    targetFrameTime = 1000.0 / static_cast<double>(targetFPS > 0 ? targetFPS : 60);
     nextFrameTarget += std::chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
+
+    // Fell more than a frame behind (a hitch, or the limit was just raised):
+    // resync instead of rushing frames out to catch up.
+    if (nextFrameTarget < workEnd)
+    {
+        nextFrameTarget = workEnd + std::chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
+    }
 }
 
 namespace {
@@ -277,10 +321,27 @@ float DayBrightness(int64_t dayTimeTicks)
     return static_cast<float>((std::cos(TWO_PI * (t - 0.25)) + 1.0) * 0.5);
 }
 
-// Sampled between these two extremes by DayBrightness() above — no weather
-// tinting yet (see ISSUES.mdx; that needs particle rendering first).
-constexpr glm::vec3 SKY_COLOR_NIGHT(0.015f, 0.015f, 0.035f);
-constexpr glm::vec3 SKY_COLOR_DAY(0.52941f, 0.80784f, 0.92157f);
+// Sky gradient endpoints, blended by DayBrightness() above. Day values are
+// vanilla's plains sky (0x78A7FF) and its paler fog/horizon color. No
+// weather tinting yet.
+constexpr glm::vec3 SKY_TOP_NIGHT(0.004f, 0.004f, 0.016f);
+constexpr glm::vec3 SKY_TOP_DAY(0.471f, 0.655f, 1.0f);
+constexpr glm::vec3 SKY_HORIZON_NIGHT(0.02f, 0.02f, 0.05f);
+constexpr glm::vec3 SKY_HORIZON_DAY(0.753f, 0.847f, 1.0f);
+
+// C++ mirror of terrain.frag's NotGamma — see its own comment for the
+// curve's shape and where it comes from (the real notGamma(vec3) in
+// resources/minecraft/assets/minecraft/shaders/core/lightmap.fsh). Used
+// here to apply the same "Bright" curve to the sky clear color that the
+// shader applies to per-block lighting, so raising Graphics.Brightness
+// actually lifts the night sky instead of leaving it exactly as dark as a
+// pure day/night color lerp would — the "clear color interpolation is
+// linear" gap this was added to close.
+float NotGamma(float level)
+{
+    float inverted = 1.0f - level;
+    return 1.0f - (inverted * inverted * inverted * inverted);
+}
 
 } // namespace
 
@@ -293,13 +354,70 @@ Engine::SceneView RenderThread::BuildSceneView()
     scene.proj = BuildProjection(state->renderEngine->GetExtent());
     scene.cameraPosition = state->player->camera.GetEyePosition(renderPosition);
 
-    scene.dayBrightness = DayBrightness(state->dayTimeTicks.load());
-    scene.skyColor = glm::mix(SKY_COLOR_NIGHT, SKY_COLOR_DAY, scene.dayBrightness);
+    // Read once and shared between skyColor below and the UBO fields further
+    // down (VulkanRenderEngine::SubmitFrame), rather than two separate config
+    // lookups + a second DayBrightness call for what has to be the same
+    // frame's values anyway.
+    bool lightingEnabled = std::get<bool>(state->config->Get("Graphics.Lighting", true));
+    float brightnessFactor = static_cast<float>(
+        std::get<uint32_t>(state->config->Get("Graphics.Brightness", uint32_t{50}))) / 100.0f;
+    // See terrain.frag's LightCurve: 3 = vanilla, 0 = linear.
+    float lightFalloff = static_cast<float>(
+        std::get<uint32_t>(state->config->Get("Graphics.LightFalloff", uint32_t{3})));
+
+    int64_t dayTime = state->dayTimeTicks.load();
+    scene.dayBrightness = DayBrightness(dayTime);
+    scene.brightnessFactor = brightnessFactor;
+    scene.lightFalloff = lightFalloff;
+
+    // Sun rises in the east (+X), is overhead at noon (6000), sets in the
+    // west; the moon is always opposite. Phase advances once per day.
+    constexpr double TWO_PI = 6.283185307179586;
+    int64_t timeOfDay = ((dayTime % 24000) + 24000) % 24000;
+    double sunAngle = TWO_PI * static_cast<double>(timeOfDay) / 24000.0;
+    scene.sunDirection = glm::vec3(static_cast<float>(std::cos(sunAngle)), static_cast<float>(std::sin(sunAngle)), 0.0f);
+    int64_t day = dayTime >= 0 ? dayTime / 24000 : (dayTime - 23999) / 24000;
+    scene.moonPhase = static_cast<int>(((day % 8) + 8) % 8);
+
+    // Vanilla's terrain fog: ends at the render distance, fading in over the
+    // last tenth of it (4-64 blocks).
+    float renderDistanceBlocks = static_cast<float>(
+        std::get<uint32_t>(state->config->Get("Graphics.RenderDistance", uint32_t{8}))) * 16.0f;
+    scene.fogEnd = renderDistanceBlocks;
+    scene.fogStart = renderDistanceBlocks - std::clamp(renderDistanceBlocks / 10.0f, 4.0f, 64.0f);
+
+    // Vanilla's hardcoded per-face shade (LevelRenderer::getShade), stored
+    // as a 0-100 percentage like Brightness above rather than a raw float —
+    // Config has no float alternative (see ConfigValue). Face defaults are
+    // Up=100, Down=40, North/South=80, East/West=60.
+    scene.shadeTop = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.Top", uint32_t{100}))) / 100.0f;
+    scene.shadeBottom = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.Bottom", uint32_t{40}))) / 100.0f;
+    scene.shadeNorthSouth = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.NorthSouth", uint32_t{80}))) / 100.0f;
+    scene.shadeEastWest = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.EastWest", uint32_t{60}))) / 100.0f;
+
+    // Same γ/NotGamma blend terrain.frag applies to per-block lighting, so
+    // raising Graphics.Brightness lifts the night sky too instead of only
+    // affecting terrain — this is the "clear color interpolation is linear"
+    // gap. Skipped entirely (not just blended toward brightnessFactor=0)
+    // when lighting is off, matching "G"'s existing all-or-nothing meaning.
+    float skyColorBrightness = lightingEnabled
+        ? glm::mix(scene.dayBrightness, NotGamma(scene.dayBrightness), brightnessFactor)
+        : scene.dayBrightness;
+    // skyColor is the horizon: the clear color, fog color and gradient base.
+    // The constants are sRGB (as picked); the swapchain is sRGB too, so
+    // shaders work in linear and the output gets encoded once on display.
+    auto toLinear = [](glm::vec3 srgb) { return glm::pow(srgb, glm::vec3(2.2f)); };
+    scene.skyColor = toLinear(glm::mix(SKY_HORIZON_NIGHT, SKY_HORIZON_DAY, skyColorBrightness));
+    scene.skyTopColor = toLinear(glm::mix(SKY_TOP_NIGHT, SKY_TOP_DAY, skyColorBrightness));
 
     scene.time = chrono::duration<float>(chrono::steady_clock::now() - startTime).count();
     scene.deltaTime = frameDeltaTime;
 
-    scene.lightingEnabled = std::get<bool>(state->config->Get("Graphics.Lighting", true));
+    // Not just !worldReady: a mid-session Respawn drops worldReady briefly,
+    // and the panorama shouldn't flash up for that (phase stays Playing).
+    scene.menuBackground = !state->worldReady.load()
+        && state->connectionPhase.load() != ConnectionPhase::Playing;
+    scene.lightingEnabled = lightingEnabled;
     scene.wireframe = wireframeMode;
     return scene;
 }

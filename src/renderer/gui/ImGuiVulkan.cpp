@@ -31,7 +31,7 @@ void ImGuiVulkan::Init(ImGuiVulkanContext& context, VkRenderPass renderPass, uin
     init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     
     if (!ImGui_ImplVulkan_Init(&init_info)) {
-        Log::Error("[ERROR] Failed to initialize ImGui Vulkan backend");
+        Log::Error("Failed to initialize ImGui Vulkan backend");
         return;
     }
 
@@ -39,7 +39,7 @@ void ImGuiVulkan::Init(ImGuiVulkanContext& context, VkRenderPass renderPass, uin
     // No need to manually upload fonts anymore
 
     context.initialized = true;
-    Log::Info("[INFO] ImGui Vulkan backend initialized");
+    Log::Info("ImGui Vulkan backend initialized");
 }
 
 void ImGuiVulkan::Shutdown(ImGuiVulkanContext& context) {
@@ -53,7 +53,7 @@ void ImGuiVulkan::Shutdown(ImGuiVulkanContext& context) {
     }
     
     context.initialized = false;
-    Log::Info("[INFO] ImGui Vulkan backend shutdown");
+    Log::Info("ImGui Vulkan backend shutdown");
 }
 
 void ImGuiVulkan::NewFrame(ImGuiVulkanContext& context) {
@@ -93,7 +93,7 @@ void ImGuiVulkan::CreateDescriptorPool(ImGuiVulkanContext& context) {
     pool_info.pPoolSizes = pool_sizes;
     
     if (vkCreateDescriptorPool(device, &pool_info, nullptr, &context.descriptorPool) != VK_SUCCESS) {
-        Log::Error("[ERROR] Failed to create ImGui descriptor pool");
+        Log::Error("Failed to create ImGui descriptor pool");
         return;
     }
 }

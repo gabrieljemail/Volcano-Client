@@ -86,10 +86,18 @@ public:
     // F11: cycles windowed <-> borderless fullscreen.
     virtual void ToggleWindowMode() = 0;
 
+    // Re-applies Window.Mode/Width/Height/FullscreenMode.* if the config
+    // changed since last call (cheap otherwise) — called every frame so a
+    // Settings screen change takes effect live.
+    virtual void ApplyWindowSettings() = 0;
+
+    // F2: saves the next presented frame (HUD included) to screenshots/.
+    virtual void RequestScreenshot() = 0;
+
     // ---- Passes ----
 
     // Passes run in list order, all inside one render pass sharing one
-    // color + depth target. Built-in names, in order: "Terrain",
+    // color + depth target. Built-in names, in order: "Skybox", "Terrain",
     // "Entities", "NonCubic", "Selection", "ShaderPackOverlay", "GUI".
     //
     // Adding a pass after Init() creates it immediately; a pass whose

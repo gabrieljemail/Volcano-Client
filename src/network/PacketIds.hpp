@@ -56,6 +56,37 @@ namespace PlayC2S { // Play state, serverbound (client -> server)
     constexpr int32_t KeepAlive = 0x1C;
     constexpr int32_t SetPlayerPosition = 0x1E;
 
+    // The four movement-packet variants, matching the real client's own
+    // ServerboundMovePlayerPacket.Pos/PosRot/Rot/StatusOnly split (see
+    // LocalPlayer::sendPosition in resources/minecraft-code) — it picks
+    // exactly one per tick based on what actually changed, rather than
+    // always sending the widest one. Fields per protocol.json:
+    //   0x1E position:      x/y/z (f64) + MovementFlags
+    //   0x1F position_look: x/y/z (f64) + yaw/pitch (f32, degrees) + MovementFlags
+    //   0x20 look:          yaw/pitch (f32, degrees) + MovementFlags
+    //   0x21 flying:        MovementFlags alone (vanilla's StatusOnly)
+    constexpr int32_t SetPlayerPositionAndRotation = 0x1F;
+    constexpr int32_t SetPlayerRotation = 0x20;
+    constexpr int32_t SetPlayerMovementFlags = 0x21;
+
+    // Empty-bodied end-of-client-tick marker, sent at the very end of every
+    // single client tick — Minecraft.tick()'s own last act (see
+    // resources/minecraft-code's Minecraft.java:
+    // `connection.send(ServerboundClientTickEndPacket.INSTANCE)`).
+    //
+    // This is the delimiter the server's per-client-tick movement
+    // accounting is built on: ServerGamePacketListenerImpl's
+    // receivedMovementThisTick/receivedPositionThisTick flags are reset in
+    // handleClientTickEnd, NOT on the server's own tick. A client that
+    // never sends this is, from the server's point of view, spending its
+    // entire session inside one unbounded client tick — so the second
+    // position-bearing movement packet it ever sends hits the
+    // "receivedPositionThisTick" branch and is disconnected with "Invalid
+    // move player packet received". That is what was kicking this client a
+    // second or two into every session regardless of how the reports
+    // themselves were paced.
+    constexpr int32_t ClientTickEnd = 0x0D;
+
     // Plain (unsigned) chat message — 0x09 per this client's own bundled
     // resources/minecraft-data/data/pc/26.1/protocol.json
     // (play.toServer.types.packet_chat_message), the same source that
@@ -91,21 +122,77 @@ namespace PlayC2S { // Play state, serverbound (client -> server)
     // sends when it forces a slot change — same field, opposite direction.
     constexpr int32_t SetHeldItem = 0x35;
 
-    // Combat and movement-state reporting — IDs from resources/maps/
-    // protocol.json's play.toServer.types.packet mapper, layouts from the
-    // matching packet_* entries, and the send order each one needs from
-    // vanilla's own client (MultiPlayerGameMode.attack / LocalPlayer.
-    // sendPosition in resources/26.2.zip) — see SendAttack/SendSwing and
-    // RunPlayLoop's movement report.
-    //
-    // 26.1 split attacking out of Interact (packet_use_entity, 0x1A, now
-    // right-click-only) into its own packet: just the target's varint
-    // entity id, nothing else — the server works out crit/sprint/sweep from
-    // its own copy of the attacker's state, not from anything sent here.
+    // Inventory management: window_click carries the player inventory slot,
+    // button/mode, changed-slot hashes, and cursor item; close_window closes
+    // the local player inventory window (window 0).
+    constexpr int32_t WindowClick = 0x12;
+    constexpr int32_t CloseWindow = 0x13;
+
+    // Empty-bodied ack a real client sends once it's finished loading the
+    // world around the player (see NetworkClient::RunPlayLoop's worldReady
+    // edge trigger) — 0x2C per this client's own bundled protocol.json
+    // (play.toServer.types.packet mapper: "player_loaded"). Nothing in the
+    // base protocol spec requires it, but a client that receives chunks,
+    // starts moving, and never sends it looks exactly like a bot to
+    // anti-cheat/anti-bot plugins — see the same concern already documented
+    // on PluginMessage's brand packet above.
+    constexpr int32_t PlayerLoaded = 0x2C;
+
+    // Interaction packets — IDs and field layouts read the same way as the
+    // entity/tab-list/inventory IDs above, from this client's own bundled
+    // protocol.json's play.toServer.types.packet mapper (lines ~11670-11738)
+    // and each packet's own play.toServer.types definition. See
+    // InteractionManager/src/interaction/events/*.hpp for what dispatches
+    // these.
+
+    // packet_attack: entityId (varint) only — melee-attacking an entity.
+    // Distinct from UseEntity below in this protocol version (older docs
+    // describe one combined "Interact Entity" packet with an action-type
+    // field; 26.1's protocol.json models them as two separate packets). The
+    // server works out crit/sprint/sweep from its own copy of the
+    // attacker's state, not from anything sent here.
     constexpr int32_t Attack = 0x01;
-    // varint hand (0 = main, 1 = off). Vanilla sends this right after every
-    // Attack, and on its own for a swing at air/a block.
-    constexpr int32_t SwingArm = 0x3F;
+
+    // packet_use_entity: target (varint), hand (varint mapper: 0 main_hand,
+    // 1 off_hand), location (lpVec3 — variable width, 1 byte for zero; the interact point relative to
+    // the entity's own position), sneaking (bool). Covers vanilla's
+    // "interact at" case (right-clicking an entity) — this client has no
+    // real hit-point tracking for entities yet (RaycastEntities only
+    // returns a distance), so location is always sent as (0,0,0); most
+    // interact behaviors (feeding an animal, opening a villager's trades)
+    // don't key off it anyway.
+    constexpr int32_t UseEntity = 0x1A;
+
+    // packet_block_dig: status (varint, see DigStatus in
+    // InteractionTypes.hpp), location (position, packed block pos — see
+    // PacketWriter::WritePosition), face (i8, vanilla Direction ordinal —
+    // see DirectionToProtocolId), sequence (varint).
+    constexpr int32_t BlockDig = 0x29;
+
+    // packet_arm_animation: hand (varint) — the visual swing, sent
+    // alongside (not instead of) the actual attack/dig/use/place packet.
+    // Vanilla sends this right after every Attack too, and on its own for a
+    // swing at air/a block.
+    constexpr int32_t ArmAnimation = 0x3F;
+    constexpr int32_t SwingArm = ArmAnimation; // alias — same packet, see SendArmAnimation.
+
+    // packet_block_place (this client's "use item on a block" path): hand
+    // (varint), location (position — the block being clicked, NOT the one
+    // being placed into), direction (varint, vanilla Direction ordinal —
+    // which face of `location` was clicked), cursorX/Y/Z (f32, 0..1 within
+    // that face), insideBlock (bool), worldBorderHit (bool), sequence
+    // (varint).
+    constexpr int32_t BlockPlace = 0x42;
+
+    // packet_use_item: hand (varint), sequence (varint), rotation (vec2f —
+    // yaw/pitch, degrees). Right-click with no block/entity targeted (eat,
+    // drink, throw, draw a bow, ...).
+    constexpr int32_t UseItem = 0x43;
+
+    // chunk_batch_received: chunksPerTick (f32) — the ack vanilla's
+    // ChunkBatchSender waits on before sending the next batch.
+    constexpr int32_t ChunkBatchReceived = 0x0B;
+
     // varint entityId (always our own); varint action (1 = start_sprinting,
     // 2 = stop_sprinting, ...); varint jumpBoost (horse jumps only, 0 here).
     // The server's sprint flag — what makes a full-strength hit a knockback
@@ -115,19 +202,69 @@ namespace PlayC2S { // Play state, serverbound (client -> server)
     // 0 upward). Shift is how the server learns we're sneaking now; sent
     // whenever the set of held movement keys changes.
     constexpr int32_t PlayerInput = 0x2B;
-    // f64 x/y/z, f32 yaw, f32 pitch, u8 MovementFlags — SetPlayerPosition
-    // plus rotation. The server aims our knockback hits along our reported
-    // yaw (Player.causeExtraKnockback), so it has to be kept current.
-    constexpr int32_t SetPlayerPositionAndRotation = 0x1F;
 }
 
 namespace PlayS2C { // Play state, clientbound (server -> client)
     constexpr int32_t LoginPlay = 0x31;                // LOGIN
     constexpr int32_t KeepAlive = 0x2C;                // KEEP_ALIVE
     constexpr int32_t ChunkDataAndUpdateLight = 0x2D;  // LEVEL_CHUNK_WITH_LIGHT
+    // FORGET_LEVEL_CHUNK (protocol.json "unload_chunk"): chunkZ (i32), then
+    // chunkX (i32) — Z first on the wire.
+    constexpr int32_t UnloadChunk = 0x25;
     constexpr int32_t SynchronizePlayerPosition = 0x48;// PLAYER_POSITION (also every later teleport)
     constexpr int32_t SetCenterChunk = 0x5E;           // SET_CHUNK_CACHE_CENTER
     constexpr int32_t Disconnect = 0x20;               // DISCONNECT
+
+    // BLOCK_UPDATE — a single block changed (0x08 per this client's own
+    // bundled protocol.json, play.toClient.types.packet mapper:
+    // "block_change" -> packet_block_change). Fields: location (position,
+    // packed block pos — see PacketReader::ReadPosition), type (varint, the
+    // new protocol block-state id). Used both for changes this client had
+    // no part in (another player, redstone, ...) and to correct a locally-
+    // mispredicted edit of its own (see BreakBlockEvent) — this client
+    // sends no signal distinguishing "here's what changed" from "here's
+    // what you got wrong," so both are handled identically: just apply the
+    // given state. See NetworkInbox::pendingBlockEdits for how this hands
+    // off to World::SetBlock on the main thread.
+    constexpr int32_t BlockUpdate = 0x08;
+
+    // MULTI_BLOCK_CHANGE (0x54 per protocol.json) — many blocks in one chunk
+    // section changed at once (explosions, fills, ...). Fields: section
+    // position (one packed long: x 22 bits, z 22, y 20, all signed), then a
+    // varint-counted array of records: stateId << 12 | localX << 8 |
+    // localZ << 4 | localY.
+    constexpr int32_t MultiBlockChange = 0x54;
+
+    // GAME_EVENT — ID read the same way as BlockUpdate above, from this
+    // client's own bundled protocol.json's play.toClient.types.packet
+    // mapper: 0x26 game_state_change -> packet_game_state_change. Fields:
+    // reason (u8 mapper — 3 = change_game_mode, the only one this client
+    // reads), gameMode (f32, truncates cleanly to 0-3 — see PlayS2C::
+    // LoginPlay's own SpawnInfo.gamemode for the same 4 values). Sent when
+    // an op or command changes the local player's gamemode mid-session;
+    // GlobalState::localGameMode is otherwise only set once, from LoginPlay.
+    constexpr int32_t GameStateChange = 0x26;
+
+    // PLAYER_ABILITIES — flags (i8: 0x01 invulnerable, 0x02 flying,
+    // 0x04 canFly, 0x08 instabuild), flyingSpeed (f32), walkingSpeed (f32).
+    // Payload size cross-checked against the live dev server: 9 bytes, this
+    // file's header note already flagged it verified. instabuild, not raw
+    // gamemode, is what vanilla itself checks for insta-mine (Player's own
+    // getDestroySpeed reads getAbilities().instabuild) — see GlobalState::
+    // canInstabuild.
+    constexpr int32_t PlayerAbilities = 0x40;
+
+    // UPDATE_LIGHT — 0x30 per bundled protocol.json ("update_light"). Same
+    // light layout as the tail of map_chunk, but chunk X/Z are varints here
+    // (i32 in map_chunk).
+    constexpr int32_t UpdateLight = 0x30;
+
+    // chunk_batch_start (empty) / chunk_batch_finished (batchSize varint).
+    // Finished must be answered with PlayC2S::ChunkBatchReceived, or a
+    // vanilla/Fabric server stops streaming chunks after the first batch.
+    constexpr int32_t ChunkBatchFinished = 0x0B;
+    constexpr int32_t ChunkBatchStart = 0x0C;
+
     // Content (Text Component) + overlay (Boolean: true = action bar,
     // false = chat) — see NetworkClient::RunPlayLoop.
     constexpr int32_t SystemChatMessage = 0x79;        // SYSTEM_CHAT
@@ -192,16 +329,15 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     constexpr int32_t PlayerInfoRemove = 0x45;         // PLAYER_INFO_REMOVE
     constexpr int32_t PlayerInfoUpdate = 0x46;         // PLAYER_INFO_UPDATE
 
-    // Inventory sync — IDs read the same way as the entity/tab-list IDs
-    // above, from this client's own bundled protocol.json's play.toClient.
-    // types.packet mapper: 0x12 window_items, 0x14 set_slot, 0x69
-    // held_item_slot. windowId 0 (used by both SetContainerContent and
-    // SetContainerSlot) is always the player's own inventory — this client
-    // never opens a server-side container (chest, furnace, ...) since it
-    // can't interact with blocks yet, so any other windowId is ignored.
+    // Inventory sync — IDs read from this client's bundled protocol.json's
+    // play.toClient.types.packet mapper. Window 0 is the player inventory;
+    // OpenWindow establishes the nonzero active server window used by the
+    // matching content and slot updates.
     constexpr int32_t SetContainerContent = 0x12; // WINDOW_ITEMS — full inventory resync (e.g. right after spawn).
     constexpr int32_t SetContainerSlot = 0x14;    // SET_SLOT — one slot changed (e.g. picking something up).
     constexpr int32_t SetHeldItem = 0x69;         // HELD_ITEM_SLOT (clientbound) — server forces the selected hotbar slot.
+    constexpr int32_t OpenWindow = 0x3B;           // OPEN_WINDOW — server opens a container GUI.
+    constexpr int32_t CloseWindow = 0x11;          // CLOSE_WINDOW — server closes a container GUI.
 
     // UPDATE_TIME — ID read the same way as the entity/tab-list IDs above,
     // from this client's own bundled protocol.json's play.toClient.types.

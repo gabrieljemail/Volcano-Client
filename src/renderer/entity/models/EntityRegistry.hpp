@@ -7,6 +7,20 @@
 
 namespace Volcano::EntityRegistry {
 
+// Which procedural mesh/pipeline EntityRenderer draws a type with — chosen
+// by ClassifyShape (EntityRegistry.cpp) since minecraft-data itself carries
+// no shape/model hint. Cube is the fallback for anything not covered by a
+// more specific shape.
+enum class ShapeKind {
+    Cube,      // Flat-tinted placeholder box — EntityRenderer::BuildCubeMesh.
+    Humanoid,  // Head/body/arms/legs skeleton — data-driven, see resources/volcano/models/entity/*.json + EntityJsonModel.hpp.
+    Quadruped, // Body + head + 4 legs, generic proportions — QuadrupedModel.hpp.
+    Golem,     // Iron golem's own blocky proportions — GolemModel.hpp.
+    Pig,       // Real vanilla-derived pig proportions — PigModel.hpp.
+    Cow,       // Real vanilla-derived cow proportions — CowModel.hpp.
+    Block,     // A textured block cube (falling_block, tnt) — Entity::blockStateId picks the block.
+};
+
 // One entity type's static metadata, straight from minecraft-data's
 // entities.json (see EntityRegistry.cpp for the version pinned).
 struct EntityTypeInfo {
@@ -14,18 +28,21 @@ struct EntityTypeInfo {
     std::string displayName; // e.g. "Cow".
     float width = 0.0f;
     float height = 0.0f;
-    std::string category;    // e.g. "Passive mobs".
-    std::string type;        // e.g. "player", "hostile", "animal", "projectile", "other".
+    std::string category;    // e.g. "Passive mobs" — broad UI-facing bucket, too coarse for shape choice.
+    std::string entityKind;  // minecraft-data's "type" field — "animal"/"hostile"/"player"/"projectile"/...;
+                              // the one field that reliably says whether a type is alive at all (see
+                              // ClassifyShape), so kept here too for anything else that needs the same check.
+    ShapeKind shape = ShapeKind::Cube; // See ShapeKind above.
 
     // Whether this is one of vanilla's LivingEntity subclasses (players,
     // mobs, armor stands) rather than an object (item, boat, arrow, ...) —
-    // derived from `type`, which minecraft-data only ever sets to one of the
-    // living categories below for LivingEntity subclasses. A critical hit
-    // needs a living target (vanilla's Player.canCriticalAttack).
+    // derived from entityKind. A critical hit needs a living target
+    // (vanilla's Player.canCriticalAttack).
     bool IsLiving() const
     {
-        return type == "player" || type == "mob" || type == "animal" || type == "hostile"
-            || type == "water_creature" || type == "passive" || type == "ambient" || type == "living";
+        return entityKind == "player" || entityKind == "mob" || entityKind == "animal" || entityKind == "hostile"
+            || entityKind == "water_creature" || entityKind == "passive" || entityKind == "ambient"
+            || entityKind == "living";
     }
 };
 

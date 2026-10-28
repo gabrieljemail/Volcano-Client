@@ -55,6 +55,18 @@ public:
         bytes.push_back(value ? 1u : 0u);
     }
 
+    // Fixed 4-byte big-endian int — distinct from WriteVarInt. Most numeric
+    // protocol fields are VarInts, but a handful (e.g. the Ping/Pong id in
+    // both the Configuration and Play states) are a plain fixed-width int;
+    // matches PacketReader::ReadInt's byte order.
+    void WriteInt(int32_t value)
+    {
+        uint32_t v = static_cast<uint32_t>(value);
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            bytes.push_back(static_cast<uint8_t>((v >> shift) & 0xFFu));
+        }
+    }
+
     void WriteLong(int64_t value)
     {
         uint64_t v = static_cast<uint64_t>(value);
@@ -84,6 +96,20 @@ public:
     void WriteBytes(const uint8_t* src, size_t count)
     {
         bytes.insert(bytes.end(), src, src + count);
+    }
+
+    // Minecraft's packed block position: a single i64 with x in the top 26
+    // bits, z in the next 26, y in the low 12 — the protocol's `position`
+    // type (used by e.g. packet_block_dig/packet_block_place's `location`
+    // field), unchanged since 1.14. Each component is masked to its own bit
+    // width first so a negative coordinate's sign-extension doesn't bleed
+    // into its neighbor's bits.
+    void WritePosition(int32_t x, int32_t y, int32_t z)
+    {
+        uint64_t packed = ((static_cast<uint64_t>(x) & 0x3FFFFFFull) << 38)
+                         | ((static_cast<uint64_t>(z) & 0x3FFFFFFull) << 12)
+                         | (static_cast<uint64_t>(y) & 0xFFFull);
+        WriteLong(static_cast<int64_t>(packed));
     }
 
     const std::vector<uint8_t>& Data() const { return bytes; }
@@ -193,6 +219,19 @@ public:
         double value;
         std::memcpy(&value, &bits, sizeof(value));
         return value;
+    }
+
+    // Inverse of PacketWriter::WritePosition — x top 26 bits, z next 26,
+    // y low 12, each sign-extended back out by shifting its field to the
+    // top of the 64-bit word and arithmetic-shifting back down (well-
+    // defined for a signed type as of C++20, which this project builds
+    // with).
+    void ReadPosition(int32_t& x, int32_t& y, int32_t& z)
+    {
+        int64_t val = ReadLong();
+        x = static_cast<int32_t>(val >> 38);
+        y = static_cast<int32_t>((val << 52) >> 52);
+        z = static_cast<int32_t>((val << 26) >> 38);
     }
 
     size_t Remaining() const { return size - pos; }

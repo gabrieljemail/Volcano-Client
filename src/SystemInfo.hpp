@@ -40,6 +40,10 @@ struct SystemInfo {
     void DetectGPU(const char* deviceName, uint32_t vendorID, uint32_t apiVersion);
 };
 
+// Resident RAM of this process, for the debug HUD. Live, not cached.
+// Forwards to Platform::OS.
+uint64_t GetProcessMemoryUsageBytes();
+
 } // namespace Volcano
 
 #endif

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
 #include "GlobalState.hpp"
@@ -50,8 +50,15 @@ inline VkPipelineLayout pipelineLayout;
 // Non-cubic (transparent/cross/partial-shape block) pass — see
 // CreateNonCubicPipeline(). Shares pipelineLayout (same push constant +
 // descriptor set layout signature) since only the fixed-function state
-// (no backface cull, alpha blend, no depth write) differs from graphicsPipeline.
+// (no backface cull, alpha blend, depth write ON — see that function's own
+// comment on why) differs from graphicsPipeline.
 inline VkPipeline nonCubicPipeline;
+// Genuinely translucent pass (currently water only) — see
+// CreateTranslucentPipeline(). Same shaders/vertex format/blend state as
+// nonCubicPipeline; the only fixed-function difference is depth write OFF,
+// which is exactly the "third pass" nonCubicPipeline's own comment describes
+// as worth adding once something genuinely translucent needed it.
+inline VkPipeline translucentPipeline;
 inline VkQueue graphicsQueue;
 inline VkQueue presentQueue;
 inline uint32_t graphicsQueueFamilyIndex;
@@ -66,7 +73,6 @@ inline VkDescriptorPool descriptorPool;
 inline VkDescriptorSet cameraSets[3];
 inline AllocatedBuffer cameraUBOs[3];
 inline void* cameraUBOsMapped[3];
-inline std::vector<AllocatedBuffer> allocatedBuffers;
 inline std::vector<AllocatedImage> allocatedImages;
 inline VkDescriptorSetLayout textureSetLayout;
 inline VkDescriptorSet textureSet;
@@ -76,6 +82,28 @@ inline VkImage depthImage;
 inline VmaAllocation depthImageAllocation;
 inline VkImageView depthImageView;
 inline VkFormat depthFormat;
+
+// Hi-Z occlusion pyramid — see HiZBuildPass's own comment for the full
+// picture. mip 0 is a same-resolution copy of depthImage; each mip above it
+// is the MAX (farthest, since depth here is non-reversed) of the 2x2 texels
+// below it. hizMipViews[i] is mip i alone (VK_IMAGE_USAGE_STORAGE_BIT, for
+// imageLoad/imageStore) — resized alongside depthImage in RecreateSwapchain.
+inline VkImage hizImage;
+inline VmaAllocation hizImageAllocation;
+inline std::vector<VkImageView> hizMipViews;
+inline uint32_t hizMipLevels = 0;
+inline VkExtent2D hizExtent{}; // mip 0's size — always swapchainExtent.
+
+inline VkSampler hizDepthSampler; // For texelFetch-ing depthImage in hiz_copy.comp — no filtering happens, so its filter/wrap settings don't matter.
+inline VkDescriptorSetLayout hizCopySetLayout;       // binding 0: depthImage (sampler2D), binding 1: mip 0 (storage image, write).
+inline VkDescriptorSetLayout hizDownsampleSetLayout; // binding 0: src mip (storage image, read), binding 1: dst mip (storage image, write).
+inline VkPipelineLayout hizCopyPipelineLayout;
+inline VkPipelineLayout hizDownsamplePipelineLayout;
+inline VkPipeline hizCopyPipeline;
+inline VkPipeline hizDownsamplePipeline;
+inline VkDescriptorPool hizDescriptorPool;
+inline VkDescriptorSet hizCopySet;
+inline std::vector<VkDescriptorSet> hizDownsampleSets; // size hizMipLevels - 1; set[i] reads mip i, writes mip i+1.
 
 // Getters:
 inline VkInstance GetInstance() { return instance.instance; }
@@ -108,6 +136,11 @@ void DestroyGraphicsPipeline();
 // Must run after CreateGraphicsPipeline() — reuses its pipelineLayout.
 void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders);
 void DestroyNonCubicPipeline();
+// Third pass, for geometry that's genuinely translucent rather than cutout
+// (currently just water) — see CreateTranslucentPipeline's own comment.
+// Must run after CreateGraphicsPipeline() — reuses its pipelineLayout, same as CreateNonCubicPipeline().
+void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders);
+void DestroyTranslucentPipeline();
 
 // Builds a VkShaderModule from shaders.Load(shaderName) ("terrain.vert",
 // ...). Throws if the shader can't be found or the driver rejects it —
@@ -129,9 +162,12 @@ VkRenderPass GetRenderPass();
 // thread, between frames (never mid-recording).
 void RecreateSwapchain(int width, int height);
 
-// Window-mode toggling (F11). Exclusive fullscreen is intentionally left
-// unimplemented/unselected for now — see ToggleWindowMode's definition.
+// Window modes, driven by Window.Mode (0 windowed, 1 borderless, 2
+// exclusive fullscreen at Window.FullscreenMode.Width/Height/RefreshRate).
+// ApplyWindowSettings re-applies them whenever the config changes (e.g. a
+// Settings screen); ToggleWindowMode is F11. Both main thread only.
 WindowMode GetWindowMode();
+void ApplyWindowSettings();
 void ToggleWindowMode();
 
 // Called by the render thread right after its first successful present.
@@ -144,5 +180,20 @@ void NotifyFramePresented();
 VkCommandBuffer BeginOneShotCommands();
 void EndOneShotCommands(VkCommandBuffer cmd);
 void TransitionImageLayout(VkCommandBuffer cmd, VkImage image, uint32_t baseMipLevel, uint32_t mipLevels, uint32_t baseArrayLayer, uint32_t layerCount, VkImageLayout oldLayout, VkImageLayout newLayout);
+
+// Hi-Z pyramid — resolution-dependent resources (image, mip views, sampler,
+// descriptor set layouts + allocated/updated sets, readback buffer). Called
+// from Init()/RecreateSwapchain() alongside CreateDepthResources(), same
+// lifecycle. Destroy is idempotent, same convention as the other Destroy*
+// functions here.
+void CreateHiZResources();
+void DestroyHiZResources();
+// Hi-Z pyramid — shader-dependent pipelines only (the descriptor set layouts
+// they use are created by CreateHiZResources() above). Called from
+// HiZBuildPass::Create()/Destroy(), not from Init() directly — mirrors
+// CreateGraphicsPipeline()'s own split between VulkanInit-owned base
+// resources and pass-owned pipelines.
+void CreateHiZPipelines(const Volcano::Engine::ShaderLibrary& shaders);
+void DestroyHiZPipelines();
 
 #endif

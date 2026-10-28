@@ -29,7 +29,7 @@ void TerrainPass::Record(FrameContext& frame)
     std::lock_guard<std::mutex> lock(frame.state->renderListMutex);
     for (const Mesh* mesh : VisibleChunkController::GetVisibleMeshes(frame.state->renderList, frame.viewProj))
     {
-        DrawMesh(cmd, *mesh);
+        DrawMesh(cmd, *mesh, frame.state);
     }
 }
 

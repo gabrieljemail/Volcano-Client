@@ -62,13 +62,18 @@ struct Entity {
     glm::vec2 boundingBox{0.6f, 1.8f}; // width, height.
     glm::vec3 color{0.8f, 0.2f, 0.2f};
 
-    float hurtAmount = 0.0f; // 0-1 red hit-flash intensity (tick invulnerability).
-    bool visible = true;
+    // Protocol block-state id for block-shaped entities (falling_block's
+    // spawn objectData, tnt's fixed block). -1 for everything else.
+    int32_t blockStateId = -1;
 
-    // When this entity last took damage (PlayS2C::DamageEvent/HurtAnimation,
-    // or a legacy EntityEvent status 2) — drives HurtFlash below. Default
-    // (epoch) means "never", which is always far outside the flash window.
+    // Protocol item id of a dropped item's stack (Set Entity Data index 8).
+    // 0 until the metadata arrives, and for every non-item entity.
+    int32_t itemId = 0;
+
+    // Set by the Damage Event packet. The hit flash lasts vanilla's 10-tick
+    // hurtTime — see IsHurt.
     std::chrono::steady_clock::time_point lastHurtTime{};
+    bool visible = true;
 
     // Set once the server reports this entity died (EntityEvent status 3).
     // It lingers until Remove Entities arrives, tinted red the whole time,
@@ -82,16 +87,11 @@ struct Entity {
     std::chrono::steady_clock::time_point lastSwingTime{};
     std::chrono::steady_clock::time_point lastCritTime{};
 
-    // The red overlay intensity to render right now: a fixed tint for
-    // vanilla's 10-tick hurtTime after a hit, or for as long as the entity
-    // is dead, otherwise whatever hurtAmount holds.
-    float HurtFlash(std::chrono::steady_clock::time_point now) const
+    bool IsHurt(std::chrono::steady_clock::time_point now) const
     {
-        constexpr float HURT_FLASH_SECONDS = 10.0f / 20.0f; // vanilla's hurtDuration, 10 ticks.
-        constexpr float HURT_FLASH_INTENSITY = 0.45f;
-        if (dead) return HURT_FLASH_INTENSITY;
-        float sinceHurt = std::chrono::duration<float>(now - lastHurtTime).count();
-        return (sinceHurt >= 0.0f && sinceHurt < HURT_FLASH_SECONDS) ? HURT_FLASH_INTENSITY : hurtAmount;
+        return dead
+            || (lastHurtTime != std::chrono::steady_clock::time_point{}
+                && now - lastHurtTime < std::chrono::milliseconds(500));
     }
 
     // Render-time position, blending previousPosition -> position over

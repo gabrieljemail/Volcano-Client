@@ -6,13 +6,20 @@
 #include "VulkanRenderEngine.hpp"
 #include "../passes/EntityPass.hpp"
 #include "../passes/GUIPass.hpp"
+#include "../passes/HandPass.hpp"
+#include "../passes/ItemPass.hpp"
 #include "../passes/NonCubicPass.hpp"
 #include "../passes/SelectionPass.hpp"
 #include "../passes/ShaderPackPass.hpp"
+#include "../passes/SkyboxPass.hpp"
 #include "../passes/TerrainPass.hpp"
 #include "../../VulkanInit.hpp"
 #include "../../TextureManager.hpp"
 #include "../../models/CameraUBO.hpp"
+#include "../../models/SlabBuffer.hpp"
+#include "../../Screenshot.hpp"
+#include <utility>
+#include <vector>
 #include "../../gui/GUIController.hpp"
 #include "../../../GlobalState.hpp"
 #include "../../../Logger.hpp"
@@ -30,17 +37,58 @@ void VulkanRenderEngine::Init()
 
     RegisterBuiltInPasses();
     CreatePasses();
+    hizBuildPass.Create(shaders);
+    CreateTimestampPool();
 
     Log::Info(std::string("[INFO] Render engine initialized (") + GetBackendName() + ", "
         + std::to_string(passes.size()) + " passes).");
 }
 
+void VulkanRenderEngine::CreateTimestampPool()
+{
+    state->timings.gpuMs = -1.0f; // "n/a" until a sample arrives
+
+    uint32_t familyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(GetPhysicalDevice(), &familyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> families(familyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(GetPhysicalDevice(), &familyCount, families.data());
+
+    uint32_t validBits = graphicsQueueFamilyIndex < familyCount ? families[graphicsQueueFamilyIndex].timestampValidBits : 0;
+    if (validBits == 0) return;
+    timestampMask = validBits >= 64 ? ~0ull : ((1ull << validBits) - 1);
+    timestampMsPerTick = static_cast<double>(physicalDevice.properties.limits.timestampPeriod) / 1.0e6;
+
+    VkQueryPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    poolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    poolInfo.queryCount = 3 * 2;
+    if (vkCreateQueryPool(GetDevice(), &poolInfo, nullptr, &timestampPool) != VK_SUCCESS) timestampPool = VK_NULL_HANDLE;
+}
+
+// Call after the slot's fence wait. GPU time is smoothed like the CPU timers.
+void VulkanRenderEngine::ReadTimestamps(uint32_t slot)
+{
+    if (timestampPool == VK_NULL_HANDLE || !timestampPending[slot]) return;
+    timestampPending[slot] = false;
+
+    uint64_t ticks[2];
+    if (vkGetQueryPoolResults(GetDevice(), timestampPool, slot * 2, 2, sizeof(ticks), ticks,
+            sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) return;
+
+    float ms = static_cast<float>(((ticks[1] - ticks[0]) & timestampMask) * timestampMsPerTick);
+    float previous = state->timings.gpuMs.load();
+    state->timings.gpuMs.store(previous < 0.0f ? ms : previous + (ms - previous) * 0.05f);
+}
+
 void VulkanRenderEngine::RegisterBuiltInPasses()
 {
+    AddPass(std::make_unique<Passes::SkyboxPass>());
     AddPass(std::make_unique<Passes::TerrainPass>());
     AddPass(std::make_unique<Passes::EntityPass>());
+    AddPass(std::make_unique<Passes::ItemPass>());
     AddPass(std::make_unique<Passes::NonCubicPass>());
     AddPass(std::make_unique<Passes::SelectionPass>());
+    AddPass(std::make_unique<Passes::HandPass>());
     AddPass(std::make_unique<Passes::ShaderPackPass>());
     AddPass(std::make_unique<Passes::GUIPass>());
 }
@@ -82,7 +130,20 @@ void VulkanRenderEngine::StopRendering()
         GUIController::Shutdown();
         guiAttached = false;
     }
+    hizBuildPass.Destroy();
     DestroyPasses();
+
+    if (timestampPool != VK_NULL_HANDLE)
+    {
+        vkDestroyQueryPool(GetDevice(), timestampPool, nullptr);
+        timestampPool = VK_NULL_HANDLE;
+    }
+
+    if (screenshotBuffer.buffer != VK_NULL_HANDLE)
+    {
+        vmaDestroyBuffer(vmaAllocator, screenshotBuffer.buffer, screenshotBuffer.allocation);
+        screenshotBuffer = AllocatedBuffer{};
+    }
 }
 
 void VulkanRenderEngine::Shutdown()
@@ -112,7 +173,9 @@ bool VulkanRenderEngine::BeginFrame()
     }
 
     // Have the CPU wait until this frame slot's previous submission is done.
+    auto waitStart = std::chrono::steady_clock::now();
     vkWaitForFences(GetDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+    ReadTimestamps(currentFrame);
 
     VkResult result = vkAcquireNextImageKHR(
         GetDevice(),
@@ -122,12 +185,14 @@ bool VulkanRenderEngine::BeginFrame()
         VK_NULL_HANDLE,
         &imageIndex
     );
+    state->timings.waitRawMs.store(
+        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count());
 
     // The swapchain is stale (surface no longer matches — a resize/fullscreen
     // toggle that outran the framebuffer-size callback, or a minimized
     // window). Skip this frame; RecreateSwapchain runs at the top of the
     // next BeginFrame now that a resize is flagged.
-    if (result == VK_ERROR_OUT_OF_DATE_KHR)
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT)
     {
         state->framebufferResized = true;
         return false;
@@ -150,7 +215,20 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
 {
     VkCommandBuffer cmd = commandBuffers[currentFrame];
 
+    // This slot's fence was waited in BeginFrame, so its Hi-Z readback from
+    // a couple of frames ago is done — publish it before the chunk passes
+    // cull against it.
+    hizBuildPass.BeginFrame(currentFrame);
+    // Past this slot's fence wait: lets SlabBuffer reuse regions freed
+    // enough frames ago (see SlabBuffer::FREE_DELAY_FRAMES).
+    renderFrameCounter++;
+
     BeginCommandBuffer(cmd);
+    if (timestampPool != VK_NULL_HANDLE)
+    {
+        vkCmdResetQueryPool(cmd, timestampPool, currentFrame * 2, 2);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, currentFrame * 2);
+    }
     UploadCamera(scene);
     BeginMainPass(cmd, scene);
 
@@ -165,9 +243,21 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
     RecordPasses(frame);
 
     EndMainPass(cmd);
+    bool capture = screenshotRequested.exchange(false);
+    if (capture) RecordScreenshotCopy(cmd);
+    // Outside the render pass instance now (compute can't run inside one) —
+    // see HiZBuildPass's own comment on why it isn't a normal RenderPass.
+    hizBuildPass.Record(cmd, currentFrame, frame.viewProj);
+    if (timestampPool != VK_NULL_HANDLE)
+    {
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, currentFrame * 2 + 1);
+        timestampPending[currentFrame] = true;
+    }
+    vkEndCommandBuffer(cmd);
     SubmitCommandBuffer(cmd);
     PresentImage();
     NotifyFramePresented();
+    if (capture) FinishScreenshot();
 
     currentFrame = (currentFrame + 1) % maxFramesInFlight;
 }
@@ -187,6 +277,11 @@ void VulkanRenderEngine::ToggleWindowMode()
     ::ToggleWindowMode();
 }
 
+void VulkanRenderEngine::ApplyWindowSettings()
+{
+    ::ApplyWindowSettings();
+}
+
 void VulkanRenderEngine::BeginCommandBuffer(VkCommandBuffer cmd)
 {
     VkCommandBufferBeginInfo beginInfo{};
@@ -196,7 +291,10 @@ void VulkanRenderEngine::BeginCommandBuffer(VkCommandBuffer cmd)
 
 void VulkanRenderEngine::UploadCamera(const SceneView& scene)
 {
-    CameraUBO ubo{ scene.view, scene.proj, scene.lightingEnabled ? 1.0f : 0.0f };
+    CameraUBO ubo{ scene.view, scene.proj, scene.lightingEnabled ? 1.0f : 0.0f,
+        scene.brightnessFactor, scene.dayBrightness, scene.lightFalloff,
+        scene.shadeTop, scene.shadeBottom, scene.shadeNorthSouth, scene.shadeEastWest,
+        glm::vec4(scene.skyColor, 1.0f), glm::vec4(scene.cameraPosition, 1.0f), scene.fogStart, scene.fogEnd };
     std::memcpy(cameraUBOsMapped[currentFrame], &ubo, sizeof(ubo));
 }
 
@@ -235,7 +333,98 @@ void VulkanRenderEngine::BeginMainPass(VkCommandBuffer cmd, const SceneView& sce
 void VulkanRenderEngine::EndMainPass(VkCommandBuffer cmd)
 {
     vkCmdEndRenderPass(cmd);
-    vkEndCommandBuffer(cmd);
+    // vkEndCommandBuffer is NOT here: SubmitFrame still records HiZBuildPass
+    // after the render pass ends — see its own vkEndCommandBuffer call.
+}
+
+void VulkanRenderEngine::RecordScreenshotCopy(VkCommandBuffer cmd)
+{
+    VkDeviceSize size = static_cast<VkDeviceSize>(swapchainExtent.width) * swapchainExtent.height * 4;
+    if (screenshotBuffer.buffer != VK_NULL_HANDLE && screenshotBuffer.info.size < size)
+    {
+        vmaDestroyBuffer(vmaAllocator, screenshotBuffer.buffer, screenshotBuffer.allocation);
+        screenshotBuffer = AllocatedBuffer{};
+    }
+    if (screenshotBuffer.buffer == VK_NULL_HANDLE)
+    {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = size;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo allocInfo{};
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+        allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        if (vmaCreateBuffer(vmaAllocator, &bufferInfo, &allocInfo, &screenshotBuffer.buffer,
+                &screenshotBuffer.allocation, &screenshotBuffer.info) != VK_SUCCESS)
+        {
+            Log::Error("Screenshot failed: couldn't allocate a readback buffer.");
+            screenshotBuffer = AllocatedBuffer{};
+            return;
+        }
+    }
+    screenshotExtent = swapchainExtent;
+
+    std::vector<VkImage> images = swapchain.get_images().value();
+    VkImage image = images[imageIndex];
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.imageExtent = { swapchainExtent.width, swapchainExtent.height, 1 };
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, screenshotBuffer.buffer, 1, &region);
+
+    // Back to present, and make the copy visible to the host read.
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = 0;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+    VkMemoryBarrier hostBarrier{};
+    hostBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    hostBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    hostBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+        0, 1, &hostBarrier, 0, nullptr, 0, nullptr);
+}
+
+void VulkanRenderEngine::FinishScreenshot()
+{
+    if (screenshotBuffer.buffer == VK_NULL_HANDLE) return;
+
+    // A one-frame stall on F2 is fine.
+    vkWaitForFences(GetDevice(), 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+    vmaInvalidateAllocation(vmaAllocator, screenshotBuffer.allocation, 0, VK_WHOLE_SIZE);
+
+    size_t pixelCount = static_cast<size_t>(screenshotExtent.width) * screenshotExtent.height;
+    std::vector<uint8_t> rgba(pixelCount * 4);
+    std::memcpy(rgba.data(), screenshotBuffer.info.pMappedData, rgba.size());
+
+    // Most Windows swapchains are BGRA; PNG wants RGBA. Alpha is forced
+    // opaque (the swapchain's alpha isn't meaningful).
+    VkFormat format = swapchain.image_format;
+    bool bgra = format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB;
+    for (size_t i = 0; i < pixelCount; i++)
+    {
+        if (bgra) std::swap(rgba[i * 4], rgba[i * 4 + 2]);
+        rgba[i * 4 + 3] = 255;
+    }
+
+    Screenshot::SaveAsync(std::move(rgba), screenshotExtent.width, screenshotExtent.height,
+        state->config->ResolvePath("screenshots"));
 }
 
 void VulkanRenderEngine::SubmitCommandBuffer(VkCommandBuffer cmd)
@@ -276,7 +465,9 @@ void VulkanRenderEngine::PresentImage()
     presentInfo.pImageIndices = &imageIndex;
 
     VkResult result = vkQueuePresentKHR(presentQueue, &presentInfo);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
+    // Losing exclusive fullscreen (alt-tab, etc.) just means rebuilding.
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR
+        || result == VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT)
     {
         state->framebufferResized = true;
     }

@@ -200,6 +200,17 @@ void CreatePipelines(const Engine::ShaderLibrary& shaders)
     rasterizer.lineWidth = 1.0f;
     rasterizer.cullMode = VK_CULL_MODE_NONE;
 
+    // RecordDraw's own INFLATE nudge is a fixed world-space offset, which
+    // shrinks to nothing in depth-buffer terms at range (standard
+    // perspective Z loses precision with distance) — that's why the
+    // flicker got worse the farther out the targeted block was. Depth bias
+    // operates directly in the depth buffer's own units instead, so it
+    // stays effective at any distance. Negative pulls the overlay closer
+    // than the coplanar block face it's drawn against.
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = -4.0f;
+    rasterizer.depthBiasSlopeFactor = -4.0f;
+
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;

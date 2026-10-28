@@ -2,8 +2,11 @@
 #ifndef VOLCANO_ENGINE_VULKAN_RENDER_ENGINE_H
 #define VOLCANO_ENGINE_VULKAN_RENDER_ENGINE_H
 
+#include <atomic>
 #include <cstdint>
 #include "../RenderEngine.hpp"
+#include "../../models/AllocatedBuffer.hpp"
+#include "../passes/HiZBuildPass.hpp"
 
 namespace Volcano::Engine::Vulkan {
 
@@ -30,13 +33,38 @@ public:
     void WaitIdle() override;
 
     void ToggleWindowMode() override;
+    void ApplyWindowSettings() override;
+    void RequestScreenshot() override { screenshotRequested = true; }
 
 private:
+    // GPU frame time: two timestamps per frame slot (start/end of its
+    // command buffer), read back once that slot's fence has signaled.
+    VkQueryPool timestampPool = VK_NULL_HANDLE;
+    bool timestampPending[3]{};
+    double timestampMsPerTick = 0.0;
+    uint64_t timestampMask = 0;
+    void CreateTimestampPool();
+    void ReadTimestamps(uint32_t slot);
+
+    // F2 capture: the swapchain image is copied into a host buffer after the
+    // main pass, then read back once that frame's fence signals.
+    std::atomic<bool> screenshotRequested{false};
+    AllocatedBuffer screenshotBuffer{};
+    VkExtent2D screenshotExtent{};
+    void RecordScreenshotCopy(VkCommandBuffer cmd);
+    void FinishScreenshot();
+
     uint32_t currentFrame = 0;
     uint32_t imageIndex = 0;
     uint32_t maxFramesInFlight = 2;
     bool initialized = false;
     bool guiAttached = false;
+
+    // Not one of RenderEngine's own passes — see its own comment for why
+    // (compute can't run inside this engine's single render pass instance).
+    // Created/destroyed alongside CreatePasses()/DestroyPasses(); recorded
+    // directly from SubmitFrame, after EndMainPass.
+    Passes::HiZBuildPass hizBuildPass;
 
     // Built-in passes, in draw order — see RenderEngine::AddPass for names.
     void RegisterBuiltInPasses();

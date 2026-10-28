@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include "../models/Mesh.hpp"
+#include "../models/SlabBuffer.hpp"
 #include "models/Chunk.hpp"
 #include "models/World.hpp"
 #include "../TextureManager.hpp"
@@ -16,19 +17,31 @@ public:
     // that chunk meshes are bump-allocated from.
     static constexpr uint64_t DEFAULT_SLAB_SIZE = 256ull * 1024 * 1024; // 256 MB
 
-    // `world` lets the greedy sweep see across chunk boundaries (see
-    // GreedyMeshAxis's own comment) instead of treating every neighboring
-    // chunk as solid air — without it, two adjacent chunks with solid
-    // terrain at their shared edge each assume the other side is air and
-    // both emit a face there, producing exactly-coincident duplicate
-    // geometry (visible as constant z-fighting/flicker at chunk seams).
-    // `chunk` itself doesn't need to already be inserted into `world` for
-    // this call.
-    static Mesh MeshChunk(const Chunk& chunk, const World& world, const TextureManager& textureManager);
+    // A helper function to compute vertex AO when meshing chunks for smooth lighting.
+    static uint8_t ComputeVertexAO(const Chunk& chunk, const World& world,
+        int u, int v, int n,                // Axes.
+        int cornerU, int cornerV,           // Corner (0-3).
+        int blockU, int blockV, int blockN  // Solid block position.
+    );
+
+    // Meshes one 16-tall vertical slice instead of the whole 384-tall column, so a
+    // single block edit only costs re-sweeping ~16x16x16, not the entire
+    // column. Callers should skip calling this for a section
+    // Chunk::IsSectionEmpty reports as empty.
+    static Mesh MeshChunkSection(const Chunk& chunk, const World& world, const TextureManager& textureManager, int sectionY);
 
     // Releases the slab buffers. Must be called before the VMA allocator is
     // destroyed (e.g. from VulkanInit::Cleanup()).
     static void Shutdown();
+
+    // Hands a mesh's slab regions back (reused a few frames later — see
+    // SlabBuffer::Free). Returns false if the mesh wasn't from these slabs.
+    static bool ReleaseMesh(const Mesh& mesh);
+
+    // Combined used/capacity across the vertex and index slabs, for the
+    // debug HUD (GUIController). {0, 0} before the first chunk mesh —
+    // slabsInitialized lazily, on first use.
+    static SlabStats GetSlabStats();
 };
 
 } // namespace Volcano

@@ -1,9 +1,6 @@
 #include "SystemInfo.hpp"
+#include "platform/OS.hpp"
 #include <thread>
-
-#ifdef _WIN32
-#include <intrin.h>
-#endif
 
 namespace Volcano {
 
@@ -11,32 +8,13 @@ void SystemInfo::DetectCPU()
 {
     cpuLogicalCores = std::thread::hardware_concurrency();
 
-#ifdef _WIN32
-    // CPUID leaves 0x80000002-0x80000004 return the processor brand string
-    // as 48 raw ASCII bytes across three calls (EAX/EBX/ECX/EDX each call,
-    // in that register order) — a real x86 CPUID feature both Intel and
-    // AMD support, not an OS-specific registry/WMI query, and it already
-    // includes the clock speed vanilla's own F3 screen shows (e.g.
-    // "Intel(R) Core(TM) i5-6600 CPU @ 3.30GHz").
-    int brand[12] = {};
-    __cpuid(brand, static_cast<int>(0x80000000));
-    if (static_cast<unsigned int>(brand[0]) >= 0x80000004u)
-    {
-        __cpuid(brand + 0, static_cast<int>(0x80000002));
-        __cpuid(brand + 4, static_cast<int>(0x80000003));
-        __cpuid(brand + 8, static_cast<int>(0x80000004));
-
-        cpuModel.assign(reinterpret_cast<char*>(brand), sizeof(brand));
-
-        // The buffer is null-terminated by CPUID itself but often has
-        // trailing (and sometimes leading) spaces padded into it.
-        size_t nul = cpuModel.find('\0');
-        if (nul != std::string::npos) cpuModel.resize(nul);
-        while (!cpuModel.empty() && cpuModel.back() == ' ') cpuModel.pop_back();
-        size_t firstNonSpace = cpuModel.find_first_not_of(' ');
-        cpuModel = (firstNonSpace == std::string::npos) ? "" : cpuModel.substr(firstNonSpace);
-    }
-#endif
+    // Brand strings are often NUL- and space-padded.
+    cpuModel = Platform::OS::GetCpuModel();
+    size_t nul = cpuModel.find('\0');
+    if (nul != std::string::npos) cpuModel.resize(nul);
+    while (!cpuModel.empty() && cpuModel.back() == ' ') cpuModel.pop_back();
+    size_t firstNonSpace = cpuModel.find_first_not_of(' ');
+    cpuModel = (firstNonSpace == std::string::npos) ? "" : cpuModel.substr(firstNonSpace);
 
     if (cpuModel.empty()) cpuModel = "Unknown CPU";
 }
@@ -60,6 +38,11 @@ void SystemInfo::DetectGPU(const char* deviceName, uint32_t vendorID, uint32_t a
         case 0x1010: gpuDriverVendor = "Imagination Technologies"; break;
         default: gpuDriverVendor = "Unknown Vendor"; break;
     }
+}
+
+uint64_t GetProcessMemoryUsageBytes()
+{
+    return Platform::OS::GetProcessMemoryUsageBytes();
 }
 
 } // namespace Volcano

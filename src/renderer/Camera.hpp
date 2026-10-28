@@ -11,13 +11,9 @@ namespace Volcano {
 
 class Camera {
 public:
-    // Vertical eye offset above the feet — eased between standing/sneaking
-    // height every fixed step by TickLoop::FixedStep (NetworkThread) and
-    // read every frame by GetEyePosition/GetViewMatrix (RenderThread).
-    // Atomic for the same cross-thread reason yaw/pitch below are, now that
-    // TickLoop runs on NetworkThread instead of sharing RenderThread's own
-    // thread — was a plain glm::vec3 (x/z always 0) back when both sides
-    // ran on the same thread.
+    // Eased between standing/sneaking height by TickLoop::FixedStep, read by
+    // GetEyePosition/GetViewMatrix — both on RenderThread now, but kept
+    // atomic since that's cheap and not guaranteed to stay true.
     std::atomic<float> eyeHeight{1.62f}; // standing eye height above feet
 
     void ApplyMouseDelta(float dx, float dy, float sensitivity)

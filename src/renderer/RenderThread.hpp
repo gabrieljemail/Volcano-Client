@@ -73,6 +73,12 @@ private:
     // fields.
     bool wireframeMode = false;
 
+    // Latched on/off by a Sprint press when Controls.ToggleSprint is set —
+    // see PollInputs. RenderThread-owned for the same reason wireframeMode
+    // is; irrelevant (never read) while Controls.ToggleSprint is off, since
+    // Sprint is then read as a plain held key instead.
+    bool sprintToggled = false;
+
     // Current FOV boost in degrees, eased toward its target (Graphics.
     // FOVEffects while sprinting/flying, 0 otherwise — see
     // BuildProjection) every frame rather than snapping, so the zoom-out

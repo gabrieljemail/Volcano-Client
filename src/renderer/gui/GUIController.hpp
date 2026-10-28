@@ -6,7 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan.h>
 #include <imgui.h>
 #include "../VulkanInit.hpp"
 #include "../TextureManager.hpp"
@@ -17,6 +17,8 @@
 
 namespace Volcano {
 
+namespace Engine { struct SceneView; }
+
 class GUIController {
 public:
     static void Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState,
@@ -24,9 +26,14 @@ public:
     static void Shutdown();
     static void NewFrame();
     static void Update(float deltaTime);
-    static void Render(VkCommandBuffer commandBuffer);
+    // `scene` (the frame's camera) is what world-space HUD elements such as
+    // nametags project through; null skips them.
+    static void Render(VkCommandBuffer commandBuffer, const Engine::SceneView* scene = nullptr);
+    // Ends the current ImGui frame without drawing (for a skipped frame).
+    static void DiscardFrame();
 
     static float GetFPS() { return fps; }
+    static float GetGUIScale() { return guiScale; }
     static float GetFrameTime() { return frameTime; }
 
     // API:
@@ -48,6 +55,11 @@ public:
     // the HUD, game inputs, and captured mouse cursor.
     static void CloseScreen();
     static bool IsScreenOpen() { return activeScreen != nullptr; }
+    static GUI::Screen* GetActiveScreen() { return activeScreen; }
+    // The screen Esc opens while in a world. Built by the caller (see
+    // screens/PauseScreen) since its buttons need the connection.
+    static void SetPauseScreen(GUI::Screen* screen) { pauseScreen = screen; }
+    static GUI::Screen* GetPauseScreen() { return pauseScreen; }
 
     // Chat input box — "T" (see VolcanoClient.cpp's "OpenChat" action)
     // raises it; Enter sends the typed text (via NetworkClient::
@@ -77,6 +89,12 @@ private:
     static ImGuiVulkanContext imguiContext;
     static bool initialized;
     static float fps;
+    // Current GUI scale (see ApplyGUIScale) and how many queued ImGui input
+    // events were already scaled for it.
+    static inline float guiScale = 1.0f;
+    static inline int scaledInputEvents = 0;
+    static void ApplyGUIScale();
+    static void AddTextShadows(ImDrawData* drawData);
     static float frameTime;
     static int frameCount;
     static float fpsTimer;
@@ -121,6 +139,33 @@ private:
     static StandaloneIcon crosshairIcon;
     static StandaloneIcon crosshairEntityIcon; // "Looking at an entity" variant — see GlobalState::lookingAtEntity.
 
+    // Vanilla GUI art (textures/gui/...). Same load/failure behavior as the
+    // crosshair: null if missing, and callers fall back to a flat rect.
+    static StandaloneIcon attackIndicatorBackgroundIcon; // sprites/hud/crosshair_attack_indicator_background.png (16x4)
+    static StandaloneIcon attackIndicatorProgressIcon;   // sprites/hud/crosshair_attack_indicator_progress.png (16x4)
+    static StandaloneIcon hotbarIcon;              // sprites/hud/hotbar.png (182x22)
+    static StandaloneIcon hotbarSelectionIcon;      // sprites/hud/hotbar_selection.png (24x23)
+    static StandaloneIcon slotHighlightBackIcon;    // sprites/container/slot_highlight_back.png (24x24)
+    static StandaloneIcon slotHighlightFrontIcon;   // sprites/container/slot_highlight_front.png (24x24)
+    static StandaloneIcon inventoryBackground;      // container/inventory.png (256x256 sheet, 176x166 used)
+    static StandaloneIcon craftingBackground;       // container/crafting_table.png
+    static StandaloneIcon furnaceBackground;        // container/furnace.png
+    static StandaloneIcon genericBackground;        // container/generic_54.png (chest-style grids)
+    static StandaloneIcon logoIcon;                 // resources/logo.png, drawn 128x128 on screens with Screen::showLogo
+
+    // ImGui texture handle for a StandaloneIcon, or 0 if it failed to load.
+    static ImTextureID TextureOf(const StandaloneIcon& icon);
+
+    // Per-item 3D icons (blocks and custom models), rendered once by
+    // ItemRenderer. `resolved` means the lookup ran; `icon` is null when the
+    // item should use its flat 2D sprite instead. Keyed by item id.
+    struct ModelIcon {
+        bool resolved = false;
+        StandaloneIcon icon;
+    };
+    static std::unordered_map<uint16_t, ModelIcon> modelIconCache;
+    static ImTextureID ModelIconForItem(uint16_t itemId, const std::string& itemName);
+
     // Loads one standalone PNG (path) into a StandaloneIcon — image, view,
     // and an ImGui-registered descriptor set, uploaded via the same
     // staging-buffer-then-copy path TextureManager::UploadLayer uses (see
@@ -131,6 +176,11 @@ private:
     // Draws the centered crosshair every HUD frame — plain or the
     // "looking at an entity" variant, per GlobalState::lookingAtEntity.
     static void RenderCrosshair();
+    // Debug nametags above every entity: type, name, position. Plain text, so
+    // AddTextShadows gives it the UI's shadow. Graphics.Nametags toggles it.
+    static void RenderNametags(const Engine::SceneView& scene);
+    // Bar under the crosshair: block-break progress or attack recharge.
+    static void RenderAttackIndicator(const ImVec2& center);
 
     // Resolves (creating and caching on first use) the ImTextureID for one
     // texture-array layer, for drawing an item icon via ImDrawList::
@@ -150,7 +200,10 @@ private:
     // ItemRegistry::ItemTypeInfo::hasTexture).
     static ImTextureID IconForItem(const ItemStack& item);
 
-    static void RenderComponent(GUI::GUIComponent* component);
+    static void RenderComponent(GUI::GUIComponent* component, float width = 240.0f, float labelWidth = 0.0f);
+    // Sliders, option buttons and number fields: drawn as "label | control" rows on screens.
+    static bool IsLabeledControl(GUI::GUIComponent* component);
+    static void DrawSideTooltip(const std::string& text, ImVec2 itemMin, ImVec2 itemMax, bool onLeft);
     static void RenderScreen(GUI::Screen& screen);
     static void RenderChatWindow();
     static void RenderChatInputBox();
@@ -165,16 +218,10 @@ private:
     static void RenderPlayerStatusBars();
     static void RenderHotbarAndArmor();
     static void RenderMovementStatePanel();
+    static void CloseInventoryWindow();
 
-    // The player's own inventory screen (armor + main inventory grid +
-    // hotbar), toggled by "E" (see Update()) the same way "Esc" toggles
-    // pauseScreen — set as inventoryScreen's Screen::customContent, so it
-    // gets OpenScreen/CloseScreen's usual HUD-hiding/cursor-release/
-    // Escape-to-close behavior for free. View-only: there's no Click
-    // Container Slot handling (or any other block/container interaction in
-    // this client yet), so slots aren't clickable — this just shows
-    // whatever NetworkClient's Set Container Content/Slot handlers have
-    // written into state->inventory.
+    // Player inventory and the currently open server container share this
+    // screen. Slot positions map back to protocol indices for click handling.
     static void RenderInventoryScreen();
     // Top-left corner of the (still-placeholder) hotbar, resolved fresh
     // every frame the same way every other HUD element is — see

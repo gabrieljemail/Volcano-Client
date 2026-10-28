@@ -15,6 +15,7 @@ namespace {
 // version and PROTOCOL_VERSION (NetworkClient.hpp) — all must agree.
 constexpr const char* MC_DATA_VERSION = "26.1";
 const std::string ITEMS_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/items.json";
+const std::string FOODS_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/foods.json";
 
 std::unordered_map<int32_t, ItemTypeInfo> g_itemsById;
 
@@ -23,11 +24,11 @@ std::unordered_map<int32_t, ItemTypeInfo> g_itemsById;
 void InitImpl(const TextureManager& textureManager) {
     g_itemsById.clear();
 
-    Log::Info("[INFO] ItemRegistry: reading " + ITEMS_JSON_PATH);
+    Log::Info("ItemRegistry: reading " + ITEMS_JSON_PATH);
 
     std::ifstream file(ITEMS_JSON_PATH);
     if (!file) {
-        Log::Error("[ERROR] ItemRegistry: couldn't open " + ITEMS_JSON_PATH
+        Log::Error("ItemRegistry: couldn't open " + ITEMS_JSON_PATH
             + " — item lookups will find nothing this run.");
         return;
     }
@@ -40,7 +41,7 @@ void InitImpl(const TextureManager& textureManager) {
         return;
     }
 
-    Log::Info("[INFO] ItemRegistry: parsed " + std::to_string(itemsJson.size()) + " item entries.");
+    Log::Info("ItemRegistry: parsed " + std::to_string(itemsJson.size()) + " item entries.");
 
     int resolvedIcons = 0;
     for (const json& i : itemsJson) {
@@ -77,7 +78,24 @@ void InitImpl(const TextureManager& textureManager) {
         }
     }
 
-    Log::Info("[INFO] ItemRegistry: loaded minecraft-data " + std::string(MC_DATA_VERSION) + " — "
+    // Optional: without foods.json nothing is edible client-side.
+    std::ifstream foodsFile(FOODS_JSON_PATH);
+    if (foodsFile) {
+        try {
+            json foodsJson;
+            foodsFile >> foodsJson;
+            for (const json& f : foodsJson) {
+                auto it = g_itemsById.find(f.value("id", 0));
+                if (it == g_itemsById.end()) continue;
+                it->second.edible = true;
+                it->second.foodPoints = static_cast<int32_t>(f.value("foodPoints", 0.0));
+            }
+        } catch (const std::exception& e) {
+            Log::Error(std::string("ItemRegistry: failed to parse foods.json: ") + e.what());
+        }
+    }
+
+    Log::Info("ItemRegistry: loaded minecraft-data " + std::string(MC_DATA_VERSION) + " — "
         + std::to_string(g_itemsById.size()) + " item types, " + std::to_string(resolvedIcons)
         + " with a resolved icon texture.");
 }

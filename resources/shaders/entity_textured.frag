@@ -4,7 +4,7 @@ layout(set = 1, binding = 0) uniform sampler2D skinTexture;
 
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec2 fragUV;
-layout(location = 2) in float fragHurt;
+layout(location = 2) in vec4 fragHurt;
 
 layout(location = 0) out vec4 outColor;
 
@@ -21,6 +21,6 @@ void main() {
     vec3 shaded = texColor.rgb * brightness;
 
     // Tick-invulnerability hit flash, same convention as entity.frag.
-    vec3 finalColor = mix(shaded, vec3(1.0, 0.0, 0.0), fragHurt);
+    vec3 finalColor = mix(shaded, fragHurt.rgb, fragHurt.a);
     outColor = vec4(finalColor, 1.0);
 }

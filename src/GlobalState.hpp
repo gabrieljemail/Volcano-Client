@@ -4,6 +4,7 @@
 #define GLOBAL_STATE_H
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -19,6 +20,7 @@
 #include "renderer/entity/models/PlayerEntity.hpp"
 #include "renderer/gui/models/GUIWindow.hpp"
 #include "renderer/terrain/models/Chunk.hpp"
+#include "renderer/terrain/models/ChunkSection.hpp"
 #include "renderer/terrain/models/World.hpp"
 #include "InputHandler.hpp"
 #include "Player.hpp"
@@ -54,6 +56,12 @@ class Connection;
 // forward-declaration reason as TickLoop above.
 class InteractionManager;
 
+class AudioManager;
+class MusicController;
+class ModLoader;
+class SoundRegistry;
+class ItemRenderer;
+
 // Defined in renderer/engine/RenderEngine.hpp — the abstraction layer every
 // non-renderer system talks to instead of Vulkan. Forward-declared for the
 // same reason as TickLoop above.
@@ -64,6 +72,16 @@ class RenderEngine;
 struct Resolution {
     uint16_t x;
     uint16_t y;
+};
+
+// One clientbound Block Update (PlayS2C::BlockUpdate) waiting to be applied
+// — a world position plus the already-resolved Block (visualId/
+// nonCubeVisualId/collisionShapeId), since the network thread never touches
+// World directly (see NetworkInbox's own comment) but resolving a protocol
+// state id via BlockRegistry is cheap/thread-safe to do up front anyway.
+struct PendingBlockEdit {
+    glm::ivec3 position; // World-block coordinates.
+    Block block;
 };
 
 // Handoff point from the network thread to the main thread. The network
@@ -78,6 +96,48 @@ struct NetworkInbox {
     // (Player Position, 0x48). Latest wins if two land before MeshingThread
     // drains it — an outdated correction isn't worth applying.
     std::optional<glm::vec3> spawnPosition;
+
+    // Sections needing a remesh after a local block edit (see World::
+    // SetBlock/BreakBlockEvent) — checked by MeshingThread ahead of `chunks`
+    // above, so an edit near the player doesn't sit behind a backlog of
+    // ordinary chunk-load traffic. Guarded by the same `mutex`.
+    std::deque<SectionKey> dirtySections;
+
+    // Block Update packets waiting to be applied to World (see
+    // PendingBlockEdit above) — drained by MeshingThread before it even
+    // looks at dirtySections, converting each into World::SetBlock calls
+    // whose own returned SectionKeys then feed dirtySections the usual way.
+    // This is what corrects a locally-mispredicted BreakBlockEvent edit
+    // back to the server's real state (see its own comment) — also fires
+    // for block changes this client had no part in (other players,
+    // redstone, ...), since nothing distinguishes the two cases on the wire.
+    std::deque<PendingBlockEdit> pendingBlockEdits;
+
+    // Update Light packets waiting to be applied — drained by MeshingThread
+    // the same way as pendingBlockEdits (World::ApplyLightUpdate).
+    std::deque<PendingLightUpdate> pendingLightUpdates;
+
+    // Unload Chunk packets (chunkX, chunkZ) — drained by MeshingThread
+    // before it pops the next chunk, which drops the chunk from World and
+    // its sections from every render list (handing their slab space back).
+    // NetworkClient also purges any not-yet-meshed copy of that chunk from
+    // `chunks` when queuing one, so a stale load can't land after it.
+    std::deque<std::pair<int, int>> pendingUnloads;
+};
+
+// Where the client is in getting into a world — drives the loading screen
+// (renderer/gui/screens/LoadingScreen) and the menu-panorama switch. Written
+// from whichever thread owns the step (main thread for Idle/StartingServer/
+// Connecting/Playing, NetworkThread for the rest); see
+// GlobalState::SetConnectionPhase.
+enum class ConnectionPhase : uint8_t {
+    Idle,           // On a menu; no connection attempt in progress.
+    StartingServer, // Singleplayer: server.jar launching, not accepting connections yet.
+    Connecting,     // TCP connect + Handshake + Login.
+    Configuring,    // Configuration state (registries, tags, known packs, ...).
+    LoadingTerrain, // Play state entered; waiting for the spawn chunk (worldReady).
+    Playing,        // worldReady has been reached at least once this session.
+    Disconnecting,  // Player-requested leave; waiting for the network thread (and local server) to wind down.
 };
 
 // Handoff point for changes to the local player's own velocity that don't
@@ -112,6 +172,11 @@ struct LocalMotionInbox {
     }
 };
 
+// Set by MeshingThread to ReleaseMeshSlabs, so ResetWorldState can hand
+// cleared meshes' slab regions back without GlobalState depending on the
+// meshers (NetDiag builds this header without them — null there).
+inline void (*releaseMeshSlabsHook)(const Mesh&) = nullptr;
+
 struct GlobalState {
     // Owns the client's settings — loaded from settings.json (next to the
     // executable) by LoadSettings() below. config points at configStorage
@@ -127,6 +192,11 @@ struct GlobalState {
     PlayerAttributes* attributes;
     TickLoop* tickLoop;
     InteractionManager* interaction;
+    AudioManager* audioManager{nullptr};
+    MusicController* musicController{nullptr};
+    ModLoader* modLoader{nullptr}; // Owned by main(); fires events to loaded mods.
+    SoundRegistry* soundRegistry{nullptr};
+    ItemRenderer* itemRenderer{nullptr}; // 3D item models (GUI icons now; hand and dropped items later).
 
     // The rendering engine (VulkanRenderEngine today). Owned by main();
     // set before its Init() runs. Use it to add/remove render passes, switch
@@ -149,6 +219,65 @@ struct GlobalState {
     // change how long the recovery takes, matching vanilla's own
     // Player::getAttackStrengthScale/resetAttackStrengthTicker.
     std::atomic<uint32_t> attackStrengthTicker{0};
+
+    // When the local player last swung an arm (steady_clock ns; 0 = never).
+    // Written by SendArmAnimation on the render thread; read by HandModel.
+    std::atomic<int64_t> localSwingNs{0};
+
+    // True while a continuous item use (eating, blocking, a drawn bow) is in
+    // progress. Written by the render thread (InteractionManager); read by
+    // the tick thread, which slows movement and stops sprinting. usingItemAction
+    // is the UseAction ordinal (inventory/ItemBehavior.hpp); useStartNs is
+    // steady_clock ns.
+    std::atomic<bool> usingItem{false};
+    std::atomic<uint8_t> usingItemAction{0};
+    std::atomic<int64_t> useStartNs{0};
+
+    // Active block-break, published for the tick thread's crosshair
+    // indicator update. Written by the render thread (InteractionManager
+    // arms/clears mining); read by the tick thread (TickLoop::FixedStep).
+    // miningTicksRequired 0 = not mining; miningStartNs is steady_clock ns.
+    std::atomic<int32_t> miningTicksRequired{0};
+    std::atomic<int64_t> miningStartNs{0};
+
+    // Crosshair indicator fill (0..1, or < 0 = hidden): block-break progress
+    // while mining, else attack strength while recharging. Written by the
+    // tick thread once per tick (previous <- current, current <- new); read
+    // by the render thread, which lerps them by TickLoop::GetPartialTick().
+    std::atomic<float> crosshairProgressPrevious{-1.0f};
+    std::atomic<float> crosshairProgressCurrent{-1.0f};
+
+    // Client-generated sequence number for the dig/place/use-item packets
+    // (PlayerAction, BlockPlace, UseItem) — the server echoes it back in
+    // Acknowledge Block Changes so a client that predicts block state
+    // locally can tell which prediction a given ack confirms/invalidates.
+    // This client doesn't predict block state yet (see BreakBlockEvent/
+    // PlaceBlockEvent's own comments), so nothing reads the ack side of
+    // this — it only needs to be present and monotonically increasing for
+    // the server's own bookkeeping. Shared across all three packet types,
+    // same as vanilla's own single counter.
+    std::atomic<int32_t> interactionSequence{0};
+
+    // Local player's current gamemode, protocol's own mapper values (0 =
+    // survival, 1 = creative, 2 = adventure, 3 = spectator — see PlayS2C::
+    // LoginPlay's SpawnInfo.gamemode and PlayS2C::GameStateChange). Informational
+    // only right now — mining-speed decisions read canInstabuild below
+    // instead, since that's what vanilla itself actually checks.
+    std::atomic<uint8_t> localGameMode{0};
+
+    // Name of the dimension the local player is in (e.g. "minecraft:the_nether").
+    // Written by the network thread on LoginPlay/Respawn, read by MusicController.
+    std::string currentDimension;
+    std::mutex currentDimensionMutex;
+
+    // Whether the local player can insta-mine — from PlayS2C::
+    // PlayerAbilities' flags byte (bit 0x08), NOT derived from localGameMode.
+    // Vanilla grants this ability alongside creative mode but checks the
+    // ability itself for destroy speed (Player::getDestroySpeed reads
+    // getAbilities().instabuild), and an op can flip it independently via
+    // /gamerule or a plugin — see InteractionManager::BeginMining. Same
+    // atomic-not-mutex reasoning as lookingAtEntity above.
+    std::atomic<bool> canInstabuild{false};
 
     // Player inventory (hotbar/main inventory/armor/offhand slot groups) —
     // held directly rather than behind a pointer, same as networkInbox below,
@@ -178,24 +307,63 @@ struct GlobalState {
     // resolution/targetFPS above: only VulkanInit (Main/Render thread)
     // writes it.
     uint8_t presentMode{0};
-    std::vector<Mesh> renderList = {};
+    // Keyed by SectionKey (chunk column + 16-tall Y section — see
+    // ChunkSection.hpp) rather than an append-only list, since a section
+    // can now be remeshed in place after a block edit (World::SetBlock):
+    // MeshingThread upserts by key instead of appending a duplicate, and
+    // erases the key entirely if a remesh comes back empty (e.g. the last
+    // block in a section was broken). Same entities/entitiesMutex-style
+    // map+mutex convention as elsewhere in this file.
+    //
     // Guards renderList itself (not the Meshes' Vulkan handles, which are
-    // never mutated after being placed in the slab buffers) — the main
-    // thread appends to it from DrainNetworkInbox as chunks stream in,
-    // while RenderThread iterates it every frame on its own thread. Without
-    // this, a push_back that reallocates while the render thread is mid-
-    // iteration is a use-after-free with no exception and no log line, just
-    // a sudden crash.
+    // never mutated after being placed in the slab buffers) — MeshingThread
+    // writes to it as chunks stream in or a section gets remeshed, while
+    // RenderThread iterates it every frame on its own thread. Without this,
+    // an insert that rehashes while the render thread is mid-iteration is a
+    // use-after-free with no exception and no log line, just a sudden
+    // crash.
+    std::unordered_map<SectionKey, Mesh, SectionKeyHash> renderList = {};
     std::mutex renderListMutex;
+
+    // Triangles actually drawn this frame, for the debug HUD (GUIController)
+    // — reset to 0 at the top of RenderEngine::RecordPasses, then added to by
+    // each pass's own draw calls (ChunkMeshPass::DrawMesh, EntityRenderer,
+    // ...) as it records them. Render-thread-owned like renderList itself:
+    // written and read only from RecordPasses' own call chain, all on
+    // RenderThread, so no mutex/atomic needed.
+    uint64_t trianglesDrawn = 0;
+
+    // Smoothed per-stage timings in milliseconds, for the debug HUD. Each
+    // field has exactly one writer thread, so plain atomic stores suffice.
+    struct Timings
+    {
+        std::atomic<float> renderCpuMs{0.0f};  // RenderThread: frame work, excluding pacing and GPU waits
+        std::atomic<float> gpuWaitMs{0.0f};    // RenderThread: blocked on the fence / swapchain acquire
+        std::atomic<float> gpuMs{0.0f};        // GPU: command buffer start to end (timestamp queries); < 0 = unsupported
+        std::atomic<float> meshMs{0.0f};       // MeshingThread: per section (cube + non-cube)
+        std::atomic<uint32_t> meshQueue{0};    // MeshingThread: chunks still waiting to be meshed
+        std::atomic<float> waitRawMs{0.0f};    // Engine -> RenderThread: this frame's wait, unsmoothed
+    } timings;
 
     // Non-cubic meshes (transparent full cubes, partial-volume shapes, and
     // cross-shaped plants — see NonCubicMesher) for the engine's separate
-    // NonCubicPass. One entry per chunk, same as renderList, populated
-    // alongside it by MeshingThread and guarded the same way; kept as a
-    // separate vector (rather than folded into renderList) because it's
-    // drawn with a different pipeline (nonCubicPipeline).
-    std::vector<Mesh> nonCubicRenderList = {};
+    // NonCubicPass. One entry per chunk section, same as renderList,
+    // populated alongside it by MeshingThread and guarded/keyed the same
+    // way; kept as a separate map (rather than folded into renderList)
+    // because it's drawn with a different pipeline (nonCubicPipeline).
+    std::unordered_map<SectionKey, Mesh, SectionKeyHash> nonCubicRenderList = {};
     std::mutex nonCubicRenderListMutex;
+
+    // Genuinely translucent meshes (currently water only — see
+    // NonCubicMesher::ChunkMeshes::translucent) for RenderThread's separate
+    // translucent pass: alpha blended like nonCubicRenderList's cutout pass,
+    // but with depth WRITE off (VulkanInit's translucentPipeline) so two
+    // overlapping translucent surfaces actually blend instead of whichever
+    // one happened to draw first winning the depth test outright. Same
+    // population/locking/keying story as nonCubicRenderList — populated by
+    // MeshingThread alongside it, one entry per chunk section.
+    std::unordered_map<SectionKey, Mesh, SectionKeyHash> translucentRenderList = {};
+    std::mutex translucentRenderListMutex;
 
     // Entities tracked for EntityRenderer's batched draw pass, keyed by
     // network entity ID for O(1) update/remove on every Move/Teleport/
@@ -296,6 +464,15 @@ struct GlobalState {
 
     NetworkInbox networkInbox;
 
+    // Recent lines from a starting/running singleplayer server's stdout and
+    // stderr (see LocalServer::onOutputLine, wired up by NetworkThread) —
+    // capped so a chatty server can't grow this unboundedly. Read every
+    // frame by the starting-server screen's customContent (render thread),
+    // written by NetworkThread's background thread; cleared at the start of
+    // each singleplayer connection attempt.
+    std::mutex serverLogMutex;
+    std::deque<std::string> serverLogLines;
+
     // The live Play-session connection, published by NetworkThread right
     // before it starts pumping the Play packet loop and cleared again once
     // that loop returns — null the rest of the time (not yet connected,
@@ -321,14 +498,47 @@ struct GlobalState {
     // Set once by MeshingThread, after it has synced TickLoop's cached
     // position and inserted the specific chunk the player is spawning into
     // (not just any chunk — the server has no obligation to send that one
-    // first); read every call by TickLoop::Tick (NetworkThread) to hold
+    // first); read every call by TickLoop::Tick (RenderThread) to hold
     // off gravity/collision until there's an actual floor to land on —
     // otherwise the player free-falls through the still-empty world from the
     // moment the app starts, before any chunk has loaded. Must be set only
     // after all of MeshingThread's other writes for this transition, since
-    // NetworkThread treats seeing it become true as permission to start
-    // reading/writing TickLoop's position state.
+    // RenderThread treats seeing it become true as permission to start
+    // reading/writing TickLoop's position state, and TickThread treats it as
+    // permission to send PlayC2S::PlayerLoaded and start queueing position
+    // reports (see TickThread's own comment).
     std::atomic<bool> worldReady{false};
+
+    // See ConnectionPhase. connectionDetail is the human-readable specifics
+    // for the current phase (the host being connected to, the Configuration
+    // packet currently being processed) — guarded by connectionDetailMutex
+    // since std::string isn't safe to share via the atomic alone.
+    std::atomic<ConnectionPhase> connectionPhase{ConnectionPhase::Idle};
+    std::mutex connectionDetailMutex;
+    std::string connectionDetail;
+
+    void SetConnectionPhase(ConnectionPhase phase, const std::string& detail = "")
+    {
+        {
+            std::lock_guard<std::mutex> lock(connectionDetailMutex);
+            connectionDetail = detail;
+        }
+        connectionPhase.store(phase);
+    }
+
+    // Updates just the detail line, leaving the phase alone — for progress
+    // within one phase (each Configuration packet).
+    void SetConnectionDetail(const std::string& detail)
+    {
+        std::lock_guard<std::mutex> lock(connectionDetailMutex);
+        connectionDetail = detail;
+    }
+
+    std::string GetConnectionDetail()
+    {
+        std::lock_guard<std::mutex> lock(connectionDetailMutex);
+        return connectionDetail;
+    }
 
     // GLFW only guarantees glfwSetInputMode/glfwGetWindowAttrib are safe to
     // call from the thread that created the window — the main (GLFW-owning)
@@ -439,14 +649,18 @@ struct GlobalState {
     {
         worldReady.store(false);
         world->Clear();
+        auto clearList = [](std::mutex& mutex, std::unordered_map<SectionKey, Mesh, SectionKeyHash>& list)
         {
-            std::lock_guard<std::mutex> lock(renderListMutex);
-            renderList.clear();
-        }
-        {
-            std::lock_guard<std::mutex> lock(nonCubicRenderListMutex);
-            nonCubicRenderList.clear();
-        }
+            std::lock_guard<std::mutex> lock(mutex);
+            if (releaseMeshSlabsHook)
+            {
+                for (const auto& [key, mesh] : list) releaseMeshSlabsHook(mesh);
+            }
+            list.clear();
+        };
+        clearList(renderListMutex, renderList);
+        clearList(nonCubicRenderListMutex, nonCubicRenderList);
+        clearList(translucentRenderListMutex, translucentRenderList);
         {
             std::lock_guard<std::mutex> lock(entitiesMutex);
             entities.clear();
@@ -460,6 +674,10 @@ struct GlobalState {
             std::lock_guard<std::mutex> lock(networkInbox.mutex);
             while (!networkInbox.chunks.empty()) networkInbox.chunks.pop();
             networkInbox.spawnPosition.reset();
+            networkInbox.dirtySections.clear();
+            networkInbox.pendingBlockEdits.clear();
+            networkInbox.pendingLightUpdates.clear();
+            networkInbox.pendingUnloads.clear();
         }
     }
 };

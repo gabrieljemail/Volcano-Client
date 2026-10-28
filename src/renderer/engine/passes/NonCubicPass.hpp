@@ -12,6 +12,13 @@ namespace Volcano::Engine::Passes {
 // nonCubicPipeline. Alpha-blended with depth writes ON (see that
 // pipeline's own comment for why this is really a cutout pass), drawn
 // after opaque terrain and entities, chunks sorted back-to-front.
+//
+// Also owns the genuinely translucent pass (currently water only, from
+// GlobalState::translucentRenderList — see VulkanInit's translucentPipeline)
+// drawn right after the cutout pass above with depth WRITE off, so it's
+// grouped here rather than as its own RenderPass since it shares every
+// other detail (shaders, vertex format, pipelineLayout) with the cutout pass.
+//
 // Must come after TerrainPass: it reuses that pass's pipelineLayout.
 // Shaders: misc.vert / misc.frag.
 class NonCubicPass : public ChunkMeshPass {

@@ -149,15 +149,7 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
             int ylocal = i / 256;
             int32_t stateId = static_cast<int32_t>(blockStates[static_cast<size_t>(i)]);
 
-            Block block;
-            block.visualId = BlockRegistry::MapStateId(stateId);
-            if (block.visualId == 0) {
-                block.nonCubeVisualId = BlockRegistry::MapStateIdNonCube(stateId);
-            }
-            // Resolved straight from the state id, independent of both visual
-            // ids — see Block::collisionShapeId.
-            block.collisionShapeId = BlockRegistry::MapStateIdCollisionShape(stateId);
-            chunk->setBlock(x, sectionBaseY + ylocal, z, block);
+            chunk->setBlock(x, sectionBaseY + ylocal, z, BlockRegistry::ResolveStateId(stateId));
         }
 
         ReadPalettedContainer(reader, 64, 3); // biomes — parsed to stay byte-aligned, discarded.
@@ -167,8 +159,9 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
     // off the wire so the light data that follows lines up correctly.
     int32_t blockEntityCount = reader.ReadVarInt();
     for (int32_t i = 0; i < blockEntityCount; i++) {
-        reader.ReadByte();  // packed XZ, unused
-        reader.ReadShort(); // Y, unused
+        uint8_t packedXZ = reader.ReadByte(); // X in the high nibble, Z in the low.
+        int16_t y = reader.ReadShort();       // Absolute world Y.
+        chunk->AddBlockEntity(packedXZ >> 4, y - WORLD_MIN_Y, packedXZ & 0x0F);
         reader.ReadVarInt(); // type, unused
 
         // Network NBT (no name field) — same read-then-resync trick as
@@ -190,8 +183,8 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
     // floor, bit SECTION_COUNT+1 the one above the ceiling).
     std::vector<uint64_t> skyLightMask = ReadBitSet(reader);
     std::vector<uint64_t> blockLightMask = ReadBitSet(reader);
-    ReadBitSet(reader); // Empty Sky Light Mask — sections here are all-zero; already the case if never written.
-    ReadBitSet(reader); // Empty Block Light Mask — same reasoning.
+    std::vector<uint64_t> emptySkyLightMask = ReadBitSet(reader);
+    std::vector<uint64_t> emptyBlockLightMask = ReadBitSet(reader);
 
     constexpr int LIGHT_SECTION_COUNT = SECTION_COUNT + 2;
 
@@ -225,7 +218,62 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
         }
     }
 
+    for (int bit = 0; bit < LIGHT_SECTION_COUNT; bit++) {
+        int section = bit - 1;
+        if (section < 0 || section >= SECTION_COUNT) continue;
+        bool emptySky = BitSetTest(emptySkyLightMask, bit);
+        bool emptyBlock = BitSetTest(emptyBlockLightMask, bit);
+        if (!emptySky && !emptyBlock) continue;
+
+        int sectionBaseY = section * 16;
+        for (int i = 0; i < 4096; i++) {
+            int x = i % 16;
+            int z = (i / 16) % 16;
+            int y = sectionBaseY + i / 256;
+            if (emptySky) chunk->setSkyLight(x, y, z, 0);
+            if (emptyBlock) chunk->setBlockLight(x, y, z, 0);
+        }
+    }
+
     return chunk;
+}
+
+PendingLightUpdate ParseLightUpdatePacket(PacketReader& reader)
+{
+    PendingLightUpdate update;
+    update.chunkX = reader.ReadVarInt();
+    update.chunkZ = reader.ReadVarInt();
+
+    std::vector<uint64_t> skyMask = ReadBitSet(reader);
+    std::vector<uint64_t> blockMask = ReadBitSet(reader);
+    std::vector<uint64_t> emptySkyMask = ReadBitSet(reader);
+    std::vector<uint64_t> emptyBlockMask = ReadBitSet(reader);
+
+    constexpr int LIGHT_SECTION_COUNT = SECTIONS_PER_CHUNK + 2; // Bit 0 is the boundary section below the world.
+
+    auto readChannel = [&](const std::vector<uint64_t>& mask, const std::vector<uint64_t>& emptyMask,
+                           std::array<std::vector<uint8_t>, SECTIONS_PER_CHUNK>& out)
+    {
+        reader.ReadVarInt(); // Array count — redundant with the mask's popcount.
+        for (int bit = 0; bit < LIGHT_SECTION_COUNT; bit++)
+        {
+            int section = bit - 1;
+            bool inRange = section >= 0 && section < SECTIONS_PER_CHUNK;
+            if (BitSetTest(mask, bit))
+            {
+                std::vector<uint8_t> nibbles = ReadLightArray(reader);
+                if (inRange) out[static_cast<size_t>(section)] = std::move(nibbles);
+            }
+            else if (inRange && BitSetTest(emptyMask, bit))
+            {
+                out[static_cast<size_t>(section)].assign(2048, 0);
+            }
+        }
+    };
+
+    readChannel(skyMask, emptySkyMask, update.skyLight);
+    readChannel(blockMask, emptyBlockMask, update.blockLight);
+    return update;
 }
 
 } // namespace Volcano::ChunkParser
