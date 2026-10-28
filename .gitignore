@@ -28,3 +28,32 @@ crash-report*
 # Bash on Linux devices and Git Bash for coding agents might make this file.
 # This is a reserved device on Windows, so it won't work there.
 nul
+
+# Third-party resource packs (not ours to redistribute) and the vanilla archive used for reading vanilla code.
+resources/resourcepacks/
+resources/26.2.zip
+
+# Build outputs, generated at build time. Release binaries belong on GitHub Releases, not in the history.
+*.exe
+*.pdb
+*.lib
+*.dll
+*.exp
+.ninja_deps
+.ninja_log
+/CMakeCache.txt
+/build.ninja
+/cmake_install.cmake
+/compile_commands.json
+/VolcanoClient.exports.def
+release/
+resources/shaders/*.spv
+
+# Local captures and run state.
+*.cap
+client.err
+imgui.ini
+
+# Personal: saved servers and a private SSH helper.
+servers.json
+server-ssh.ps1

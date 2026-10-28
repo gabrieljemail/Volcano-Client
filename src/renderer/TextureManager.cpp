@@ -1,13 +1,15 @@
 #include "TextureManager.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
-#include <filesystem>
+#include <algorithm>
+#include <bit>
+#include <optional>
+#include <stdexcept>
 #include <vector>
 #include <cstring>
 #include "VulkanInit.hpp"
 #include "Logger.hpp"
-
-namespace fs = std::filesystem;
+#include "resources/ResourceManager.hpp"
 
 namespace Volcano {
 
@@ -25,6 +27,9 @@ void TextureManager::Destroy()
     if (array.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), array.view, nullptr);
     if (array.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, array.image, array.allocation);
     array = TextureArray{};
+    layerLookup.clear();
+    layerSize = 0;
+    mipLevels = 0;
 }
 
 void TextureManager::CreateArrayImage(uint32_t layerCount)
@@ -32,11 +37,11 @@ void TextureManager::CreateArrayImage(uint32_t layerCount)
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent = { TEXTURE_LAYER_SIZE, TEXTURE_LAYER_SIZE, 1 };
-    imageInfo.mipLevels = TEXTURE_MIP_LEVELS;
+    imageInfo.extent = { layerSize, layerSize, 1 };
+    imageInfo.mipLevels = mipLevels;
     imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // Source: Pincel reads icons back.
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -45,7 +50,10 @@ void TextureManager::CreateArrayImage(uint32_t layerCount)
     VmaAllocationCreateInfo allocInfo{};
     allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
 
-    vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &array.image, &array.allocation, nullptr);
+    if (vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &array.image, &array.allocation, nullptr) != VK_SUCCESS)
+    {
+        throw std::runtime_error("[ERROR] Failed to create texture array image!");
+    }
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -54,7 +62,7 @@ void TextureManager::CreateArrayImage(uint32_t layerCount)
     viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = TEXTURE_MIP_LEVELS;
+    viewInfo.subresourceRange.levelCount = mipLevels;
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = layerCount;
 
@@ -65,7 +73,7 @@ void TextureManager::CreateArrayImage(uint32_t layerCount)
 
 void TextureManager::UploadLayer(uint32_t layerIndex, const uint8_t* rgbaPixels, uint32_t width, uint32_t height)
 {
-    VkDeviceSize size = width * height * 4;
+    VkDeviceSize size = static_cast<VkDeviceSize>(width) * height * 4;
     AllocatedBuffer staging = CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
 
     void* mapped;
@@ -89,86 +97,160 @@ void TextureManager::UploadLayer(uint32_t layerIndex, const uint8_t* rgbaPixels,
     vmaDestroyBuffer(vmaAllocator, staging.buffer, staging.allocation);
 }
 
-void TextureManager::LoadResourcePack(const std::string& resourcePackRoot, const std::function<void(float)>& onProgress)
+namespace {
+
+struct PackTexture
 {
-    std::vector<fs::path> texturePaths;
-    for (const auto& subdir : { "block", "item" })
+    std::string stem;
+    std::vector<uint8_t> bytes;
+    int width = 0;
+    int frameHeight = 0; // Height of frame 0 (animation strips are stacked squares).
+};
+
+std::string StemOf(const std::string& logicalPath)
+{
+    size_t slash = logicalPath.find_last_of('/');
+    std::string name = slash == std::string::npos ? logicalPath : logicalPath.substr(slash + 1);
+    size_t dot = name.find_last_of('.');
+    return dot == std::string::npos ? name : name.substr(0, dot);
+}
+
+} // namespace
+
+void TextureManager::Reload(const std::function<void(float)>& onProgress)
+{
+    LoadResourcePack(onProgress);
+}
+
+void TextureManager::LoadResourcePack(const std::function<void(float)>& onProgress)
+{
+    Destroy();
+
+    ResourceManager& resources = ResourceManager::Instance();
+
+    // Later sources win a bare-stem collision (item over block), so the
+    // shadowed texture never takes a layer it can't be looked up by.
+    std::vector<PackTexture> textures;
+    std::unordered_map<std::string, size_t> stemIndex;
+    size_t found = 0;
+    uint32_t skipped = 0;
+    for (const char* subdir : { "assets/minecraft/textures/block", "assets/minecraft/textures/item" })
     {
-        fs::path dir = fs::path(resourcePackRoot) / "assets" / "minecraft" / "textures" / subdir;
-        if (!fs::exists(dir)) {
-            continue;
+        for (const std::string& path : resources.List(subdir, ".png", false))
+        {
+            found++;
+            std::optional<std::vector<uint8_t>> bytes = resources.ReadBytes(path);
+            int w = 0, h = 0, channels = 0;
+            if (!bytes || !stbi_info_from_memory(bytes->data(), static_cast<int>(bytes->size()), &w, &h, &channels) || w <= 0 || h <= 0)
+            {
+                skipped++;
+                continue;
+            }
+
+            PackTexture texture;
+            texture.stem = StemOf(path);
+            texture.bytes = std::move(*bytes);
+            texture.width = w;
+            texture.frameHeight = (h > w && h % w == 0) ? w : h;
+
+            auto existing = stemIndex.find(texture.stem);
+            if (existing != stemIndex.end())
+            {
+                textures[existing->second] = std::move(texture);
+                continue;
+            }
+            stemIndex[texture.stem] = textures.size();
+            textures.push_back(std::move(texture));
         }
-        for (const auto& entry : fs::directory_iterator(dir))
-            if (entry.path().extension() == ".png")
-                texturePaths.push_back(entry.path());
     }
 
-    Log::Info("Found " + std::to_string(texturePaths.size()) + " texture files");
+    Log::Info("Found " + std::to_string(found) + " texture files");
+    if (skipped > 0)
+    {
+        Log::Info("Skipped " + std::to_string(skipped) + " unreadable textures");
+    }
 
-    if (texturePaths.empty()) {
+    if (textures.empty())
+    {
         Log::Error("No textures found! Cannot create texture array.");
         return;
     }
 
-    // CreateArrayImage's layerCount must match the number of textures that
-    // will actually be uploaded, not the raw file count: this driver's
-    // maxImageArrayLayers is 2048, and the raw file count (including
-    // non-16x16 textures that get skipped below) can exceed that, silently
-    // producing a broken image (vmaCreateImage's result was never checked).
-    // Filter up front so the array is sized to what's really going in.
-    std::vector<fs::path> validPaths;
-    uint16_t skipped = 0;
-    for (const auto& path : texturePaths)
+    // Layer size: largest frame dimension, power of two, clamped.
+    uint32_t largest = TEXTURE_MIN_LAYER_SIZE;
+    for (const PackTexture& texture : textures)
     {
-        int w, h, channels;
-        if (!stbi_info(path.string().c_str(), &w, &h, &channels))
-        {
-            skipped++;
-            continue;
-        }
+        largest = std::max(largest, static_cast<uint32_t>(std::max(texture.width, texture.frameHeight)));
+    }
+    uint32_t size = std::bit_ceil(largest);
 
-        // Animated texture: PNG height is a multiple of width (stacked frames).
-        int frameHeight = (h > w && h % w == 0) ? w : h;
-        if (frameHeight != static_cast<int>(TEXTURE_LAYER_SIZE) || w != static_cast<int>(TEXTURE_LAYER_SIZE))
-        {
-            skipped++;
-            continue;
-        }
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(GetPhysicalDevice(), &props);
+    uint32_t maxSize = std::min(TEXTURE_MAX_LAYER_SIZE, props.limits.maxImageDimension2D);
+    if (size > maxSize)
+    {
+        Log::Info("Largest texture needs " + std::to_string(size) + "px layers; clamping to " + std::to_string(maxSize));
+        size = maxSize;
+    }
+    layerSize = size;
+    mipLevels = static_cast<uint32_t>(std::bit_width(size));
 
-        validPaths.push_back(path);
+    // maxImageArrayLayers can be as low as 2048; drop the overflow (items
+    // load last) rather than build a broken image.
+    uint32_t maxLayers = props.limits.maxImageArrayLayers;
+    if (textures.size() > maxLayers)
+    {
+        Log::Error("Too many textures (" + std::to_string(textures.size()) + ") for maxImageArrayLayers "
+            + std::to_string(maxLayers) + "; dropping the last " + std::to_string(textures.size() - maxLayers));
+        textures.resize(maxLayers);
     }
 
-    if (skipped > 0) {
-        Log::Info("Skipped " + std::to_string(skipped) + " non-16x16 textures");
-    }
+    CreateArrayImage(static_cast<uint32_t>(textures.size()));
 
-    CreateArrayImage(static_cast<uint32_t>(validPaths.size()));
-
-    uint16_t layer = 0;
-    for (const auto& path : validPaths)
+    std::vector<uint8_t> scaled(static_cast<size_t>(layerSize) * layerSize * 4);
+    uint32_t layer = 0;
+    for (PackTexture& texture : textures)
     {
         int w, h, channels;
-        uint8_t* pixels = stbi_load(path.string().c_str(), &w, &h, &channels, STBI_rgb_alpha);
+        uint8_t* pixels = stbi_load_from_memory(texture.bytes.data(), static_cast<int>(texture.bytes.size()),
+            &w, &h, &channels, STBI_rgb_alpha);
         if (!pixels)
         {
-            Log::Error("Failed to load texture: " + path.string());
+            Log::Error("Failed to decode texture: " + texture.stem);
+            std::fill(scaled.begin(), scaled.end(), 0); // Keep the layer defined.
+            UploadLayer(layer, scaled.data(), layerSize, layerSize);
+            layer++;
             continue;
         }
 
-        int frameHeight = (h > w && h % w == 0) ? w : h;
-        UploadLayer(layer, pixels, w, frameHeight); // only frame 0's rows if animated
-        layerLookup[path.stem().string()] = layer;
-        layer++;
-
+        // Nearest-neighbour resample of frame 0 to the layer size.
+        size_t frameHeight = static_cast<size_t>(texture.frameHeight);
+        for (uint32_t y = 0; y < layerSize; y++)
+        {
+            size_t sy = static_cast<size_t>(y) * frameHeight / layerSize;
+            for (uint32_t x = 0; x < layerSize; x++)
+            {
+                size_t sx = static_cast<size_t>(x) * w / layerSize;
+                memcpy(&scaled[(static_cast<size_t>(y) * layerSize + x) * 4], &pixels[(sy * w + sx) * 4], 4);
+            }
+        }
         stbi_image_free(pixels);
 
-        if (onProgress) onProgress(static_cast<float>(layer) / static_cast<float>(validPaths.size()));
+        UploadLayer(layer, scaled.data(), layerSize, layerSize);
+        layerLookup[texture.stem] = static_cast<uint16_t>(layer);
+        texture.bytes = {};
+        layer++;
+
+        if (onProgress) onProgress(static_cast<float>(layer) / static_cast<float>(textures.size()));
     }
 
     GenerateMipmaps();
     CreateSampler();
 
-    Log::Info("Loaded " + std::to_string(layer) + " textures into array.");
+    double megabytes = static_cast<double>(layerSize) * layerSize * 4 * layer * 4.0 / 3.0 / (1024.0 * 1024.0);
+    Log::Info("Loaded " + std::to_string(layer) + " textures into array ("
+        + std::to_string(layerSize) + "px, " + std::to_string(mipLevels) + " mips, ~"
+        + std::to_string(static_cast<int>(megabytes)) + " MB).");
 }
 
 uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
@@ -191,15 +273,15 @@ void TextureManager::GenerateMipmaps()
 {
     VkCommandBuffer cmd = BeginOneShotCommands();
 
-    int32_t mipWidth = static_cast<int32_t>(TEXTURE_LAYER_SIZE);
-    int32_t mipHeight = static_cast<int32_t>(TEXTURE_LAYER_SIZE);
+    int32_t mipWidth = static_cast<int32_t>(layerSize);
+    int32_t mipHeight = static_cast<int32_t>(layerSize);
 
     // Only mip 0 of each layer was uploaded to (and transitioned to
     // TRANSFER_DST_OPTIMAL) in UploadLayer; mips 1..N-1 are still
     // VK_IMAGE_LAYOUT_UNDEFINED. Walk the chain, blitting each mip down from
     // the previous one, so every level actually contains downsampled data
     // instead of uninitialized VRAM.
-    for (uint32_t mip = 1; mip < TEXTURE_MIP_LEVELS; mip++)
+    for (uint32_t mip = 1; mip < mipLevels; mip++)
     {
         VkImageMemoryBarrier toSrcBarrier{};
         toSrcBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -260,7 +342,7 @@ void TextureManager::GenerateMipmaps()
     }
 
     // The last mip level was only ever a blit destination (still
-    // TRANSFER_DST_OPTIMAL) — move it to its final shader-readable layout too.
+    // TRANSFER_DST_OPTIMAL) - move it to its final shader-readable layout too.
     VkImageMemoryBarrier lastBarrier{};
     lastBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     lastBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -268,7 +350,7 @@ void TextureManager::GenerateMipmaps()
     lastBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     lastBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     lastBarrier.image = array.image;
-    lastBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, TEXTURE_MIP_LEVELS - 1, 1, 0, array.layerCount };
+    lastBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, mipLevels - 1, 1, 0, array.layerCount };
     lastBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     lastBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
@@ -295,7 +377,7 @@ void TextureManager::CreateSampler()
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     samplerInfo.mipLodBias = 0.0f;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = static_cast<float>(TEXTURE_MIP_LEVELS);
+    samplerInfo.maxLod = static_cast<float>(mipLevels);
 
     if (vkCreateSampler(GetDevice(), &samplerInfo, nullptr, &array.sampler) != VK_SUCCESS) {
         throw std::runtime_error("[ERROR] Failed to create texture sampler!");

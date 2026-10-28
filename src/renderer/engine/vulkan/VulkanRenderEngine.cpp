@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <memory>
@@ -5,6 +6,7 @@
 #include <string>
 #include "VulkanRenderEngine.hpp"
 #include "../passes/EntityPass.hpp"
+#include "../passes/ModeledBEPass.hpp"
 #include "../passes/GUIPass.hpp"
 #include "../passes/HandPass.hpp"
 #include "../passes/ItemPass.hpp"
@@ -12,11 +14,15 @@
 #include "../passes/SelectionPass.hpp"
 #include "../passes/ShaderPackPass.hpp"
 #include "../passes/SkyboxPass.hpp"
+#include "../passes/CloudPass.hpp"
+#include "../passes/ParticlePass.hpp"
+#include "../passes/ShadowPass.hpp"
 #include "../passes/TerrainPass.hpp"
 #include "../../VulkanInit.hpp"
 #include "../../TextureManager.hpp"
 #include "../../models/CameraUBO.hpp"
 #include "../../models/SlabBuffer.hpp"
+#include "../../terrain/OcclusionSnapshot.hpp"
 #include "../../Screenshot.hpp"
 #include <utility>
 #include <vector>
@@ -29,7 +35,7 @@ namespace Volcano::Engine::Vulkan {
 void VulkanRenderEngine::Init()
 {
     // Window, instance, device, swapchain, render pass, descriptor sets,
-    // command buffers, sync objects — everything but pipelines.
+    // command buffers, sync objects - everything but pipelines.
     ::Init(state);
     initialized = true;
 
@@ -42,6 +48,217 @@ void VulkanRenderEngine::Init()
 
     Log::Info(std::string("[INFO] Render engine initialized (") + GetBackendName() + ", "
         + std::to_string(passes.size()) + " passes).");
+}
+
+VkDevice VulkanRenderEngine::GetVkDevice() const { return ::GetDevice(); }
+VkPhysicalDevice VulkanRenderEngine::GetVkPhysicalDevice() const { return ::GetPhysicalDevice(); }
+VmaAllocator VulkanRenderEngine::GetAllocator() const { return vmaAllocator; }
+VkQueue VulkanRenderEngine::GetGraphicsQueue() const { return graphicsQueue; }
+uint32_t VulkanRenderEngine::GetGraphicsQueueFamily() const { return graphicsQueueFamilyIndex; }
+VkRenderPass VulkanRenderEngine::GetMainRenderPass() const { return ::renderPass; }
+VkRenderPass VulkanRenderEngine::GetOverlayRenderPass() const { return ::overlayRenderPass; }
+VkFormat VulkanRenderEngine::GetDepthFormat() const { return depthFormat; }
+VkExtent2D VulkanRenderEngine::GetSwapchainExtent() const { return swapchainExtent; }
+VkDescriptorSetLayout VulkanRenderEngine::GetCameraSetLayout() const { return cameraSetLayout; }
+VkDescriptorSetLayout VulkanRenderEngine::GetTextureSetLayout() const { return textureSetLayout; }
+VkDescriptorSet VulkanRenderEngine::GetCameraSet(uint32_t frameIndex) const { return cameraSets[frameIndex]; }
+VkDescriptorSet VulkanRenderEngine::GetTextureSet() const { return textureSet; }
+
+DepthTarget VulkanRenderEngine::CreateDepthTarget(uint32_t width, uint32_t height, bool compareSampler, uint32_t layers)
+{
+    DepthTarget target;
+    VkDevice dev = ::GetDevice();
+    layers = std::max(layers, 1u);
+
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = depthFormat;
+    imageInfo.extent = { width, height, 1 };
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = layers;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    if (vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &target.image, &target.allocation, nullptr) != VK_SUCCESS)
+    {
+        Log::Error("[ERROR] CreateDepthTarget: image allocation failed.");
+        return DepthTarget{};
+    }
+    target.width = width;
+    target.height = height;
+    target.layers = layers;
+
+    auto makeView = [&](VkImageView& view, VkImageViewType type, uint32_t firstLayer, uint32_t layerCount)
+    {
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = target.image;
+        viewInfo.viewType = type;
+        viewInfo.format = depthFormat;
+        viewInfo.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, firstLayer, layerCount };
+        return vkCreateImageView(dev, &viewInfo, nullptr, &view) == VK_SUCCESS;
+    };
+
+    // The sampling view covers every layer; framebuffers need one view per layer.
+    bool ok = makeView(target.view, layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D, 0, layers);
+    if (ok && layers > 1)
+    {
+        target.layerViews.assign(layers, VK_NULL_HANDLE);
+        for (uint32_t i = 0; i < layers && ok; i++) ok = makeView(target.layerViews[i], VK_IMAGE_VIEW_TYPE_2D, i, 1);
+    }
+
+    if (ok)
+    {
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        samplerInfo.addressModeU = samplerInfo.addressModeV = samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE; // Outside the map is lit.
+        samplerInfo.maxAnisotropy = 1.0f;
+        samplerInfo.compareEnable = compareSampler ? VK_TRUE : VK_FALSE;
+        samplerInfo.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        ok = vkCreateSampler(dev, &samplerInfo, nullptr, &target.sampler) == VK_SUCCESS;
+    }
+
+    if (ok)
+    {
+        // Depth only: cleared on load, stored, and left sampleable. The two
+        // dependencies order writes against both the previous frame's reads
+        // and this frame's later fragment-shader reads.
+        VkAttachmentDescription depth{};
+        depth.format = depthFormat;
+        depth.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depth.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkAttachmentReference depthRef{ 0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.pDepthStencilAttachment = &depthRef;
+
+        VkSubpassDependency dependencies[2]{};
+        dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[0].dstSubpass = 0;
+        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dependencies[1].srcSubpass = 0;
+        dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        dependencies[1].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        VkRenderPassCreateInfo passInfo{};
+        passInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        passInfo.attachmentCount = 1;
+        passInfo.pAttachments = &depth;
+        passInfo.subpassCount = 1;
+        passInfo.pSubpasses = &subpass;
+        passInfo.dependencyCount = 2;
+        passInfo.pDependencies = dependencies;
+        ok = vkCreateRenderPass(dev, &passInfo, nullptr, &target.renderPass) == VK_SUCCESS;
+    }
+
+    if (ok)
+    {
+        for (uint32_t i = 0; i < layers && ok; i++)
+        {
+            VkImageView attachment = layers > 1 ? target.layerViews[i] : target.view;
+            VkFramebufferCreateInfo framebufferInfo{};
+            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass = target.renderPass;
+            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.pAttachments = &attachment;
+            framebufferInfo.width = width;
+            framebufferInfo.height = height;
+            framebufferInfo.layers = 1;
+            VkFramebuffer framebuffer = VK_NULL_HANDLE;
+            ok = vkCreateFramebuffer(dev, &framebufferInfo, nullptr, &framebuffer) == VK_SUCCESS;
+            if (ok) target.framebuffers.push_back(framebuffer);
+        }
+    }
+
+    if (!ok)
+    {
+        Log::Error("[ERROR] CreateDepthTarget: failed to build the target.");
+        DestroyDepthTarget(target);
+        return DepthTarget{};
+    }
+    return target;
+}
+
+void VulkanRenderEngine::DestroyDepthTarget(DepthTarget& target)
+{
+    VkDevice dev = ::GetDevice();
+    if (target.image != VK_NULL_HANDLE || target.view != VK_NULL_HANDLE) WaitIdle();
+
+    for (VkFramebuffer framebuffer : target.framebuffers) vkDestroyFramebuffer(dev, framebuffer, nullptr);
+    if (target.renderPass != VK_NULL_HANDLE) vkDestroyRenderPass(dev, target.renderPass, nullptr);
+    if (target.sampler != VK_NULL_HANDLE) vkDestroySampler(dev, target.sampler, nullptr);
+    for (VkImageView view : target.layerViews)
+    {
+        if (view != VK_NULL_HANDLE) vkDestroyImageView(dev, view, nullptr);
+    }
+    if (target.view != VK_NULL_HANDLE) vkDestroyImageView(dev, target.view, nullptr);
+    if (target.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, target.image, target.allocation);
+    target = DepthTarget{};
+}
+
+bool VulkanRenderEngine::CanReceiveShadows() const { return shadowedPipeline != VK_NULL_HANDLE; }
+VkDescriptorSet VulkanRenderEngine::GetShadowSet() const { return shadowSet; }
+
+void VulkanRenderEngine::SetShadowMap(const DepthTarget& map)
+{
+    if (!map.IsValid()) return;
+    WaitIdle(); // The set may be bound by frames still in flight.
+
+    VkDescriptorImageInfo imageInfo{ map.sampler, map.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = shadowSet;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageInfo;
+    vkUpdateDescriptorSets(::GetDevice(), 1, &write, 0, nullptr);
+}
+
+void VulkanRenderEngine::SetShadows(const ShadowCascades& cascades)
+{
+    auto* base = static_cast<uint8_t*>(cameraUBOsMapped[currentFrame]);
+
+    glm::mat4 matrices[ShadowCascades::MAX_CASCADES];
+    glm::vec4 splits(0.0f), texels(0.0f), ranges(1.0f);
+    for (uint32_t i = 0; i < ShadowCascades::MAX_CASCADES; i++)
+    {
+        // Unused cascades repeat the last one so a lookup never reads garbage.
+        uint32_t source = std::min(i, cascades.count > 0 ? cascades.count - 1 : 0u);
+        matrices[i] = cascades.viewProj[source];
+        splits[static_cast<int>(i)] = cascades.splitFar[source];
+        texels[static_cast<int>(i)] = cascades.worldTexel[source];
+        ranges[static_cast<int>(i)] = std::max(cascades.range[source], 1.0f);
+    }
+    glm::vec4 params(cascades.darkness, cascades.mapTexel, 0.0f, cascades.debugView ? 1.0f : 0.0f);
+
+    std::memcpy(base + offsetof(CameraUBO, shadowViewProj), matrices, sizeof(matrices));
+    std::memcpy(base + offsetof(CameraUBO, shadowParams), &params, sizeof(params));
+    std::memcpy(base + offsetof(CameraUBO, shadowSplits), &splits, sizeof(splits));
+    std::memcpy(base + offsetof(CameraUBO, shadowTexels), &texels, sizeof(texels));
+    std::memcpy(base + offsetof(CameraUBO, shadowRanges), &ranges, sizeof(ranges));
+    shadowsActiveThisFrame = true;
 }
 
 void VulkanRenderEngine::CreateTimestampPool()
@@ -82,11 +299,15 @@ void VulkanRenderEngine::ReadTimestamps(uint32_t slot)
 
 void VulkanRenderEngine::RegisterBuiltInPasses()
 {
+    AddPass(std::make_unique<Passes::ShadowPass>());
     AddPass(std::make_unique<Passes::SkyboxPass>());
     AddPass(std::make_unique<Passes::TerrainPass>());
     AddPass(std::make_unique<Passes::EntityPass>());
+    AddPass(std::make_unique<Passes::ModeledBEPass>());
     AddPass(std::make_unique<Passes::ItemPass>());
     AddPass(std::make_unique<Passes::NonCubicPass>());
+    AddPass(std::make_unique<Passes::ParticlePass>());
+    AddPass(std::make_unique<Passes::CloudPass>());
     AddPass(std::make_unique<Passes::SelectionPass>());
     AddPass(std::make_unique<Passes::HandPass>());
     AddPass(std::make_unique<Passes::ShaderPackPass>());
@@ -121,7 +342,7 @@ void VulkanRenderEngine::StopRendering()
     // The last submitted frame's command buffer may still be executing on
     // the GPU (fences are only waited on at the *start* of the next frame,
     // which never comes once the frame loop has exited) and it references
-    // ImGui's descriptor pool/pipeline and every pass's pipelines — all
+    // ImGui's descriptor pool/pipeline and every pass's pipelines - all
     // destroyed outright below.
     WaitIdle();
 
@@ -158,7 +379,7 @@ void VulkanRenderEngine::Shutdown()
 bool VulkanRenderEngine::BeginFrame()
 {
     // Resize requests land here (set by VulkanInit's GLFW framebuffer-size
-    // callback) — this is the only thread allowed to touch the swapchain,
+    // callback) - this is the only thread allowed to touch the swapchain,
     // so recreation happens here, between frames, rather than in the
     // callback itself.
     if (state->framebufferResized.exchange(false))
@@ -185,10 +406,13 @@ bool VulkanRenderEngine::BeginFrame()
         VK_NULL_HANDLE,
         &imageIndex
     );
-    state->timings.waitRawMs.store(
-        std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count());
+    if (state->debugHudVisible)
+    {
+        state->timings.waitRawMs.store(
+            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count());
+    }
 
-    // The swapchain is stale (surface no longer matches — a resize/fullscreen
+    // The swapchain is stale (surface no longer matches - a resize/fullscreen
     // toggle that outran the framebuffer-size callback, or a minimized
     // window). Skip this frame; RecreateSwapchain runs at the top of the
     // next BeginFrame now that a resize is flagged.
@@ -205,7 +429,7 @@ bool VulkanRenderEngine::BeginFrame()
         throw std::runtime_error("[ERROR] Failed to acquire swapchain image!");
     }
 
-    // Only reset once we know this slot will actually be submitted —
+    // Only reset once we know this slot will actually be submitted -
     // resetting before a skipped frame would leave the next wait hanging.
     vkResetFences(GetDevice(), 1, &inFlightFences[currentFrame]);
     return true;
@@ -215,8 +439,19 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
 {
     VkCommandBuffer cmd = commandBuffers[currentFrame];
 
+    // Debug HUD data is only gathered while it's visible: hand over last
+    // frame's occlusion counts (BeginFrame below resets them), then tell this
+    // frame's culling whether to count.
+    const bool profile = state->debugHudVisible;
+    if (profile)
+    {
+        state->sectionsTested = occlusionSnapshot.tested;
+        state->sectionsOccluded = occlusionSnapshot.occluded;
+    }
+    occlusionSnapshot.collectStats = profile;
+
     // This slot's fence was waited in BeginFrame, so its Hi-Z readback from
-    // a couple of frames ago is done — publish it before the chunk passes
+    // a couple of frames ago is done - publish it before the chunk passes
     // cull against it.
     hizBuildPass.BeginFrame(currentFrame);
     // Past this slot's fence wait: lets SlabBuffer reuse regions freed
@@ -224,13 +459,13 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
     renderFrameCounter++;
 
     BeginCommandBuffer(cmd);
-    if (timestampPool != VK_NULL_HANDLE)
+    if (profile && timestampPool != VK_NULL_HANDLE)
     {
         vkCmdResetQueryPool(cmd, timestampPool, currentFrame * 2, 2);
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, currentFrame * 2);
     }
     UploadCamera(scene);
-    BeginMainPass(cmd, scene);
+    shadowsActiveThisFrame = false;
 
     FrameContext frame;
     frame.engine = this;
@@ -240,15 +475,27 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
     frame.extent = GetExtent();
     frame.commandBuffer = cmd;
     frame.viewProj = scene.proj * scene.view;
-    RecordPasses(frame);
 
+    // Pre-main passes (shadow maps, ...) record outside any render pass.
+    RecordPasses(frame, PassStage::PRE_MAIN);
+
+    BeginMainPass(cmd, scene);
+    RecordPasses(frame, PassStage::MAIN);
     EndMainPass(cmd);
+
+    // Overlays draw over the finished frame in a pass that keeps it. Called
+    // even with none registered: it also closes the frame's debug counters.
+    bool overlays = HasEnabledPass(PassStage::OVERLAY);
+    if (overlays) BeginOverlayPass(cmd);
+    RecordPasses(frame, PassStage::OVERLAY);
+    if (overlays) vkCmdEndRenderPass(cmd);
+
     bool capture = screenshotRequested.exchange(false);
     if (capture) RecordScreenshotCopy(cmd);
-    // Outside the render pass instance now (compute can't run inside one) —
+    // Outside the render pass instance now (compute can't run inside one) -
     // see HiZBuildPass's own comment on why it isn't a normal RenderPass.
     hizBuildPass.Record(cmd, currentFrame, frame.viewProj);
-    if (timestampPool != VK_NULL_HANDLE)
+    if (profile && timestampPool != VK_NULL_HANDLE)
     {
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, currentFrame * 2 + 1);
         timestampPending[currentFrame] = true;
@@ -294,7 +541,8 @@ void VulkanRenderEngine::UploadCamera(const SceneView& scene)
     CameraUBO ubo{ scene.view, scene.proj, scene.lightingEnabled ? 1.0f : 0.0f,
         scene.brightnessFactor, scene.dayBrightness, scene.lightFalloff,
         scene.shadeTop, scene.shadeBottom, scene.shadeNorthSouth, scene.shadeEastWest,
-        glm::vec4(scene.skyColor, 1.0f), glm::vec4(scene.cameraPosition, 1.0f), scene.fogStart, scene.fogEnd };
+        glm::vec4(scene.skyColor, 1.0f), glm::vec4(scene.cameraPosition, 1.0f), scene.fogStart, scene.fogEnd,
+        scene.specularStrength, scene.time, glm::vec4(scene.sunDirection, 0.0f) };
     std::memcpy(cameraUBOsMapped[currentFrame], &ubo, sizeof(ubo));
 }
 
@@ -313,7 +561,7 @@ void VulkanRenderEngine::BeginMainPass(VkCommandBuffer cmd, const SceneView& sce
     renderPassInfo.pClearValues = clearValues.data();
     vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    // Every pipeline uses dynamic viewport/scissor — set once, here, for
+    // Every pipeline uses dynamic viewport/scissor - set once, here, for
     // all passes.
     VkViewport viewport{};
     viewport.x = 0.0f;
@@ -330,11 +578,27 @@ void VulkanRenderEngine::BeginMainPass(VkCommandBuffer cmd, const SceneView& sce
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
 
+void VulkanRenderEngine::BeginOverlayPass(VkCommandBuffer cmd)
+{
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = overlayRenderPass;
+    renderPassInfo.framebuffer = framebuffers[imageIndex];
+    renderPassInfo.renderArea.extent = swapchainExtent;
+    vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport viewport{ 0.0f, 0.0f, static_cast<float>(swapchainExtent.width),
+        static_cast<float>(swapchainExtent.height), 0.0f, 1.0f };
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{ { 0, 0 }, swapchainExtent };
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+}
+
 void VulkanRenderEngine::EndMainPass(VkCommandBuffer cmd)
 {
     vkCmdEndRenderPass(cmd);
     // vkEndCommandBuffer is NOT here: SubmitFrame still records HiZBuildPass
-    // after the render pass ends — see its own vkEndCommandBuffer call.
+    // after the render pass ends - see its own vkEndCommandBuffer call.
 }
 
 void VulkanRenderEngine::RecordScreenshotCopy(VkCommandBuffer cmd)

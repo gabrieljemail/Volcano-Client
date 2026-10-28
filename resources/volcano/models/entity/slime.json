@@ -1,0 +1,11 @@
+{
+    "_comment": "SlimeModel inner body + eyes + mouth, 64x32. The translucent outer cube is omitted (the entity shader has no blending).",
+    "textureWidth": 64,
+    "textureHeight": 32,
+    "boxes": [
+        { "name": "cube",      "origin": [-3, 17, -3],      "size": [6, 6, 6], "uv": [0, 16] },
+        { "name": "right_eye", "origin": [-3.25, 18, -3.5], "size": [2, 2, 2], "uv": [32, 0] },
+        { "name": "left_eye",  "origin": [1.25, 18, -3.5],  "size": [2, 2, 2], "uv": [32, 4] },
+        { "name": "mouth",     "origin": [0, 21, -3.5],     "size": [1, 1, 1], "uv": [32, 8] }
+    ]
+}

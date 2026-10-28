@@ -19,16 +19,18 @@ class TextureManager;
 
 namespace Volcano::Engine {
 
+namespace Vulkan { class VulkanRenderEngine; }
+
 // The boundary between the rendering engine and the rest of the client.
 // Everything outside src/renderer/engine/ (RenderThread's frame loop,
 // VolcanoClient.cpp's startup/shutdown, mods) reaches the renderer through
-// this interface — reached via GlobalState::renderEngine — instead of
+// this interface - reached via GlobalState::renderEngine - instead of
 // calling into VulkanInit's globals or recording commands itself. A
 // backend (VulkanRenderEngine is the only one today) implements the pure
 // virtuals; the pass list and shader reloading are shared here.
 //
 // Every method runs on the render thread, which is the main (GLFW-owning)
-// thread — see RenderThread's own class comment. Only
+// thread - see RenderThread's own class comment. Only
 // RequestShaderReload() is safe to call from anywhere else.
 class RenderEngine {
 public:
@@ -50,7 +52,7 @@ public:
     // has finished.
     virtual void AttachTextures(const TextureManager& textures) = 0;
 
-    // Starts the ImGui backend against this engine's render pass — the GUI
+    // Starts the ImGui backend against this engine's render pass - the GUI
     // pass draws nothing until this has run.
     virtual void AttachGUI(const TextureManager* textures) = 0;
 
@@ -64,17 +66,22 @@ public:
 
     virtual const char* GetBackendName() const = 0;
 
+    // The Vulkan backend's public handle/factory API (VulkanRenderEngine.hpp),
+    // or nullptr on any other backend. Passes and mods that need Vulkan
+    // objects go through this instead of reaching for VulkanInit's globals.
+    virtual Vulkan::VulkanRenderEngine* GetVulkan() { return nullptr; }
+
     // ---- Frames ----
 
     // Handles any pending resize/shader reload, then waits for this frame
     // slot to free up and acquires an output image. False means skip this
-    // frame (e.g. a stale or minimized swapchain) — don't call SubmitFrame().
+    // frame (e.g. a stale or minimized swapchain) - don't call SubmitFrame().
     virtual bool BeginFrame() = 0;
 
     // Records every enabled pass for scene, submits, and presents.
     virtual void SubmitFrame(const SceneView& scene) = 0;
 
-    // Current output size — read after BeginFrame(), which may resize it.
+    // Current output size - read after BeginFrame(), which may resize it.
     virtual RenderExtent GetExtent() const = 0;
     virtual uint32_t GetFramesInFlight() const = 0;
 
@@ -87,7 +94,7 @@ public:
     virtual void ToggleWindowMode() = 0;
 
     // Re-applies Window.Mode/Width/Height/FullscreenMode.* if the config
-    // changed since last call (cheap otherwise) — called every frame so a
+    // changed since last call (cheap otherwise) - called every frame so a
     // Settings screen change takes effect live.
     virtual void ApplyWindowSettings() = 0;
 
@@ -96,13 +103,16 @@ public:
 
     // ---- Passes ----
 
-    // Passes run in list order, all inside one render pass sharing one
-    // color + depth target. Built-in names, in order: "Skybox", "Terrain",
-    // "Entities", "NonCubic", "Selection", "ShaderPackOverlay", "GUI".
+    // Passes record by stage (RenderPass::GetStage): PRE_MAIN passes first,
+    // then MAIN passes inside the main render pass sharing one color + depth
+    // target, then OVERLAY passes over the finished frame; list order decides
+    // within a stage. Built-in names, in order: "Shadows" (PRE_MAIN),
+    // "Skybox", "Terrain", "Entities", "NonCubic", "Clouds", "Selection",
+    // "ShaderPackOverlay", "GUI" (all MAIN). There are no built-in OVERLAY passes.
     //
     // Adding a pass after Init() creates it immediately; a pass whose
     // Create() throws is logged and not added (nullptr is returned). Names
-    // must be unique — a duplicate is rejected the same way.
+    // must be unique - a duplicate is rejected the same way.
     RenderPass* AddPass(std::unique_ptr<RenderPass> pass);
     RenderPass* InsertPassBefore(const std::string& existingPass, std::unique_ptr<RenderPass> pass);
     RenderPass* InsertPassAfter(const std::string& existingPass, std::unique_ptr<RenderPass> pass);
@@ -113,6 +123,10 @@ public:
     RenderPass* FindPass(const std::string& passName) const;
     std::vector<std::string> GetPassNames() const;
 
+    // {name, smoothed Record() CPU ms} per pass, in draw order. Values only
+    // update while GlobalState::debugHudVisible.
+    std::vector<std::pair<std::string, float>> GetPassRecordTimes() const;
+
     // ---- Shaders ----
 
     ShaderLibrary& GetShaderLibrary() { return shaders; }
@@ -121,8 +135,12 @@ public:
     // and reloads every pass's shaders at the start of the next frame.
     void SetShaderPack(const std::string& packName);
 
+    // WaitIdle(), then RenderPass::ReloadTextures() on every pass. Part of a
+    // resource reload (see ResourceReloader); render thread, between frames.
+    void ReloadPassTextures();
+
     // Rebuilds every pass's pipelines from the ShaderLibrary at the start
-    // of the next frame — pick up edited .spv files without restarting.
+    // of the next frame - pick up edited .spv files without restarting.
     void RequestShaderReload() { shaderReloadRequested.store(true); }
 
 protected:
@@ -139,13 +157,18 @@ protected:
     void CreatePasses();
     void DestroyPasses();
 
-    // WaitIdle(), then ReloadShaders() on every pass — with the same
+    // WaitIdle(), then ReloadShaders() on every pass - with the same
     // shader-pack fallback as CreatePasses(). Backends call this from
     // BeginFrame() once shaderReloadRequested is set.
     void ReloadPassShaders();
 
-    // Record() every enabled pass, in order.
-    void RecordPasses(FrameContext& frame);
+    // Record() every enabled pass of `stage`, in order. The first call of a
+    // frame (PRE_MAIN) also resets the per-frame debug counters.
+    void RecordPasses(FrameContext& frame, PassStage stage);
+
+    // Whether any enabled pass records in `stage` - lets a backend skip
+    // opening a render pass for an empty stage.
+    bool HasEnabledPass(PassStage stage) const;
 
 private:
     RenderPass* InsertAt(size_t index, std::unique_ptr<RenderPass> pass);

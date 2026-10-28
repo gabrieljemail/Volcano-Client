@@ -16,10 +16,10 @@ namespace {
 
 struct Vertex { glm::vec3 position; }; // Unit cube corner, 0..1 per axis.
 
-// One box (a block's collision shape can have more than one — a stair,
-// say — so RecordDraw issues one draw per box) plus the color to tint it.
+// One box (a block's collision shape can have more than one - a stair,
+// say - so RecordDraw issues one draw per box) plus the color to tint it.
 // worldMin/worldMax are already in world space (block origin + the shape's
-// own local box — see RecordDraw), so the shader only interpolates across
+// own local box - see RecordDraw), so the shader only interpolates across
 // them; vec4 rather than vec3 throughout to sidestep push-constant
 // alignment rules, same convention entity_textured.vert's PushConstants use.
 struct PushConstants {
@@ -59,7 +59,7 @@ AllocatedBuffer CreateOwnedBuffer(VkDeviceSize size, VkBufferUsageFlags usage, b
     return result;
 }
 
-// Builds the one shared unit cube (8 corners) plus its two index lists — a
+// Builds the one shared unit cube (8 corners) plus its two index lists - a
 // TRIANGLE_LIST one for the 6-face fill and a LINE_LIST one for the 12-edge
 // outline. Uploaded once; every draw just repositions/rescales/recolors it
 // via push constants (see RecordDraw), so this never runs again after Init().
@@ -73,7 +73,7 @@ void UploadMesh()
         Vertex{{0.0f, 1.0f, 1.0f}}, Vertex{{1.0f, 1.0f, 1.0f}},
     }};
 
-    // Winding doesn't matter — the fill pipeline disables backface culling
+    // Winding doesn't matter - the fill pipeline disables backface culling
     // (see CreatePipelines) so the highlight still shows from inside a
     // block the camera is pressed up against.
     std::array<uint16_t, FILL_INDEX_COUNT> fillIndices{{
@@ -125,7 +125,7 @@ void UploadMesh()
 
 // One shared pipeline layout (camera set + a push constant), and two
 // pipelines off the same shaders/fixed-function state differing only in
-// topology — LINE_LIST for the outline, TRIANGLE_LIST for the fill.
+// topology - LINE_LIST for the outline, TRIANGLE_LIST for the fill.
 void CreatePipelines(const Engine::ShaderLibrary& shaders)
 {
     VkShaderModule vertModule = CreateShaderModule(shaders, "selection.vert");
@@ -140,7 +140,7 @@ void CreatePipelines(const Engine::ShaderLibrary& shaders)
         throw;
     }
 
-    // Modules are only needed until the pipelines exist — released on every
+    // Modules are only needed until the pipelines exist - released on every
     // exit path, since a shader pack's replacement failing here is a
     // recoverable outcome (RenderEngine falls back to built-ins).
     auto destroyModules = [&]()
@@ -192,7 +192,7 @@ void CreatePipelines(const Engine::ShaderLibrary& shaders)
     viewportState.viewportCount = 1;
     viewportState.scissorCount = 1;
 
-    // No culling — the fill is meant to be visible from any angle,
+    // No culling - the fill is meant to be visible from any angle,
     // including from inside a block the camera is pressed up against.
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -202,7 +202,7 @@ void CreatePipelines(const Engine::ShaderLibrary& shaders)
 
     // RecordDraw's own INFLATE nudge is a fixed world-space offset, which
     // shrinks to nothing in depth-buffer terms at range (standard
-    // perspective Z loses precision with distance) — that's why the
+    // perspective Z loses precision with distance) - that's why the
     // flicker got worse the farther out the targeted block was. Depth bias
     // operates directly in the depth buffer's own units instead, so it
     // stays effective at any distance. Negative pulls the overlay closer
@@ -217,7 +217,7 @@ void CreatePipelines(const Engine::ShaderLibrary& shaders)
 
     // Depth-tested against the terrain/entity/non-cubic passes already in
     // the buffer (so a wall correctly hides the highlight behind it), but
-    // never writes depth itself — it's an overlay, not real geometry.
+    // never writes depth itself - it's an overlay, not real geometry.
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
@@ -225,7 +225,7 @@ void CreatePipelines(const Engine::ShaderLibrary& shaders)
     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
 
     // Both the fill and the outline are translucent (selectionFill/
-    // selectionOutline's own alpha) — standard alpha blend.
+    // selectionOutline's own alpha) - standard alpha blend.
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
         | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -324,7 +324,7 @@ void SelectionRenderer::Init(const Engine::ShaderLibrary& shaders)
 {
     UploadMesh();
     CreatePipelines(shaders);
-    Log::Info("[INFO] Selection renderer initialized.");
+    Log::Info("Selection renderer initialized.");
 }
 
 void SelectionRenderer::ReloadPipelines(const Engine::ShaderLibrary& shaders)
@@ -354,7 +354,7 @@ void SelectionRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Glo
 
     Block block = state->world->GetBlock(target->position.x, target->position.y, target->position.z);
     BlockRegistry::CollisionBoxes shape = BlockRegistry::GetCollisionBoxes(block);
-    if (shape.count == 0) return; // Shouldn't happen (only solid blocks get targeted) — nothing to outline either way.
+    if (shape.count == 0) return; // Shouldn't happen (only solid blocks get targeted) - nothing to outline either way.
 
     Color4i outline = state->interaction->GetSelectionOutlineColor();
     Color4i fill = state->interaction->GetSelectionFillColor();

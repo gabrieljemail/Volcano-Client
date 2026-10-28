@@ -2,6 +2,8 @@
 #include "VarInt.hpp"
 #include "../Config.hpp"
 #include "../Logger.hpp"
+#include "NetworkStats.hpp"
+#include "models/PacketEvent.hpp"
 #include <zlib.h>
 #include <filesystem>
 #include <iomanip>
@@ -15,7 +17,7 @@ namespace {
 // Vanilla's own MAX_PACKET_SIZE, applied to both the wire frame length and a
 // compressed packet's declared uncompressed size. Both numbers come straight
 // off the socket before a single byte of them has been validated, and both
-// are fed directly to a vector's sizing constructor — so without this, one
+// are fed directly to a vector's sizing constructor - so without this, one
 // desynced byte anywhere in the stream (exactly what the Set Container Slot
 // VarInt-vs-i16 misread produced before it was fixed) turns the next "length"
 // into garbage and asks for an allocation of up to 2 GiB. That's a hard
@@ -30,7 +32,7 @@ int32_t CheckedLength(int32_t length, const char* what)
     if (length < 0 || length > MAX_PACKET_SIZE)
     {
         throw std::runtime_error(std::string("Malformed ") + what + " (" + std::to_string(length)
-            + ") — stream is desynced or the server is not speaking this protocol");
+            + ") - stream is desynced or the server is not speaking this protocol");
     }
     return length;
 }
@@ -63,10 +65,15 @@ void Connection::SendPacket(int32_t packetId, const std::vector<uint8_t>& payloa
     LogPacket("C2S", packetId, payload.data(), payload.size());
     if (threshold < 0) SendUncompressed(packetId, payload);
     else SendCompressed(packetId, payload);
+    networkStats.RecordOut(packetId, payload.size()); // After the write, so only packets that went out count.
 }
 
 void Connection::QueuePacket(int32_t packetId, std::vector<uint8_t> payload)
 {
+    // Serverbound tap: listeners may edit the packet or drop it.
+    PacketEvent event{ PacketEvent::Direction::SERVERBOUND, packetId, payload };
+    if (!PacketEvents::Dispatch(event)) return;
+
     std::lock_guard<std::mutex> lock(outboundMutex);
     outbound.emplace_back(packetId, std::move(payload));
 }
@@ -74,7 +81,7 @@ void Connection::QueuePacket(int32_t packetId, std::vector<uint8_t> payload)
 void Connection::FlushOutbound()
 {
     // Swap the queue out under the lock and write outside it, so a
-    // cross-thread QueuePacket() never blocks behind a socket write — and so
+    // cross-thread QueuePacket() never blocks behind a socket write - and so
     // a throw from SendPacket below can't leave the lock held.
     std::vector<std::pair<int32_t, std::vector<uint8_t>>> pending;
     {
@@ -140,6 +147,7 @@ int32_t Connection::ReadPacket(std::vector<uint8_t>& outPayload)
 {
     int32_t packetId = threshold < 0 ? ReadPacketRaw(outPayload) : ReadPacketCompressed(outPayload);
     LogPacket("S2C", packetId, outPayload.data(), outPayload.size());
+    networkStats.RecordIn(packetId, outPayload.size());
     return packetId;
 }
 
@@ -151,7 +159,7 @@ bool Connection::WaitForReadable(std::chrono::milliseconds timeout)
 
     bool dataReady = false;
     // Both handlers below are guaranteed to fire exactly once each (asio
-    // completes every async op, successfully or with operation_aborted) —
+    // completes every async op, successfully or with operation_aborted) -
     // waiting for both before returning means neither is left posted to
     // this io_context with a dangling reference into this stack frame,
     // which a later WaitForReadable() call's ctx.run_one() could otherwise
@@ -168,7 +176,7 @@ bool Connection::WaitForReadable(std::chrono::milliseconds timeout)
         --pending;
     });
 
-    // This io_context is otherwise never run (see the class comment) —
+    // This io_context is otherwise never run (see the class comment) -
     // only this thread ever touches this socket, so driving it with
     // run_one() here just to service the two handlers above is safe.
     ctx.restart();
@@ -183,7 +191,7 @@ bool Connection::WaitForReadable(std::chrono::milliseconds timeout)
 int32_t Connection::ReadPacketRaw(std::vector<uint8_t>& outPayload)
 {
     // The length-prefix VarInt precedes everything else in the frame, so it
-    // has to be read one byte at a time straight off the socket — there's
+    // has to be read one byte at a time straight off the socket - there's
     // nothing to size a bulk read against yet.
     int32_t length = 0;
     int shift = 0;

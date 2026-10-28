@@ -7,6 +7,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <bitset>
+#include <stdexcept>
 #include <GLFW/glfw3.h>
 #include "platform/OS.hpp"
 
@@ -16,7 +17,7 @@ constexpr size_t MAX_KEYS = 512; // covers GLFW_KEY_LAST (~348) with headroom fo
 
 // Mouse buttons share the same keysDown/keysPressedThisFrame/
 // keysReleasedThisFrame bitsets as keyboard keys (see InputState) rather
-// than getting their own — offsetting them past GLFW_KEY_LAST, instead of
+// than getting their own - offsetting them past GLFW_KEY_LAST, instead of
 // using GLFW's own 0-7 button codes directly, means they stay unambiguous
 // even if a future GLFW header widens the key range. RegisterAction's
 // `triggers` accepts these the same as any GLFW_KEY_* constant.
@@ -57,12 +58,12 @@ struct InputAxis {
 // with unrelated data, per the spec's InputState design.
 //
 // Owned exclusively by the main/render thread: KeyCallback (fired by
-// glfwPollEvents(), called from PollInputs() at the top of every frame — see
+// glfwPollEvents(), called from PollInputs() at the top of every frame - see
 // the tick-loop plan's thread-merge step) and every IsKeyDown/WasActivated/
 // GetAxis reader all run on that one thread now, so there's nothing left to
 // race. This used to be a snapshot ProcessFrame() copied from a
 // mutex-guarded live/pending split written by GLFW callbacks on a genuinely
-// different (main, pre-merge) thread — see git history for that shape if
+// different (main, pre-merge) thread - see git history for that shape if
 // the render loop is ever split back onto its own thread.
 struct alignas(64) InputState {
     std::bitset<MAX_KEYS> keysDown;
@@ -81,7 +82,7 @@ public:
 
 #ifdef _WIN32
         // On Windows, GLFW_FOCUSED can already read true here even though
-        // the window hasn't actually been shown/composited by the OS yet —
+        // the window hasn't actually been shown/composited by the OS yet -
         // disabling the cursor this early clips it to a window the desktop
         // hasn't painted, which looks like a visible cursor trapped in a
         // "ghost" window until the user clicks it. Leave the cursor alone;
@@ -95,9 +96,9 @@ public:
     // Resolves this frame's axis values from whatever KeyCallback/
     // CursorPosCallback wrote directly into `state`/mouseDeltaX/Y during
     // this frame's glfwPollEvents() (called at the top of PollInputs(),
-    // just before this). Kept as its own named call — matching the render
+    // just before this). Kept as its own named call - matching the render
     // loop's WaitForTargetFrame -> UpdateDeltaTime -> PollInputs -> ...
-    // shape — even though it's just UpdateAxes() now that there's no
+    // shape - even though it's just UpdateAxes() now that there's no
     // cross-thread pending/live split left to drain.
     void ProcessFrame()
     {
@@ -119,7 +120,7 @@ public:
         }
     }
 
-    // Drains buffered raw motion — call right before glfwPollEvents().
+    // Drains buffered raw motion - call right before glfwPollEvents().
     void PollRawMouse()
     {
         if (bufferedRawMouse) Platform::OS::ReadBufferedRawMouse(rawMouseDeltaX, rawMouseDeltaY);
@@ -128,7 +129,7 @@ public:
     // The render loop's explicit "this frame is over" marker: clears the
     // press/release edge bits (so an edge is only ever visible for the one
     // frame it happened in) and the accumulated mouse delta (so the next
-    // frame's CursorPosCallback calls start accumulating from zero) — see
+    // frame's CursorPosCallback calls start accumulating from zero) - see
     // CursorPosCallback's own comment for why mouseDeltaX/Y accumulate
     // rather than overwrite.
     void EndFrame()
@@ -150,6 +151,14 @@ public:
     void RegisterAxis(const std::string& name, InputAxis axis)
     {
         axes[name] = axis;
+    }
+
+    // Rebinds one end of a KeyPair axis (key 0 = unbound). No-op for an unknown axis.
+    void SetAxisKey(const std::string& name, bool positive, uint16_t key)
+    {
+        auto it = axes.find(name);
+        if (it == axes.end()) return;
+        (positive ? it->second.positiveTrigger : it->second.negativeTrigger) = key;
     }
 
     bool IsActive(std::string_view name) const
@@ -215,7 +224,7 @@ private:
 
     // Accumulated by CursorPosCallback across every mouse-move event this
     // frame's glfwPollEvents() dispatches, read by UpdateAxes(), then reset
-    // to zero by EndFrame() — see EndFrame's own comment.
+    // to zero by EndFrame() - see EndFrame's own comment.
     double mouseDeltaX = 0.0, mouseDeltaY = 0.0;
     double lastMouseX = 0.0, lastMouseY = 0.0;
     bool firstMouseEvent = true;
@@ -226,7 +235,7 @@ private:
     double rawMouseDeltaX = 0.0, rawMouseDeltaY = 0.0;
 
     // Fired by glfwPollEvents() (called from PollInputs(), on this same
-    // thread) — writes straight into `state` with no locking needed now
+    // thread) - writes straight into `state` with no locking needed now
     // that nothing else touches it from another thread. See InputState's
     // own comment for why that's safe.
     static void KeyCallback(GLFWwindow* win, int key, [[maybe_unused]] int scancode, int action, [[maybe_unused]] int mods)
@@ -247,7 +256,7 @@ private:
         // GLFW_REPEAT: keysDown already true, nothing to change.
     }
 
-    // Fired by glfwPollEvents(), same as KeyCallback — writes into the same
+    // Fired by glfwPollEvents(), same as KeyCallback - writes into the same
     // bitsets, offset by MOUSE_BUTTON_OFFSET (see its own comment).
     static void MouseButtonCallback(GLFWwindow* win, int button, int action, int mods)
     {

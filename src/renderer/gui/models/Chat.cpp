@@ -5,12 +5,14 @@ namespace Volcano::GUI {
 
 std::mutex Chat::mutex;
 std::deque<ChatLine> Chat::lines;
+std::atomic<uint64_t> Chat::revision{ 0 };
 
 void Chat::Push(ChatLine line)
 {
     std::lock_guard<std::mutex> lock(mutex);
     lines.push_back(std::move(line));
     while (lines.size() > MAX_LINES) lines.pop_front();
+    revision++;
 }
 
 void Chat::AddMessage(const ChatEvent& event)

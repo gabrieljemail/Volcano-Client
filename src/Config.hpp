@@ -17,18 +17,18 @@ namespace Volcano {
 using ConfigValue = std::variant<std::string, uint32_t, bool>;
 
 // Key-value settings store backed by settings.json, kept next to the
-// running executable. A key is a dot-separated path — "Graphics.RenderDistance"
-// — that maps onto nested JSON objects on disk (Graphics: { RenderDistance:
+// running executable. A key is a dot-separated path - "Graphics.RenderDistance"
+// - that maps onto nested JSON objects on disk (Graphics: { RenderDistance:
 // ... }), so settings.json stays a clean, structured tree for a person to
 // read/edit while the rest of the client can still get/set any setting
 // through a single string.
 class Config {
 public:
     // Loads settings.json from next to the executable. Missing or
-    // unparsable settings.json just starts Get() from an empty store —
+    // unparsable settings.json just starts Get() from an empty store -
     // there's nothing to default up front; each key gets its default (and
     // settings.json gets that key) the first time something calls Get() for
-    // it. Also registers this instance as Active() — exactly one Config
+    // it. Also registers this instance as Active() - exactly one Config
     // exists for the process.
     void Load();
 
@@ -36,9 +36,9 @@ public:
     void Save() const;
 
     // Returns the value stored at key, provided it's present and holds the
-    // same alternative as fallback. Otherwise — key missing, or holding
+    // same alternative as fallback. Otherwise - key missing, or holding
     // some other type (e.g. a hand-edited settings.json with the wrong
-    // shape) — fallback is written to key and returned, so the first Get()
+    // shape) - fallback is written to key and returned, so the first Get()
     // for a key is also what defines and persists its default.
     ConfigValue Get(const std::string& key, const ConfigValue& fallback);
 
@@ -46,20 +46,26 @@ public:
     void Set(const std::string& key, const ConfigValue& value);
 
     // Bumped by every Set(). Code that applies settings with side effects
-    // (e.g. the window mode — see ApplyWindowSettings in VulkanInit) polls
+    // (e.g. the window mode - see ApplyWindowSettings in VulkanInit) polls
     // this and only re-reads its keys when it changes.
     uint64_t GetVersion() const { return version.load(); }
 
-    // Reads a JSON array of strings at key (e.g. Network.LocalServerDirs) —
+    // Reads a JSON array of strings at key (e.g. Network.LocalServerDirs) -
     // not expressible through Get()/ConfigValue, which only covers scalar
     // settings. Missing key, non-array, or non-string entries are simply
     // skipped rather than persisting a default; there's no sensible default
     // list of server directories to write back.
     std::vector<std::string> GetStringArray(const std::string& key) const;
 
+    // Whether key exists in the store (any type).
+    bool Has(const std::string& key) const { return Find(data, key) != nullptr; }
+
+    // Writes a JSON array of strings at key and saves (bumps GetVersion()).
+    void SetStringArray(const std::string& key, const std::vector<std::string>& values);
+
     // Resolves relativePath against the same directory settings.json lives
     // in (the executable's directory, not the process's current working
-    // directory) — e.g. for Network.LogPackets, so the dump file lands next
+    // directory) - e.g. for Network.LogPackets, so the dump file lands next
     // to settings.json regardless of how the client was launched.
     std::string ResolvePath(const std::string& relativePath) const;
 

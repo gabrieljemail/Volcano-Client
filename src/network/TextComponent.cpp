@@ -1,8 +1,11 @@
 #include "TextComponent.hpp"
 #include "Logger.hpp"
+#include "resources/ResourceManager.hpp"
 #include <nlohmann/json.hpp>
 #include <cctype>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <unordered_map>
 #include <utility>
@@ -11,35 +14,43 @@ namespace Volcano {
 
 namespace {
 
-// Lazily loaded once (C++11 function-local statics are thread-safe to
-// initialize) — the resource-pack's own flat key->format-string dictionary,
-// used to turn a "translate" component's key (e.g. "gameMode.changed") into
-// real text instead of just displaying the raw key.
-const std::unordered_map<std::string, std::string>& Lang()
+using LangMap = std::unordered_map<std::string, std::string>;
+
+// The pack's flat key->format-string dictionary, used to turn a "translate"
+// component's key (e.g. "gameMode.changed") into real text. Loaded lazily and
+// swapped whole by ReloadLang(); readers (the network thread) keep a shared
+// reference, so a reload never pulls the map out from under them.
+std::mutex g_langMutex;
+std::shared_ptr<const LangMap> g_lang;
+
+std::shared_ptr<const LangMap> LoadLang()
 {
-    static std::unordered_map<std::string, std::string> lang = [] {
-        std::unordered_map<std::string, std::string> result;
-        std::ifstream file("resources/minecraft/assets/minecraft/lang/en_us.json");
-        if (!file) {
-            Log::Error("TextComponent: couldn't open en_us.json — translation keys will show raw.");
-            return result;
-        }
-        try {
-            nlohmann::json j;
-            file >> j;
-            for (const auto& [key, value] : j.items())
-                if (value.is_string()) result[key] = value.get<std::string>();
-        } catch (const std::exception& e) {
-            Log::Error(std::string("[ERROR] TextComponent: failed to parse en_us.json: ") + e.what());
-        }
+    auto result = std::make_shared<LangMap>();
+    auto bytes = ResourceManager::Instance().ReadBytes("assets/minecraft/lang/en_us.json");
+    if (!bytes) {
+        Log::Error("TextComponent: couldn't open en_us.json - translation keys will show raw.");
         return result;
-    }();
-    return lang;
+    }
+    try {
+        nlohmann::json j = nlohmann::json::parse(bytes->begin(), bytes->end());
+        for (const auto& [key, value] : j.items())
+            if (value.is_string()) (*result)[key] = value.get<std::string>();
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[ERROR] TextComponent: failed to parse en_us.json: ") + e.what());
+    }
+    return result;
+}
+
+std::shared_ptr<const LangMap> Lang()
+{
+    std::lock_guard<std::mutex> lock(g_langMutex);
+    if (!g_lang) g_lang = LoadLang();
+    return g_lang;
 }
 
 // Expands a lang format string's Java-style %s / %1$s / %% placeholders,
 // substituting each already-flattened "with" argument in order (plain %s)
-// or by explicit 1-based index (%1$s, %2$s, ...) — Minecraft lang strings
+// or by explicit 1-based index (%1$s, %2$s, ...) - Minecraft lang strings
 // use both forms depending on the key.
 void FormatTranslation(const std::string& format, const std::vector<std::vector<ChatSegment>>& args,
         uint32_t color, std::vector<ChatSegment>& out)
@@ -74,7 +85,7 @@ void FormatTranslation(const std::string& format, const std::vector<std::vector<
             literal += '%';
             i = j;
         } else {
-            literal += format[i]; // Unrecognized specifier — show it literally rather than guessing.
+            literal += format[i]; // Unrecognized specifier - show it literally rather than guessing.
         }
     }
     flushLiteral();
@@ -148,11 +159,11 @@ void Flatten(const NBT::Tag& tag, uint32_t inheritedColor, std::vector<ChatSegme
                     }
                 }
 
-                const auto& lang = Lang();
-                if (auto langIt = lang.find(key); langIt != lang.end())
+                std::shared_ptr<const LangMap> lang = Lang();
+                if (auto langIt = lang->find(key); langIt != lang->end())
                     FormatTranslation(langIt->second, args, color, out);
                 else
-                    out.push_back(ChatSegment{ key, color }); // Unknown key — show it raw rather than nothing.
+                    out.push_back(ChatSegment{ key, color }); // Unknown key - show it raw rather than nothing.
             }
 
             if (auto it = compound.find("extra"); it != compound.end())
@@ -161,7 +172,7 @@ void Flatten(const NBT::Tag& tag, uint32_t inheritedColor, std::vector<ChatSegme
         }
 
         // Raw numbers legitimately appear as "with" array entries (teleport
-        // coordinates, scores, ...) — sent as bare NBT numbers, not wrapped
+        // coordinates, scores, ...) - sent as bare NBT numbers, not wrapped
         // in a {"text": ...} component. Dropping these (the previous
         // behavior) is what left commands.teleport.success's coordinates
         // blank ("Teleported VoidDev to , ,").
@@ -199,6 +210,13 @@ void Flatten(const NBT::Tag& tag, uint32_t inheritedColor, std::vector<ChatSegme
 
 } // namespace
 
+void ReloadLang()
+{
+    std::shared_ptr<const LangMap> fresh = LoadLang();
+    std::lock_guard<std::mutex> lock(g_langMutex);
+    g_lang = std::move(fresh);
+}
+
 std::vector<ChatSegment> ParseTextComponent(const NBT::Tag& tag)
 {
     std::vector<ChatSegment> segments;
@@ -212,7 +230,7 @@ std::vector<ChatSegment> ReadTextComponent(PacketReader& reader)
     if (type == NBT::TagType::End) return {};
 
     // Network NBT (used for packet fields like this one) omits the tag
-    // name that file NBT always carries — read the payload straight off a
+    // name that file NBT always carries - read the payload straight off a
     // view of the reader's remaining bytes via an istream (what NBT::
     // ReadPayload expects), then re-sync `reader` by however many bytes
     // that actually consumed.

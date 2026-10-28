@@ -25,7 +25,7 @@ void SystemInfo::DetectGPU(const char* deviceName, uint32_t vendorID, uint32_t a
     vulkanApiVersion = apiVersion;
 
     // Vulkan's own PCI vendor ID registry (the same field GPU-Z/vulkaninfo
-    // decode the same way) — only the vendors this client is realistically
+    // decode the same way) - only the vendors this client is realistically
     // built/tested against get a friendly name; anything else still shows
     // something rather than silently guessing.
     switch (vendorID)

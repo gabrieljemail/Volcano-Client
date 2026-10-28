@@ -42,6 +42,10 @@ public:
     // Must run before the VMA allocator is destroyed.
     void Shutdown();
 
+    // Frees the cached GPU meshes (they bake texture layer indices) after a
+    // resource reload; they are rebuilt on demand. GPU must be idle.
+    void ReloadTextures();
+
     // Renders the item's icon. Returns false (and leaves `out` null) if the
     // item has no 3D model, so the caller can fall back to its 2D texture.
     bool RenderGuiIcon(const std::string& itemName, IconImage& out);
@@ -66,7 +70,7 @@ public:
     // `placement` space, after the display transform.
     void RecordItem(VkCommandBuffer cmd, const std::string& itemName, const std::string& context,
                     const glm::mat4& placement, const glm::mat4& viewProj,
-                    const glm::mat4& pivotRotation = glm::mat4(1.0f));
+                    const glm::mat4& pivotRotation = glm::mat4(1.0f), float darkness = 0.0f);
 
 private:
     struct GpuBuffer {

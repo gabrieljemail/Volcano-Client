@@ -8,7 +8,7 @@
 namespace Volcano {
 
 // Decoded, display-ready form of an incoming System Chat Message or Player
-// Chat Message packet — NetworkClient builds one of these from the raw NBT
+// Chat Message packet - NetworkClient builds one of these from the raw NBT
 // text component(s) in the packet (via TextComponent.hpp) and hands it to
 // GUI::Chat, so packet parsing stays separate from how a message is shown.
 struct ChatEvent {

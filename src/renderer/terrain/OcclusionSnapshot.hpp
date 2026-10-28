@@ -15,20 +15,26 @@ namespace Volcano {
 // AABBs against it.
 //
 // Testing with the snapshot's OWN viewProj (not this frame's) keeps depth
-// and projection consistent with each other — no reprojection needed. The
+// and projection consistent with each other - no reprojection needed. The
 // cost is that something newly revealed pops in a frame or two late.
 //
 // Render-thread only: written in SubmitFrame before any pass records, and
 // read by TerrainPass/NonCubicPass during that same frame.
 struct OcclusionSnapshot {
     bool valid = false;
+    // Bumped by HiZBuildPass::BeginFrame only when a published snapshot
+    // actually differs from the previous one (a static view republishes
+    // identical depth), so cached visibility results can tell when to expire.
+    uint64_t serial = 0;
     glm::mat4 viewProj{1.0f};
     uint32_t fullWidth = 0, fullHeight = 0; // mip 0 (framebuffer) size
     uint32_t level = 0;                     // which mip `depth` holds
     uint32_t width = 0, height = 0;         // that mip's size
     std::vector<float> depth;               // width * height, row-major, max-reduced
 
-    // Stats for the periodic [HIZ] log line, reset each frame.
+    // Stats for the debug HUD / periodic [HIZ] log line, reset each frame.
+    // Only counted while collectStats is set (the debug HUD is visible).
+    bool collectStats = false;
     uint32_t tested = 0, occluded = 0;
 
     // True only when the whole AABB is provably behind already-drawn
@@ -47,7 +53,7 @@ struct OcclusionSnapshot {
     }
 };
 
-// Single instance, owned by the render thread — see the comment above.
+// Single instance, owned by the render thread - see the comment above.
 inline OcclusionSnapshot occlusionSnapshot;
 
 } // namespace Volcano

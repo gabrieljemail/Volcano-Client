@@ -158,6 +158,27 @@ AudioClip* AudioManager::LoadSound(const std::string& registryName, const std::s
     int sampleRate = 0;
     short* samples = nullptr;
     int frameCount = stb_vorbis_decode_filename(filePath.c_str(), &channels, &sampleRate, &samples);
+    return UploadDecoded(registryName, filePath, channels, sampleRate, frameCount, samples);
+}
+
+AudioClip* AudioManager::LoadSoundFromMemory(const std::string& registryName,
+                                             const std::vector<uint8_t>& oggData,
+                                             const std::string& label)
+{
+    if (!IsInitialized() || registryName.empty()) return nullptr;
+
+    int channels = 0;
+    int sampleRate = 0;
+    short* samples = nullptr;
+    int frameCount = stb_vorbis_decode_memory(oggData.data(), static_cast<int>(oggData.size()),
+                                              &channels, &sampleRate, &samples);
+    return UploadDecoded(registryName, label, channels, sampleRate, frameCount, samples);
+}
+
+// Takes ownership of samples (malloc'd by stb_vorbis).
+AudioClip* AudioManager::UploadDecoded(const std::string& registryName, const std::string& filePath,
+                                       int channels, int sampleRate, int frameCount, short* samples)
+{
     if (frameCount <= 0 || samples == nullptr)
     {
         Log::Error("Failed to decode OGG sound: " + filePath);
@@ -215,8 +236,50 @@ AudioClip* AudioManager::LoadSound(const std::string& registryName, const std::s
     return inserted ? &it->second : nullptr;
 }
 
-bool AudioManager::PlaySound(const std::string& registryName, float volume, float pitch, bool loop)
+uint32_t AudioManager::AddSoundListener(SoundListener listener)
 {
+    if (!listener) return 0;
+    std::lock_guard<std::mutex> lock(soundListenersMutex);
+    uint32_t id = nextSoundListenerId++;
+    soundListeners.emplace_back(id, std::move(listener));
+    return id;
+}
+
+bool AudioManager::RemoveSoundListener(uint32_t id)
+{
+    std::lock_guard<std::mutex> lock(soundListenersMutex);
+    auto it = std::find_if(soundListeners.begin(), soundListeners.end(), [id](const auto& entry) { return entry.first == id; });
+    if (it == soundListeners.end()) return false;
+    soundListeners.erase(it);
+    return true;
+}
+
+bool AudioManager::PlaySound(const std::string& registryNameIn, float volume, float pitch, bool loop)
+{
+    // Let listeners see (and change or cancel) the sound first.
+    SoundEvent event{ registryNameIn, volume, pitch, loop };
+    std::vector<std::pair<uint32_t, SoundListener>> listeners;
+    {
+        std::lock_guard<std::mutex> lock(soundListenersMutex);
+        listeners = soundListeners;
+    }
+    for (const auto& [id, listener] : listeners)
+    {
+        try
+        {
+            listener(event);
+        }
+        catch (...)
+        {
+            Log::Error("A sound listener threw.");
+        }
+        if (event.cancelled) return false;
+    }
+    const std::string& registryName = event.name;
+    volume = event.volume;
+    pitch = event.pitch;
+    loop = event.loop;
+
     auto it = loadedSounds.find(registryName);
     if (!IsInitialized() || it == loadedSounds.end()) return false;
 

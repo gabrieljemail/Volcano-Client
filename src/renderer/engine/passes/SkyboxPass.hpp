@@ -12,7 +12,7 @@ namespace Volcano::Engine::Passes {
 
 // The background cube, drawn first so everything else draws over it:
 // - in menus (SceneView::menuBackground), the slowly rotating title
-//   panorama — vanilla's CubeMap, from assets/minecraft/textures/gui/title/
+//   panorama - vanilla's CubeMap, from assets/minecraft/textures/gui/title/
 //   background/panorama_N.png;
 // - in game, the sky: a zenith-to-horizon gradient, the sun and moon
 //   (textures/environment/celestial/) on opposite sides, and a sunset glow.
@@ -31,6 +31,9 @@ public:
 
     // Only the pipeline depends on shaders; the cubemap survives a reload.
     void ReloadShaders(const ShaderLibrary& shaders) override;
+
+    // Reloads the panorama and sun/moon art (full rebuild; GPU is idle).
+    void ReloadTextures(const ShaderLibrary& shaders) override;
 
 private:
     VkImage cubeImage = VK_NULL_HANDLE;

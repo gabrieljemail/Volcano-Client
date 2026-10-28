@@ -1,5 +1,6 @@
 #ifdef __linux__
 
+#include <cctype>
 #include <cerrno>
 #include <csignal>
 #include <ctime>
@@ -12,6 +13,7 @@
 #include <fstream>
 #include <spawn.h>
 #include <string>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include "OS.hpp"
@@ -119,6 +121,12 @@ std::vector<std::string> OS::GetFallbackFontPaths()
     return paths;
 }
 
+bool OS::SetAboveNormalPriority()
+{
+    // Lowering nice below 0 needs CAP_SYS_NICE (or an rlimit); without it this just fails.
+    return setpriority(PRIO_PROCESS, 0, -5) == 0;
+}
+
 bool OS::IsDebuggerAttached()
 {
     std::ifstream status("/proc/self/status");
@@ -193,6 +201,57 @@ const char* OS::GetObjectExtension()
 {
     return ".so";
 }
+
+bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string& error,
+    const std::function<void(uint64_t, uint64_t)>& progress)
+{
+    body.clear();
+
+    // Only plain https addresses reach the shell, so nothing in the URL can be read as a command.
+    bool safe = url.rfind("https://", 0) == 0;
+    for (char c : url)
+    {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || std::strchr("-._~:/?&=%", c) != nullptr)) safe = false;
+    }
+    if (!safe)
+    {
+        error = "Not a valid https address: " + url;
+        return false;
+    }
+
+    // curl checks certificates against the system's CA store, which is the point.
+    FILE* pipe = popen(("curl -fsSL --max-redirs 5 '" + url + "' 2>/dev/null").c_str(), "r");
+    if (pipe == nullptr)
+    {
+        error = "Couldn't run curl; install it to download.";
+        return false;
+    }
+    uint8_t buffer[65536];
+    size_t read;
+    while ((read = fread(buffer, 1, sizeof(buffer), pipe)) > 0)
+    {
+        body.insert(body.end(), buffer, buffer + read);
+        if (progress) progress(body.size(), 0);
+    }
+    int status = pclose(pipe);
+    if (status != 0 || body.empty())
+    {
+        error = "The download failed (curl exit " + std::to_string(status) + ").";
+        body.clear();
+        return false;
+    }
+    return true;
+}
+
+bool OS::ShowConsentDialog(const std::string& title, const std::string& message, const std::string& agreeLabel)
+{
+    std::fprintf(stderr, "%s\n\n%s\n\nType \"yes\" to \"%s\", anything else to quit: ", title.c_str(), message.c_str(), agreeLabel.c_str());
+    char answer[16] = {};
+    if (std::fgets(answer, sizeof(answer), stdin) == nullptr) return false;
+    return std::strncmp(answer, "yes", 3) == 0;
+}
+
+void OS::AttachParentConsole() {}
 
 void* OS::LoadObject(const std::string& path)
 {

@@ -12,7 +12,7 @@ using namespace std;
 
 namespace Volcano {
 
-// Runs on the main (GLFW-owning) thread now — see the tick-loop plan's
+// Runs on the main (GLFW-owning) thread now - see the tick-loop plan's
 // thread-merge step. There used to be a real render thread here, separate
 // from main()'s glfwPollEvents() loop, purely because input had to be
 // *captured* on the GLFW thread but was *consumed* here; now that this
@@ -24,14 +24,14 @@ namespace Volcano {
 // input, and deciding what the frame should look like (camera, FOV easing,
 // sky color, debug toggles), packs that into an Engine::SceneView, and
 // hands it to GlobalState::renderEngine. It never records GPU commands or
-// touches swapchain/sync objects itself — that's all behind RenderEngine
+// touches swapchain/sync objects itself - that's all behind RenderEngine
 // (see engine/RenderEngine.hpp and docs/RenderingEngineRework.md).
 class RenderThread {
 public:
     explicit RenderThread(Volcano::GlobalState* globalState);
     ~RenderThread();
 
-    // One iteration of the frame loop — call this directly from main()'s
+    // One iteration of the frame loop - call this directly from main()'s
     // own while loop instead of starting a separate thread. Runs
     // WaitForTargetFrame -> UpdateDeltaTime -> PollInputs -> DrawFrame ->
     // EndFrame, the same sequence RenderLoop used to run once per thread
@@ -39,7 +39,7 @@ public:
     void RunFrame();
 
     // Stops the engine rendering (waits for the GPU, tears down the GUI and
-    // every render pass) — call once after main()'s loop exits, before
+    // every render pass) - call once after main()'s loop exits, before
     // RenderEngine::Shutdown() destroys the device/window out from under
     // them.
     void Shutdown();
@@ -65,22 +65,29 @@ private:
     // twice and drifting apart.
     float frameDeltaTime = 0.0f;
 
-    // F3 (see VolcanoClient.cpp's "ToggleWireframe" action) — a debug tool
-    // for telling "this face has no geometry at all" apart from "geometry
-    // exists but lost the depth/winding test," which fill-mode alone can't
-    // distinguish. RenderThread-owned since it's only ever read/written
-    // from this thread's own frame loop, unlike GlobalState's cross-thread
-    // fields.
+    // F3+Z - a debug tool for telling "this face has no geometry at all"
+    // apart from "geometry exists but lost the depth/winding test," which
+    // fill-mode alone can't distinguish. RenderThread-owned since it's only
+    // ever read/written from this thread's own frame loop, unlike
+    // GlobalState's cross-thread fields.
     bool wireframeMode = false;
 
-    // Latched on/off by a Sprint press when Controls.ToggleSprint is set —
+    // Set when a key was pressed while F3 was held, so releasing F3 doesn't
+    // also toggle the debug HUD (see PollInputs).
+    bool f3ComboUsed = false;
+
+    // F3+T: run at the top of the next DrawFrame, before any ImGui or command
+    // buffer work starts. See ResourceReloader::Reload.
+    bool reloadResourcesRequested = false;
+
+    // Latched on/off by a Sprint press when Controls.ToggleSprint is set -
     // see PollInputs. RenderThread-owned for the same reason wireframeMode
     // is; irrelevant (never read) while Controls.ToggleSprint is off, since
     // Sprint is then read as a plain held key instead.
     bool sprintToggled = false;
 
     // Current FOV boost in degrees, eased toward its target (Graphics.
-    // FOVEffects while sprinting/flying, 0 otherwise — see
+    // FOVEffects while sprinting/flying, 0 otherwise - see
     // BuildProjection) every frame rather than snapping, so the zoom-out
     // on starting/stopping a sprint is a smooth widen/narrow instead of a
     // jump cut. RenderThread-owned for the same reason wireframeMode is:
@@ -92,7 +99,7 @@ private:
     void PollInputs();
     void DrawFrame();
 
-    // Everything the engine needs to know about this frame — see SceneView.
+    // Everything the engine needs to know about this frame - see SceneView.
     Engine::SceneView BuildSceneView();
     glm::mat4 BuildProjection(const Engine::RenderExtent& extent);
 };

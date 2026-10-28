@@ -26,13 +26,13 @@ bool ShaderLibrary::SetActivePack(const std::string& packName)
     std::filesystem::path packPath = std::filesystem::path(PACK_ROOT) / packName;
     if (!std::filesystem::is_directory(packPath, error))
     {
-        Log::Error("[ERROR] Shader pack \"" + packName + "\" not found at " + packPath.string() + " — using built-in shaders.");
+        Log::Error("[ERROR] Shader pack \"" + packName + "\" not found at " + packPath.string() + " - using built-in shaders.");
         activePack.clear();
         return false;
     }
 
     activePack = packName;
-    Log::Info("[INFO] Shader pack \"" + packName + "\" active.");
+    Log::Info("Shader pack \"" + packName + "\" active.");
     return true;
 }
 
@@ -61,11 +61,11 @@ std::vector<char> ShaderLibrary::LoadFromPack(const std::string& shaderName) con
     std::vector<char> code = ReadFile(path);
     if (!IsValidSpirv(code))
     {
-        Log::Error("[ERROR] Shader pack file " + path + " is not valid SPIR-V (compile it with glslc/glslangValidator first) — ignoring it.");
+        Log::Error("[ERROR] Shader pack file " + path + " is not valid SPIR-V (compile it with glslc/glslangValidator first) - ignoring it.");
         return {};
     }
 
-    Log::Info("[INFO] Using shader pack override: " + path);
+    Log::Info("Using shader pack override: " + path);
     return code;
 }
 

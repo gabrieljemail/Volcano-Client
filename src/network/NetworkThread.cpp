@@ -29,7 +29,7 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
     Log::Info("Network thread created.");
 
     // Singleplayer: launch this session's server.jar and wait for host:port
-    // to actually accept connections before doing anything else — vanilla's
+    // to actually accept connections before doing anything else - vanilla's
     // own singleplayer world load can take a while, and ConnectAndLogin
     // below has no retry loop of its own. skipConnect covers every way this
     // can fail (process never started, or exited before becoming ready) so
@@ -42,7 +42,7 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
         std::string javaArguments = std::get<std::string>(state->config->Get("Network.JavaArguments", std::string("")));
 
         // Mirrors every logged server line into GlobalState::serverLogLines
-        // too, for the starting-server screen to show live — see its own
+        // too, for the starting-server screen to show live - see its own
         // comment. Cleared here (not by the GUI) so a new attempt doesn't
         // start with the previous one's tail still showing.
         {
@@ -58,7 +58,7 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
         Log::Info("Starting local server in " + localServerDir);
         if (!localServer.Start(localServerDir, javaPath, javaArguments, port))
         {
-            state->ReportDisconnect("Failed to launch the local server — check Network.JavaPath in settings.json");
+            state->ReportDisconnect("Failed to launch the local server - check Network.JavaPath in settings.json");
             skipConnect = true;
         }
         else if (!localServer.WaitUntilReady(stopToken))
@@ -66,7 +66,7 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
             localServer.Stop();
             if (!stopToken.stop_requested())
             {
-                state->ReportDisconnect("The local server exited before finishing startup — see the server log");
+                state->ReportDisconnect("The local server exited before finishing startup - see the server log");
             }
             skipConnect = true;
         }
@@ -79,20 +79,20 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
     }
 
     // A cancel that landed just as the local server finished starting must
-    // not still go on to connect — the loading screen it came from is gone.
+    // not still go on to connect - the loading screen it came from is gone.
     if (!skipConnect && !stopToken.stop_requested())
     {
         // Heap-allocated (rather than a stack local of this function) purely
-        // so its Connection can be published to other threads safely — see
+        // so its Connection can be published to other threads safely - see
         // the aliasing shared_ptr below.
         auto client = std::make_shared<NetworkClient>(ioContext);
         state->SetConnectionPhase(ConnectionPhase::Connecting, host + ":" + std::to_string(port));
         if (client->ConnectAndLogin(host, port, username)) {
             // Published only once Configuration is behind us and the Play loop
-            // is about to start — see GlobalState::activeConnection's own
+            // is about to start - see GlobalState::activeConnection's own
             // comment. Cleared unconditionally afterward: RunSession's internal
             // try/catch means it always returns normally, never throws, but
-            // this doesn't rely on that — it runs whether or not it did.
+            // this doesn't rely on that - it runs whether or not it did.
             //
             // The aliasing constructor is what makes this safe to hand to other
             // threads: the published shared_ptr points at the Connection but
@@ -109,13 +109,13 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
         }
 
         // Stop the local server (if any) before reporting the disconnect,
-        // not after — ReportDisconnect is what pops the connect screen back
+        // not after - ReportDisconnect is what pops the connect screen back
         // up, and the player shouldn't be able to hit "Connect" again (and
         // race a second java process against this one still shutting down)
         // before this one's fully gone.
         if (!localServerDir.empty()) localServer.Stop();
 
-        // The session/login attempt is over one way or another — tell the main
+        // The session/login attempt is over one way or another - tell the main
         // thread why, so it can reopen the connect screen, unless this was a
         // deliberate app-level stop (closing the game), which unblocks
         // RunSession's read loop the exact same way a kick does and shouldn't

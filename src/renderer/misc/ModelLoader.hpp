@@ -11,6 +11,7 @@
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 #include "../../Logger.hpp"
+#include "../../resources/ResourceManager.hpp"
 
 namespace Volcano::ModelLoader {
 
@@ -19,7 +20,7 @@ namespace Volcano::ModelLoader {
 // Used by ItemModel; BlockRegistry still has its own copy of this logic for
 // terrain. Not thread-safe (render thread only).
 
-constexpr const char* MODEL_ROOT = "resources/minecraft/assets/minecraft/models/";
+constexpr const char* MODEL_ROOT = "assets/minecraft/models/"; // Logical ResourceManager path.
 
 // Same face order as ChunkMesher/BlockRegistry: 0=Up, 1=Down, 2=North, 3=South, 4=East, 5=West.
 constexpr int FACE_COUNT = 6;
@@ -110,6 +111,12 @@ inline const Model* Load(const std::string& modelId)
     return result;
 }
 
+// Drops every cached model (call after ResourceManager::Reload).
+inline void ClearCache()
+{
+    detail::Cache().clear();
+}
+
 // Follows "#name" texture references through the merged textures map and
 // returns a path like "block/stone" (namespace stripped), or "" if it can't
 // be resolved.
@@ -133,13 +140,13 @@ namespace detail
     {
         if (depth > 16) return nullptr;
 
-        std::ifstream file(std::string(MODEL_ROOT) + id + ".json");
-        if (!file.is_open()) return nullptr;
+        auto bytes = ResourceManager::Instance().ReadBytes(std::string(MODEL_ROOT) + id + ".json");
+        if (!bytes) return nullptr;
 
         nlohmann::json j;
         try
         {
-            file >> j;
+            j = nlohmann::json::parse(bytes->begin(), bytes->end());
         }
         catch (const std::exception& e)
         {

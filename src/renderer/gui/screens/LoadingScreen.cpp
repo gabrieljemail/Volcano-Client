@@ -1,115 +1,138 @@
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <imgui.h>
 #include "LoadingScreen.hpp"
+#include "../ControlRenderer.hpp"
 #include "../GUIController.hpp"
+#include "../Theme.hpp"
 
 namespace Volcano::GUI {
 
 namespace {
 
-// Screens draw their own centered text here (rather than through the
-// generic component stack) because the status line changes every phase.
-void CenteredText(const std::string& text, ImVec4 color = ImVec4(1.0f, 1.0f, 1.0f, 1.0f))
-{
-    float width = ImGui::CalcTextSize(text.c_str()).x;
-    ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowWidth() - width) * 0.5f));
-    ImGui::TextColored(color, "%s", text.c_str());
-}
+constexpr float LOG_WIDTH = 600.0f;
+constexpr float LOG_HEIGHT = 300.0f;
+constexpr float LOG_MARGIN = 32.0f;
+constexpr float LOG_PADDING = 6.0f;
+constexpr float BUTTON_WIDTH = 240.0f;
+constexpr size_t MAX_DISPLAYED_LINES = 150; // Only the tail: the backlog is capped much higher, and this redraws as it grows.
+constexpr std::chrono::seconds CANCEL_AFTER{ 15 };
 
-struct PhaseTimer {
+// What the screen shows, and what it needs to tell what changed.
+struct LoadingState {
     ConnectionPhase phase = ConnectionPhase::Idle;
     std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+    size_t shownLines = 0;
+    std::string lastLine;
+
+    Pincel::Element status;
+    Pincel::Element detail;
+    Pincel::Element log;
+    Pincel::Element cancel;
 };
+
+std::string StatusFor(ConnectionPhase phase, const std::string& detail)
+{
+    switch (phase)
+    {
+        case ConnectionPhase::StartingServer: return "Starting server...";
+        case ConnectionPhase::Connecting: return detail.empty() ? "Connecting..." : "Connecting to " + detail + "...";
+        case ConnectionPhase::Configuring: return "Configuring...";
+        case ConnectionPhase::LoadingTerrain: return "Loading terrain...";
+        case ConnectionPhase::Disconnecting: return "Disconnecting...";
+        case ConnectionPhase::Idle:
+        case ConnectionPhase::Playing: break;
+    }
+    return "";
+}
+
+void BuildLoading(ControlRenderer& ui, LoadingState& loading)
+{
+    using Pincel::Orientation;
+    auto units = [&ui](float value) { return static_cast<uint16_t>(ui.Units(value)); };
+    Pincel::Element column = ui.Column();
+
+    loading.status = column.AddText("");
+    loading.detail = column.AddText("");
+    loading.detail.SetForeground(Theme::TEXT_DIM);
+
+    int logWidth = std::min(ui.Units(LOG_WIDTH), ui.Width() - ui.Units(LOG_MARGIN));
+    loading.log = column.AddStack(Orientation::Vertical);
+    loading.log.SetSize(static_cast<uint16_t>(std::max(1, logWidth)), units(LOG_HEIGHT))
+        .SetPadding(units(LOG_PADDING))
+        .SetBackground(Theme::PANEL_DARK)
+        .SetBorder(units(2.0f), Theme::PANEL_LIGHT)
+        .SetCornerRadius(units(8.0f))
+        .SetOverflow(Pincel::Overflow::Scroll)
+        .SetStickToEnd(true) // Follows new lines unless it was scrolled up.
+        .SetVisible(false);
+    loading.shownLines = 0;
+    loading.lastLine.clear();
+
+    loading.cancel = ui.AddButton(column, "Cancel", BUTTON_WIDTH);
+    loading.cancel.SetVisible(false);
+}
+
+void UpdateLoading(ControlRenderer& ui, GlobalState* state, LoadingState& loading, const std::function<void()>& onCancel)
+{
+    ConnectionPhase phase = state->connectionPhase.load();
+    if (phase != loading.phase)
+    {
+        loading.phase = phase;
+        loading.since = std::chrono::steady_clock::now();
+    }
+
+    std::string detail = state->GetConnectionDetail();
+    loading.status.SetText(StatusFor(phase, detail));
+    bool starting = phase == ConnectionPhase::StartingServer;
+    bool configuring = phase == ConnectionPhase::Configuring && !detail.empty();
+    loading.detail.SetText(configuring ? detail : "");
+    loading.detail.SetVisible(configuring);
+
+    loading.log.SetVisible(starting);
+    if (starting)
+    {
+        std::lock_guard<std::mutex> lock(state->serverLogMutex);
+        const std::deque<std::string>& lines = state->serverLogLines;
+        const std::string& last = lines.empty() ? loading.lastLine : lines.back();
+        if (lines.size() != loading.shownLines || last != loading.lastLine)
+        {
+            loading.log.RemoveChildren();
+            size_t start = lines.size() > MAX_DISPLAYED_LINES ? lines.size() - MAX_DISPLAYED_LINES : 0;
+            for (size_t i = start; i < lines.size(); i++) loading.log.AddText(lines[i]);
+            loading.shownLines = lines.size();
+            loading.lastLine = last;
+        }
+    }
+
+    // Cancelling is only offered after a while, since there is no automatic timeout.
+    bool canCancel = starting && std::chrono::steady_clock::now() - loading.since >= CANCEL_AFTER;
+    loading.cancel.SetVisible(canCancel);
+    if (canCancel && loading.cancel.WasClicked())
+    {
+        ui.PlayClick();
+        if (onCancel) onCancel();
+    }
+}
 
 } // namespace
 
 Screen* CreateLoadingScreen(GlobalState* state, std::function<void()> onCancel)
 {
     Screen* screen = GUIController::CreateScreen("Joining World", /* closable */ false);
+    screen->showTitle = false;
+    screen->fontSize = Theme::SMALL_FONT_SIZE;
+    screen->fontInArtPixels = true;
 
-    auto timer = std::make_shared<PhaseTimer>();
-
-    screen->customContent = [state, onCancel = std::move(onCancel), timer] {
-        ConnectionPhase phase = state->connectionPhase.load();
-        if (phase != timer->phase)
-        {
-            timer->phase = phase;
-            timer->since = std::chrono::steady_clock::now();
-        }
-
-        std::string detail = state->GetConnectionDetail();
-        const ImVec4 dim(0.7f, 0.7f, 0.7f, 1.0f);
-
-        switch (phase)
-        {
-        case ConnectionPhase::StartingServer:
-        {
-            CenteredText("Starting server...");
-            ImGui::Dummy(ImVec2(0.0f, 8.0f));
-
-            float logWidth = std::min(600.0f, ImGui::GetWindowWidth() - 32.0f);
-            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - logWidth) * 0.5f);
-            ImGui::BeginChild("##serverlog", ImVec2(logWidth, 300.0f), true);
-            {
-                // Only the tail (not all of serverLogLines, capped much
-                // higher at 500) — this redraws every frame with no cap of
-                // its own on TargetFPS/VSync, so the full backlog would mean
-                // hundreds of ImGui::TextUnformatted calls per frame for as
-                // long as this screen is up, for something that only ever
-                // needs to show recent progress.
-                constexpr size_t kMaxDisplayedLines = 150;
-                std::lock_guard<std::mutex> lock(state->serverLogMutex);
-                size_t start = state->serverLogLines.size() > kMaxDisplayedLines
-                    ? state->serverLogLines.size() - kMaxDisplayedLines : 0;
-                for (size_t i = start; i < state->serverLogLines.size(); i++)
-                {
-                    ImGui::TextUnformatted(state->serverLogLines[i].c_str());
-                }
-            }
-            // Only follow the tail if already at (or past) the bottom — a
-            // player who's scrolled up to read something shouldn't get
-            // yanked back down by the next line arriving.
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f)
-            {
-                ImGui::SetScrollHereY(1.0f);
-            }
-            ImGui::EndChild();
-
-            ImGui::Dummy(ImVec2(0.0f, 12.0f));
-
-            if (std::chrono::steady_clock::now() - timer->since >= std::chrono::seconds(15))
-            {
-                ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 240.0f) * 0.5f);
-                if (GUIController::DrawStyledButton("Cancel", ImVec2(240.0f, 0.0f)) && onCancel)
-                {
-                    onCancel();
-                }
-            }
-            break;
-        }
-        case ConnectionPhase::Connecting:
-            CenteredText(detail.empty() ? "Connecting..." : "Connecting to " + detail + "...");
-            break;
-        case ConnectionPhase::Configuring:
-            CenteredText("Configuring...");
-            if (!detail.empty()) CenteredText(detail, dim);
-            break;
-        case ConnectionPhase::LoadingTerrain:
-            CenteredText("Loading terrain...");
-            break;
-        case ConnectionPhase::Disconnecting:
-            CenteredText("Disconnecting...");
-            break;
-        case ConnectionPhase::Idle:
-        case ConnectionPhase::Playing:
-            break;
-        }
+    auto loading = std::make_shared<LoadingState>();
+    screen->build = [loading](ControlRenderer& ui) { BuildLoading(ui, *loading); };
+    screen->update = [state, loading, onCancel = std::move(onCancel)](ControlRenderer& ui)
+    {
+        UpdateLoading(ui, state, *loading, onCancel);
     };
-
     return screen;
 }
 

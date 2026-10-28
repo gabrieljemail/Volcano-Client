@@ -21,6 +21,9 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 cameraPosition;
     float fogStart;
     float fogEnd;
+    float specularStrength;
+    float time;
+    vec4 sunDirection;
 } camera;
 
 layout(location = 0) in vec3 inPosition;
@@ -42,7 +45,7 @@ void main() {
     fragLayer = bitfieldExtract(inPacked, 0, 16);
     uint blockLight = bitfieldExtract(inPacked, 16, 4);
     uint skyLight = bitfieldExtract(inPacked, 20, 4);
-    fragBiomeTint = bitfieldExtract(inPacked, 24, 2);
+    fragBiomeTint = bitfieldExtract(inPacked, 24, 3);
 
     vec4 worldPos = pc.model * vec4(inPosition, 1.0);
     gl_Position = camera.proj * camera.view * worldPos;

@@ -58,7 +58,7 @@ Tag Parse(std::istream& stream, std::string& outRootName);
 
 TagValue ReadPayload(std::istream& stream, TagType type);
 
-// Writes one named tag (type byte + name + payload) — or just the payload,
+// Writes one named tag (type byte + name + payload) - or just the payload,
 // if `named` is false (used recursively for list elements, which are
 // unnamed).
 void WriteTag(std::ostream& stream, const std::string& name, const Tag& tag, bool named = true);

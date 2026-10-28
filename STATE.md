@@ -9,28 +9,20 @@ This document describes the current project state of Volcano Client. Bugs and fe
 
 ## Roadmap
 Remaining work, roughly in milestone order. **(M2)** marks what milestone 2 needs.
-* [ ] Inventory functionality **(M2)**
-* [ ] Players **(M2)**
 * [ ] Item and falling block entity models **(M2)**
-* [ ] More humanoid and quadruped entity models **(M2)**
+* [ ] More humanoid and quadruped entity models **(M2)**: bats, fish, phantoms, the Nether and End mobs, bosses
+* [ ] Absorption hearts and the status effect HUD (icons, plus effect-driven FOV and screen changes)
+* [ ] Flowing fluid animation (flow direction textures)
+* [ ] Elytra (rendering and flight)
 * [ ] Chunk fade-in
-* [ ] Hand model (left/right side) and animation
-* [ ] Attack cooldown, with block break progress shown in the attack cooldown bar
-* [ ] Armor bar
-* [ ] Replace the health, hunger, and armor bars with their real icon textures
-* [ ] Lost-health flashing animation
 * [ ] Fix combat (knockback direction, see PvP notes)
-* [ ] Armor/equipment rendering on other entities
-* [ ] 3rd-person camera
-* [ ] Block entity interactions
-* [ ] Elytra rendering
-* [ ] Nametag and text display entity rendering
-* [ ] Sign rendering
+* [ ] Weather, biome tints and the Nether/End dimension visuals
+* [ ] Dyed leather, armor trims and enchant glint
 * [ ] TLS support with Mojang accounts
 * [ ] Automatic singleplayer server generator
 
 ## Current State
-Completion: **10% Complete.** (Estimate.)
+Completion: **about 60% Complete.** (Estimate; milestone 2 is mostly entity coverage, weather and polish away.)
 
 #### Implemented
 * GUI framework (ImGui-based, themed)
@@ -57,27 +49,39 @@ Completion: **10% Complete.** (Estimate.)
 * Buffered raw mouse input (Windows `GetRawInputBuffer`; GLFW raw motion on Linux)
 * Crash reporter: dialog + `crash-report.txt` with a symbolized stack trace
 * Platform layer (`src/platform/OS*`) for Windows and Linux
+* Container screens (crafting, furnace, chests and the rest), inventory and tooltips (colors, food, durability, attack stats)
+* Fluids: water and lava surfaces with corner-averaged heights (flowing animation still missing)
+* The formerly excluded multipart blocks (fences, walls, panes, doors, trapdoors, beds, redstone, vines)
+* Block entities (chests, signs, banners, skulls, beds, shulker boxes and more)
+* Player physics: water, lava, ladders, vines, cobwebs, honey, slime, swimming and crawling, riding (everything but elytra)
+* HUD: real heart, hunger and armor icons, XP bar, air bubbles, damage flashing, boss bars, title and action bar, tab list, chat formatting
+* Server-sent sounds (positional, with mob, hurt, death and ambient sounds) and block/step sounds; disconnect and kick reasons shown in a screen
+* Nametags (capped and LOD'd), and horse and bee models next to the ~20 data-driven mobs in `mobs.json`
+* Paper servers: movement and packet checks pass (position reporting, attacks and placements all accepted)
+* Shadow mapping (cascaded, received by terrain and by textured entities)
+* Hand model: sway, swing, attack-charge height (held for 85% of the swing), eating, swimming, left-handed mode, view bobbing, and the server's light on the arm and held item
+* Third-person camera with the local player model; armor and held items on other players, zombies, husks and skeletons
+* Entity lighting: textured mobs take the server's sky and block light at their position through the terrain's curve
+* Particles: `ParticleSystem` and `ParticlePass` (Level Particles packet, crits, 28 profiled types), sized independent of pack resolution
+* Chat: restyled to the design, command syntax highlighting, Tab completion and a tooltip from the server's command tree (`Commands` packet) and `resources/commands.json`, history on Up/Down, Shift+Enter queueing
+* First-launch onboarding (graphics, audio, keybinds) in `src/Onboarding.hpp`
 
 #### Not implemented:
-* Sound effects
-* Music
-* Shadow mapping (LATE)
+* Music, jukebox records and note blocks
 * Smooth lighting/SSAO (LATE)
-* View bobbing
-* Water/lava rendering
-* Resource pack reloading (server-pushed packs are currently ignored entirely)
-* Mod loading (LATE)
-* Right-click interaction with entities (Interact packet), blocking with shields, bows/tridents
-* Combat visuals: arm-swing animation, crit/sweep particles, hurt camera tilt, hit sounds (the events are tracked — `Entity::lastSwingTime`/`lastCritTime`/`lastHurtTime` — just not drawn)
-* Riding entities
+* Resource pack reloading from server-pushed packs (they are currently ignored entirely)
+* Mod loading (LATE): loader, versioned C API, events, packet/sound listeners, HUD elements and example mod (sdk/) exist; client commands, persisted keybindings, mod settings entries and item-behavior registry do not
+* Blocking with shields, bows/tridents
+* Combat visuals: hurt camera tilt, hit particles (crits are in)
 * Dynamic motion sampled animations
-* Nametags
-* Title/subtitle and a proper action bar (action-bar messages currently just land in chat)
+* Ctrl+Enter to send a command as plain chat; server-side command suggestions (ask_server parsers)
+* Block-break and ambient particles
+* Elytra, absorption hearts, status effect HUD
 
 ## Bugs
 * When falling, your velocity will reset about 70% of the way down for no reason.
   * **Lead, unconfirmed:** `TickLoop::FixedStep` zeroes velocity unconditionally on every server position correction (`TickLoop.cpp`, the `pendingTeleport` branch). The server corrects most often mid-fall, which would produce exactly this symptom. Worth checking before looking elsewhere — fix would be to only zero velocity when the correction is a real teleport, not a routine resync.
-* Chunks have faces in between each other. **Root cause confirmed:** `MeshingThread` never remeshes an already-loaded chunk's neighbors when a new chunk arrives next to them. A chunk meshed before its neighbor exists asks `World` for that neighbor, gets "no chunk there" (read as air), and permanently bakes in a face at that boundary — even after the real neighbor streams in a moment later and (correctly) doesn't draw its own matching face. Real fix needs two things this client doesn't have yet: a way to find/replace a specific chunk's existing mesh in `renderList`/`nonCubicRenderList` (currently append-only) and a way to free its old slab allocation when replaced (`SlabBuffer` is bump-allocate-only, no reuse story). Same underlying gap as "Fix the greedy meshing system" below and "Unloading chunks" in Not Implemented — worth tackling together.
+* Chunks have faces in between each other. **Fix implemented (untested):** MeshingThread now queues the 8 loaded neighbors' non-empty sections after InsertChunk (deduped); World::SetBlockImpl also dirties the diagonal chunk. **Root cause confirmed:** `MeshingThread` never remeshes an already-loaded chunk's neighbors when a new chunk arrives next to them. A chunk meshed before its neighbor exists asks `World` for that neighbor, gets "no chunk there" (read as air), and permanently bakes in a face at that boundary — even after the real neighbor streams in a moment later and (correctly) doesn't draw its own matching face. Real fix needs two things this client doesn't have yet: a way to find/replace a specific chunk's existing mesh in `renderList`/`nonCubicRenderList` (currently append-only) and a way to free its old slab allocation when replaced (`SlabBuffer` is bump-allocate-only, no reuse story). Same underlying gap as "Fix the greedy meshing system" below and "Unloading chunks" in Not Implemented — worth tackling together.
 * Splash screen is fitted to the window instead of cropped to fit.
 * Stairs render backwards on the X axis; corner stairs render backwards on both X and Z. Reported live, not yet investigated — likely `NonCubicMesher`'s stair-rotation logic (the same code path the "chunks have faces in between each other" and depth-write fixes already touched this session).
 * ~~Player entity skins render as visual noise / corrupted pixel data~~ — **retracted, was a misdiagnosis.** The user correctly identified the real bug: the face texture was just UV-mapped wrong (see Fixed below — `HumanoidModel.hpp`'s per-face UV corners), not corrupted at rest. Last session's "confirmed via two independent decoders" claim was itself the error — both `steve.png`/`zombie.png` are 8-bit indexed/palette PNGs, and whatever ad-hoc preview was used for that check most likely read the raw index bytes without applying the PLTE palette, which produces exactly this kind of noise for a perfectly valid image. Left struck through rather than deleted so the wrong turn stays on record.
@@ -101,6 +105,13 @@ Completion: **10% Complete.** (Estimate.)
 * **`Helpers.hpp` didn't compile** (missing semicolons after `Quat3`/`Quat4`, non-static `constexpr` members on the `Matrix3i`/`3f`/`4i`/`4f` structs) — only surfaced now because nothing had included the file since these structs were added to it until `InteractionManager.hpp` did. -- *`Helpers.hpp`*
 * **Step-up applied while airborne, not just on the ground.** `MoveAxis` tried `TryStepUp` on any blocked horizontal move regardless of `grounded`, so jumping/falling into a solid face let the player climb it a `STEP_HEIGHT` (0.6-block) hop at a time instead of colliding with it like a wall. Now gated on `grounded`. -- *`TickLoop.cpp`*
 * **Ghost chunk geometry after a dimension change** (e.g. dying and respawning back at the world spawn) — the old dimension's chunks, entities, and both render lists just kept rendering forever, since nothing ever cleared them. The server's `Respawn` packet (sent on every dimension change, not only death) was previously unhandled entirely. The disconnect-screen reset (world/render-list/entity clear, already existed, only ever ran when returning to the connect screen) is now a shared `GlobalState::ResetWorldState()`, called on `Respawn` too — same reset, but without reopening the connect screen, so the session stays connected while the new dimension's chunks stream in. **Not yet verified against a live respawn/dimension change** — only that it builds and the reset is a safe no-op mid-connect-screen-return (its original call site). -- *`GlobalState.hpp`, `VolcanoClient.cpp`, `NetworkClient.cpp`, `PacketIds.hpp`*
+
+## Fixed since last update (2026-10-27)
+* **Mobs vanished after being hit or landing.** Position sync, teleport, vehicle move and explosion packets built a vector from three `ReadDouble()` calls in one argument list. C++ leaves that evaluation order unspecified and clang in MSVC mode runs it right to left, so x and z were swapped and the mob landed about 4,200 blocks away. A `ReadVec3` helper reads them as separate statements at all six sites. Probably also the cause of the old "entities inside walls" note. -- *`NetworkClient.cpp`*
+* Teleport (0x7d) now parses the 26.x layout (position, velocity, yaw/pitch, relative-flags int, onGround). -- *`NetworkClient.cpp`*
+* Particle quads are scaled by the pack's resolution (8px vanilla art is 1.0) and the atlas layers are 64px, so a 2x pack no longer draws double-size or drops its 64px explosion frames. -- *`ParticleSprites`, `ParticleSystem`*
+* Hi-Z entity culling is off by default (`EntityOcclusionCulling`), and item meshes are no longer back-face culled so extruded sprites keep every face under mirrored display transforms (root cause of the hand-model face bug not confirmed). -- *`EntityRenderer.cpp`, `ItemRenderer.cpp`*
+* Debug builds are optimized like Release and still carry debug symbols (`VOLCANO_DEBUG_CHECKS` turns the checks back on). -- *`CMakeLists.txt`*
 
 ## Fixed since last update (2026-09-28)
 * **Remote entities faced mirrored east/west.** Minecraft's yaw turns the opposite way from this engine's (vanilla faces `(-sin, cos)`, the entity shaders/camera face `(sin, cos)`); `AngleByteToRadians` passed it through unnegated, so an entity facing east rendered facing west. North/south looked right, which is likely why the earlier live check passed. Now negated. **Needs a live check** with a player/zombie walking east or west. -- *`NetworkClient.cpp`*
@@ -154,3 +165,71 @@ Built against vanilla 26.2's own code in `resources/26.2.zip` (`Player.attack`, 
 [x] Fix the humanoid face-texture rotation (was a UV-corner-pairing bug, not a corrupted skin file — see Fixed).
 [x] Verify live that a remote player/zombie's face now points the same way they're walking (the 180°-facing fix in the same change above couldn't be checked without a live entity).
 [x] Verify the dimension-change reset (`GlobalState::ResetWorldState` on `PlayS2C::Respawn`) against a real respawn/dimension change — confirm the old world's geometry is actually gone and the new one streams in cleanly.
+## Survival playtest roadmap (2026-10-15)
+Ordered by how much each hurts play. Do one or two at a time.
+[x] 1. Bucket water/lava (and boats, thrown items): send UseItem after the block click, as vanilla does when useOn passes. Untested live.
+[x] 2. Mining: another face of the same block no longer restarts the break timer. Untested live.
+[x] 3. Block break, place and in-progress (hit) sounds: BlockSounds (src/audio/). Untested live.
+[x] 4. Step sounds: every 8 ticks walking (was 10), 6 sprinting. Untested live.
+[x] 5. (linked; verified by the user: linked, text untested) GUI text: 18px like vanilla (currently 2px too small); no white-on-white shadow problem on light GUIs - draw black text on white panels, white on dark or transparent ones.
+[x] 6. (untested live) Heart and hunger icons from the resource pack; saturation shown as an outline recolor, like AppleSkin.
+[x] 7. (untested live; custom item names and enchantments not shown yet, the slot skipper discards them) Inventory tooltips: color support, food hunger/saturation, equipment durability, weapon/tool attack cooldown and charged damage.
+[x] 8. (linked; untested) Animation helper library: src/renderer/gui/Animation.hpp (Animated, AnimationSet, Transform2D, AddImageTransformed); the hotbar selection box uses it. Animation helper library (transform of images: hotbar selection, item hover and swap, GUI open/close). Build before 9 so the hand can use it.
+[x] 9. (linked; untested live) Hand model: look-angle sway (lag halves per tick, tilt 0.1x) and sub-tick attack charge. Hand model interpolation by attack speed, plus a global lerp from look-angle deltas.
+## Playtest fixes (2026-10-16, all untested live)
+[x] Slot parsing: SlotSkipper (src/network) skips every data component using protocol.json, so a damaged tool no longer drops the rest of a container (the vanished hotbar). ItemStack now has damage/maxDamage.
+[x] Set Player Inventory (0x6C) handled: bucket fill/empty and pickups now update the inventory.
+[x] Sync Entity Position (0x23) handled; dropped items fall client-side between server updates (TickLoop::StepDroppedItems).
+
+## Still needed for a standard survival experience (updated 2026-10-27)
+What was listed here on 2026-10-16 has mostly landed (see Current State). What is left:
+
+### Entities
+[ ] Models and textures for mobs that still draw as boxes: bats, fish, phantoms, wandering traders, the Nether and End mobs, bosses.
+[ ] Baby variants, sheep dye colors, spider and enderman eyes, villager professions, the slime outer cube.
+[ ] Entity animation beyond walk, head look and swing: bow draw, creeper swell, death and damage tilt.
+[ ] Object entities: arrow and other projectile models, item frames, armor stands, paintings, minecarts, end crystals, leashes, fishing bobbers.
+[ ] Dropped items: the vanilla bob and spin, the pickup fly-to-player animation (Collect packet).
+[ ] Entity metadata beyond a few fields: on fire, glowing, sleeping.
+[ ] Armor: dyed leather (dye is a data component the client doesn't read), trims, enchant glint, elytra, baby/horse armor.
+
+### World rendering
+[ ] Flowing fluid textures and submerged fog/tint.
+[ ] Block-break crack overlay; selection outline polish for non-cubes.
+[ ] Particles: block break and hit, damage, smoke, explosions, rain splashes, portals, ambient.
+[ ] Weather (rain, snow, thunder), stars, sky color per biome.
+[ ] Biome tints for grass, foliage and water (tints.json is bundled; check it is applied everywhere).
+[ ] Nether and End: dimension change visuals, portal overlay, world border.
+[~] Light: client-side light for block edits is in (LightEngine); verify live, plus emissive blocks and server corrections.
+
+### Player and physics
+[ ] Elytra flight.
+[ ] Status effects on screen: effect-driven FOV and overlays (blindness, nausea, night vision).
+[ ] Check the death screen with respawn end to end.
+
+### HUD and screens
+[ ] Absorption hearts, heart variants (poison, wither, frozen, hardcore), hunger-effect icons, mount health and jump bar.
+[ ] Scoreboard sidebar, advancement toasts.
+[ ] Recipe book and recipe click-to-fill.
+[ ] Chat: hover and click events, signed chat for secure-profile servers.
+[ ] Main menu extras: server list with ping and MOTD, world select, language and resource pack screens.
+
+### Audio
+[ ] Note blocks, jukebox records, music discs.
+
+### Networking and platform
+[ ] Online-mode login (Mojang session auth) and secure chat keys.
+[ ] Resource pack prompts and downloads.
+[ ] Linux build and test pass (an Alpine/Weston test is planned; `execinfo.h` needs a musl guard); controller support.
+
+## Rendering additions (2026-10-16, untested live)
+[x] Light: LightEngine (src/renderer/terrain) re-spreads sky and block light on break/place and on server block updates; the server's Update Light corrects it.
+[x] Fluids: vanilla corner-averaged heights, side faces, bottom faces; lava now renders (opaque, fullbright). Flow direction textures and fluid fog are not done.
+[x] Chests (chest, trapped, ender, double halves): closed lid only, drawn by ModeledBEPass; the lid is merged into the chest mesh, so animation needs a mesh split. Not tested: facing and texture orientation.
+[x] Mobs (untested live): data-driven textured models. A mob is a JSON model in resources/volcano/models/entity/ plus one line in mobs.json (model, skin, optional scale and layers); both are read at startup. Done: creeper, spider, cave_spider, chicken, pig, cow, mooshroom, sheep (white wool layer), enderman, villager, zombie_villager, husk, drowned, wolf, slime, magma_cube, cat, ocelot. Missing: bat, horses, slime outer cube, villager professions, enderman eyes, spider eyes, sheep dye colors, baby variants, all animation.
+
+## Controls
+[x] Rebindable keys: Controls.Keys.* in settings.json and Settings -> Controls -> Key Binds (`KeyBindings.hpp`). Defaults are vanilla; Esc, F2, F3 and F11 stay fixed.
+[x] Drop key: tap drops one item, hold (0.35 s) or Ctrl drops the stack (`DropKey.hpp`). Not tested against a server yet.
+[x] Inventory clicks: Shift+Click, hotbar-key swap and drop-over-slot send the protocol click modes 1/2/4 with no local prediction, so slots update when the server answers. Not tested against a server yet.
+[ ] Inventory double-click gather, drag-split, creative inventory clicks.

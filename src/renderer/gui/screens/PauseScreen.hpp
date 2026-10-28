@@ -7,7 +7,7 @@
 
 namespace Volcano::GUI {
 
-// The in-game pause menu (Esc while playing — see GUIController::Update):
+// The in-game pause menu (Esc while playing - see GUIController::Update):
 // Resume, Servers (leave this server and pick another), Settings, and
 // Disconnect (back to the main menu). Resume is handled here; the other
 // three need the connection and the other screens, which only the caller

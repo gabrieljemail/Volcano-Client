@@ -1,0 +1,13 @@
+{
+    "_comment": "Helmet, chestplate and boots: HumanoidModel.createMesh with CubeDeformation 1.0 (ArmorModelSet outer), on the 64x32 sheets in textures/entity/equipment/humanoid. Same parts and pivots as humanoid.json so the wearer pose applies unchanged.",
+    "textureWidth": 64,
+    "textureHeight": 32,
+    "boxes": [
+        { "name": "head", "origin": [-4.0, -8.0, -4.0], "size": [8.0, 8.0, 8.0], "uv": [0.0, 0.0], "pivot": [0.0, 0.0, 0.0], "inflate": 1.0 },
+        { "name": "body", "origin": [-4.0, 0.0, -2.0], "size": [8.0, 12.0, 4.0], "uv": [16.0, 16.0], "pivot": [0.0, 0.0, 0.0], "inflate": 1.0 },
+        { "name": "right_arm", "origin": [-3.0, -2.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [40.0, 16.0], "pivot": [-5.0, 2.0, 0.0], "inflate": 1.0 },
+        { "name": "left_arm", "origin": [-1.0, -2.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [40.0, 16.0], "mirror": true, "pivot": [5.0, 2.0, 0.0], "inflate": 1.0 },
+        { "name": "right_leg", "origin": [-2.0, 0.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [0.0, 16.0], "pivot": [-1.9, 12.0, 0.0], "inflate": 1.0 },
+        { "name": "left_leg", "origin": [-2.0, 0.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [0.0, 16.0], "mirror": true, "pivot": [1.9, 12.0, 0.0], "inflate": 1.0 }
+    ]
+}

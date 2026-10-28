@@ -1,0 +1,16 @@
+{
+    "_comment": "VillagerModel.createNoHatModel, 64x64 (hat and hat rim omitted, they belong to the profession layer). Render at scale 0.9375 like vanilla villagerLikeScale. The three arms_* boxes are the crossed-arms part (rotated about X).",
+    "textureWidth": 64,
+    "textureHeight": 64,
+    "boxes": [
+        { "name": "head",   "origin": [-4, -10, -4], "size": [8, 10, 8],  "uv": [0, 0],   "pivot": [0, 0, 0] },
+        { "name": "nose", "part": "head",   "origin": [-1, -1, -6],  "size": [2, 4, 2],   "uv": [24, 0],  "pivot": [0, -2, 0] },
+        { "name": "body",   "origin": [-4, 0, -3],   "size": [8, 12, 6],  "uv": [16, 20], "pivot": [0, 0, 0] },
+        { "name": "jacket", "part": "body", "origin": [-4, 0, -3],   "size": [8, 20, 6],  "uv": [0, 38],  "inflate": 0.5, "pivot": [0, 0, 0] },
+        { "name": "arms_r", "origin": [-8, -2, -2],  "size": [4, 8, 4],   "uv": [44, 22], "pivot": [0, 3, -1], "rotation": [-42.97, 0, 0] },
+        { "name": "arms_l", "origin": [4, -2, -2],   "size": [4, 8, 4],   "uv": [44, 22], "mirror": true, "pivot": [0, 3, -1], "rotation": [-42.97, 0, 0] },
+        { "name": "arms_m", "origin": [-4, 2, -2],   "size": [8, 4, 4],   "uv": [40, 38], "pivot": [0, 3, -1], "rotation": [-42.97, 0, 0] },
+        { "name": "right_leg", "origin": [-2, 0, -2], "size": [4, 12, 4],  "uv": [0, 22],  "pivot": [-2, 12, 0] },
+        { "name": "left_leg",  "origin": [-2, 0, -2], "size": [4, 12, 4],  "uv": [0, 22],  "mirror": true, "pivot": [2, 12, 0] }
+    ]
+}

@@ -10,7 +10,7 @@ namespace Volcano::ChunkParser {
 
 namespace {
 
-// A BitSet field (Sky/Block Light Mask) — a VarInt-prefixed long array,
+// A BitSet field (Sky/Block Light Mask) - a VarInt-prefixed long array,
 // tested bit-by-bit below rather than unpacked into a bool vector.
 std::vector<uint64_t> ReadBitSet(PacketReader& reader)
 {
@@ -27,7 +27,7 @@ bool BitSetTest(const std::vector<uint64_t>& bits, int index)
 }
 
 // One section's worth of light: 4096 half-bytes packed two-per-byte, low
-// nibble first — same entry ordering (x fastest, then z, then y) as the
+// nibble first - same entry ordering (x fastest, then z, then y) as the
 // block-state paletted containers above.
 std::vector<uint8_t> ReadLightArray(PacketReader& reader)
 {
@@ -42,7 +42,7 @@ std::vector<uint8_t> ReadLightArray(PacketReader& reader)
 // entry. `indirectMaxBits` is the bits-per-entry cutoff above which the
 // container uses the direct format (no palette array, entries ARE global
 // IDs) instead of indirect (entries are local indices into a palette array
-// of VarInt global IDs) — 8 for block states, 3 for biomes.
+// of VarInt global IDs) - 8 for block states, 3 for biomes.
 std::vector<int64_t> ReadPalettedContainer(PacketReader& reader, int numEntries, int indirectMaxBits)
 {
     uint8_t bitsPerEntry = reader.ReadByte();
@@ -60,21 +60,21 @@ std::vector<int64_t> ReadPalettedContainer(PacketReader& reader, int numEntries,
         palette.reserve(static_cast<size_t>(paletteLength));
         for (int32_t i = 0; i < paletteLength; i++) palette.push_back(reader.ReadVarInt());
     }
-    // else: direct format — no palette array, data array holds global IDs.
+    // else: direct format - no palette array, data array holds global IDs.
 
-    // bitsPerEntry is a raw byte straight off the wire (0-255) — a value
+    // bitsPerEntry is a raw byte straight off the wire (0-255) - a value
     // above 64 is never legitimate and would make entriesPerLong below
     // truncate to 0, hard-crashing the process on an integer divide-by-zero
     // (a CPU trap, not a catchable C++ exception). Bail with a real
     // exception instead; NetworkClient's chunk handler logs and skips it.
     if (bitsPerEntry > 64) {
         throw std::runtime_error("Paletted container has an implausible bitsPerEntry ("
-            + std::to_string(bitsPerEntry) + ") — packet is likely misaligned/misidentified.");
+            + std::to_string(bitsPerEntry) + ") - packet is likely misaligned/misidentified.");
     }
 
     int entriesPerLong = 64 / bitsPerEntry;
 
-    // The data array's length is NOT sent — it's derived from the entry
+    // The data array's length is NOT sent - it's derived from the entry
     // count and bits-per-entry. Up to 1.21.4 a VarInt length preceded the
     // longs; 1.21.5 dropped it (ViaVersion's PaletteType1_21_5 computes
     // `(size + valuesPerLong - 1) / valuesPerLong` instead). Reading a
@@ -120,7 +120,7 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
 
     // Heightmaps: a self-delimiting Prefixed Array in this protocol version
     // (VarInt count, then per entry a VarInt type + VarInt-prefixed long
-    // array), not an NBT compound — no NBT parsing needed to skip past it.
+    // array), not an NBT compound - no NBT parsing needed to skip past it.
     int32_t heightmapCount = reader.ReadVarInt();
     for (int32_t i = 0; i < heightmapCount; i++) {
         reader.ReadVarInt(); // heightmap type, unused
@@ -128,7 +128,7 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
         reader.Skip(static_cast<size_t>(longCount) * 8);
     }
 
-    reader.ReadVarInt(); // Size — sanity bound only; sections are read directly below.
+    reader.ReadVarInt(); // Size - sanity bound only; sections are read directly below.
 
     auto chunk = std::make_unique<Chunk>(chunkX, chunkZ);
 
@@ -141,18 +141,19 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
 
         std::vector<int64_t> blockStates = ReadPalettedContainer(reader, 4096, 8);
         int sectionBaseY = section * 16;
+        auto registryLock = BlockRegistry::ReadLock(); // Per section; see BlockRegistry::Reload().
         for (int i = 0; i < 4096; i++) {
-            // x fastest, then z, then y slowest — matches the wire format's
+            // x fastest, then z, then y slowest - matches the wire format's
             // entry ordering for a section's block-state array.
             int x = i % 16;
             int z = (i / 16) % 16;
             int ylocal = i / 256;
             int32_t stateId = static_cast<int32_t>(blockStates[static_cast<size_t>(i)]);
 
-            chunk->setBlock(x, sectionBaseY + ylocal, z, BlockRegistry::ResolveStateId(stateId));
+            chunk->setBlock(x, sectionBaseY + ylocal, z, BlockRegistry::ResolveStateIdUnlocked(stateId));
         }
 
-        ReadPalettedContainer(reader, 64, 3); // biomes — parsed to stay byte-aligned, discarded.
+        ReadPalettedContainer(reader, 64, 3); // biomes - parsed to stay byte-aligned, discarded.
     }
 
     // Block Entities: not modeled by this client yet, but must still be read
@@ -164,7 +165,7 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
         chunk->AddBlockEntity(packedXZ >> 4, y - WORLD_MIN_Y, packedXZ & 0x0F);
         reader.ReadVarInt(); // type, unused
 
-        // Network NBT (no name field) — same read-then-resync trick as
+        // Network NBT (no name field) - same read-then-resync trick as
         // TextComponent::ReadTextComponent, since NBT::ReadPayload wants an
         // istream, not a PacketReader.
         auto tagType = static_cast<NBT::TagType>(reader.ReadByte());
@@ -188,7 +189,7 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
 
     constexpr int LIGHT_SECTION_COUNT = SECTION_COUNT + 2;
 
-    reader.ReadVarInt(); // Sky Light array count — redundant with skyLightMask's popcount, not needed to loop.
+    reader.ReadVarInt(); // Sky Light array count - redundant with skyLightMask's popcount, not needed to loop.
     for (int bit = 0; bit < LIGHT_SECTION_COUNT; bit++) {
         if (!BitSetTest(skyLightMask, bit)) continue;
         std::vector<uint8_t> nibbles = ReadLightArray(reader);
@@ -203,7 +204,7 @@ std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader)
         }
     }
 
-    reader.ReadVarInt(); // Block Light array count — same as above.
+    reader.ReadVarInt(); // Block Light array count - same as above.
     for (int bit = 0; bit < LIGHT_SECTION_COUNT; bit++) {
         if (!BitSetTest(blockLightMask, bit)) continue;
         std::vector<uint8_t> nibbles = ReadLightArray(reader);
@@ -254,7 +255,7 @@ PendingLightUpdate ParseLightUpdatePacket(PacketReader& reader)
     auto readChannel = [&](const std::vector<uint64_t>& mask, const std::vector<uint64_t>& emptyMask,
                            std::array<std::vector<uint8_t>, SECTIONS_PER_CHUNK>& out)
     {
-        reader.ReadVarInt(); // Array count — redundant with the mask's popcount.
+        reader.ReadVarInt(); // Array count - redundant with the mask's popcount.
         for (int bit = 0; bit < LIGHT_SECTION_COUNT; bit++)
         {
             int section = bit - 1;

@@ -1,5 +1,6 @@
 #include "BlockRegistry.hpp"
 #include "Logger.hpp"
+#include "resources/ResourceManager.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <array>
@@ -20,13 +21,13 @@ namespace Volcano::BlockRegistry {
 
 namespace {
 
-// Matches PROTOCOL_VERSION (NetworkClient.hpp) exactly — this client
+// Matches PROTOCOL_VERSION (NetworkClient.hpp) exactly - this client
 // declares 26.1, not 26.2, specifically because 26.1 is the newest version
 // minecraft-data has real block/entity id tables for.
 constexpr const char* MC_DATA_VERSION = "26.1";
 const std::string BLOCKS_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/blocks.json";
 const std::string COLLISION_SHAPES_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/blockCollisionShapes.json";
-const std::string ASSETS_ROOT = "resources/minecraft/assets/minecraft";
+const std::string ASSETS_ROOT = "assets/minecraft"; // Logical ResourceManager path.
 
 // One property declared on a block in blocks.json's "states" array.
 struct StateProp {
@@ -43,12 +44,15 @@ struct BlockDef {
     int32_t defaultState = 0;
     std::vector<StateProp> states;
 
-    // Mining-time inputs (blocks.json's own fields) — see MapStateIdBreakTicks.
+    // Mining-time inputs (blocks.json's own fields) - see MapStateIdBreakTicks.
     float hardness = 0.0f;
     bool diggable = true;
     bool requiresTool = false; // harvestTools present and non-empty.
     ToolClass toolClass = ToolClass::None;
     std::vector<uint16_t> harvestToolIds;
+
+    uint8_t emitLight = 0;
+    uint8_t filterLight = 0;
 };
 
 // A block's decoded property values for one specific state id, always kept
@@ -68,7 +72,7 @@ struct ResolvedModel {
 
 // Interned face-texture-name tuples, ChunkMesher's face order: 0=Up, 1=Down,
 // 2=North, 3=South, 4=East, 5=West. Index 0 is reserved for "nothing to
-// draw" (all-empty tuple) — true air, or any block this registry couldn't
+// draw" (all-empty tuple) - true air, or any block this registry couldn't
 // resolve to a full single-cube model this pass.
 using FaceNames = std::array<std::string, 6>;
 
@@ -80,19 +84,19 @@ int32_t g_maxLoadedStateId = -1;
 
 // Non-cube visuals aren't deduplicated/interned the way full-cube visuals
 // are above (NonCubeVisual holds vectors/strings, not a small fixed-size
-// key) — every resolved state just appends a new table entry.
+// key) - every resolved state just appends a new table entry.
 std::vector<uint16_t> g_stateIdToNonCubeVisual;
 std::vector<NonCubeVisual> g_nonCubeVisualTable;
 
 std::unordered_map<std::string, ResolvedModel> g_modelCache;
 
-// Collision data from blockCollisionShapes.json — see MapStateIdCollisionShape.
+// Collision data from blockCollisionShapes.json - see MapStateIdCollisionShape.
 // g_collisionShapes is indexed directly by the file's shape id (0 = empty).
 // Empty g_stateIdToCollisionShape means the file didn't load.
 std::vector<uint16_t> g_stateIdToCollisionShape;
 std::vector<CollisionBoxes> g_collisionShapes;
 
-// Break-time table — see MapStateIdBreakTicks. -1 (unbreakable) is the
+// Break-time table - see MapStateIdBreakTicks. -1 (unbreakable) is the
 // default fill so an out-of-range id already reads as "can't break" rather
 // than "instant", same fail-safe direction as g_stateIdToCollisionShape's
 // UNKNOWN default.
@@ -100,9 +104,14 @@ std::vector<int32_t> g_stateIdToBreakTicks;
 std::vector<uint16_t> g_stateIdToBreakInfo;
 std::vector<BreakInfo> g_breakInfos; // Index 0 is the empty default.
 std::vector<uint8_t> g_stateIdIsCraftingTable;
+std::vector<uint8_t> g_stateIdEmitLight;
+std::vector<uint8_t> g_stateIdFilterLight;
+std::vector<uint8_t> g_stateIdBlockEntityKind; // 0 none, 1 chest, 2 trapped, 3 ender.
+std::vector<uint8_t> g_stateIdBlockEntityData; // facing (bits 0-1), chest type (bits 2-3).
 
 std::unordered_map<std::string, int32_t> g_nameToDefaultState;
 
+std::shared_mutex g_reloadMutex;
 std::mutex g_loggedMutex;
 std::unordered_set<int32_t> g_loggedOutOfRangeIds;
 
@@ -133,7 +142,7 @@ bool ResolveTextureRef(const std::unordered_map<std::string, std::string>& textu
         if (it == textures.end()) return false;
         ref = it->second;
     }
-    return false; // Cyclic or too-deep reference chain — shouldn't happen in valid data.
+    return false; // Cyclic or too-deep reference chain - shouldn't happen in valid data.
 }
 
 // Loads and resolves a model's full parent chain (cached by stripped model
@@ -150,12 +159,10 @@ const ResolvedModel& ResolveModel(const std::string& modelIdRaw, int depth = 0) 
     ResolvedModel result;
 
     if (depth < 16) { // Guards against a malformed/cyclic parent chain.
-        fs::path path = fs::path(ASSETS_ROOT) / "models" / (modelId + ".json");
-        std::ifstream file(path);
-        if (file) {
+        auto fileBytes = ResourceManager::Instance().ReadBytes(ASSETS_ROOT + "/models/" + modelId + ".json");
+        if (fileBytes) {
             try {
-                json j;
-                file >> j;
+                json j = json::parse(fileBytes->begin(), fileBytes->end());
 
                 if (j.contains("parent") && j["parent"].is_string()) {
                     const ResolvedModel& parent = ResolveModel(j["parent"].get<std::string>(), depth + 1);
@@ -171,7 +178,7 @@ const ResolvedModel& ResolveModel(const std::string& modelIdRaw, int depth = 0) 
                         } else if (value.is_object() && value.contains("sprite") && value["sprite"].is_string()) {
                             // Newer texture-reference form glass/stained glass use for
                             // translucency-sort metadata ({"sprite": "...",
-                            // "force_translucent": true}) — the metadata doesn't matter
+                            // "force_translucent": true}) - the metadata doesn't matter
                             // here, only the sprite path. Silently dropping this whole
                             // entry (the previous behavior) broke every #variable chain
                             // through it, which is why glass rendered/collided as nothing.
@@ -195,7 +202,7 @@ const ResolvedModel& ResolveModel(const std::string& modelIdRaw, int depth = 0) 
 }
 
 // Whether one element (not the whole model) spans the full block (0,0,0) to
-// (16,16,16) with all six faces present — the shape the cube-only greedy
+// (16,16,16) with all six faces present - the shape the cube-only greedy
 // mesher can render.
 bool IsFullCubeElement(const json& elem) {
     if (!elem.contains("from") || !elem.contains("to") || !elem.contains("faces")) return false;
@@ -219,20 +226,20 @@ bool IsFullCubeElement(const json& elem) {
 // A model is renderable by the current (cube-only) greedy mesher exactly
 // when it resolves to a single element spanning the full block. Stairs/
 // slabs/fences/plants/etc. either have multiple elements or a partial
-// extent and fail this — by design, they're excluded this pass (visual id
+// extent and fail this - by design, they're excluded this pass (visual id
 // 0) rather than rendered wrong-shaped; see BlockRegistry.hpp.
 bool IsFullCube(const json& elements) {
     return elements.is_array() && elements.size() == 1 && IsFullCubeElement(elements[0]);
 }
 
 // Finds the first full-cube-shaped element in a model with MULTIPLE
-// elements — grass_block (and anything else using the same tinted-overlay
+// elements - grass_block (and anything else using the same tinted-overlay
 // technique: a base cube plus a separate biome-tinted overlay element on
 // the same footprint) has 2 elements and so fails IsFullCube's strict
 // single-element check above, even though it's visually still just an
 // opaque full cube; this second element (the tint overlay) isn't something
 // the current single-texture-per-face greedy mesher can layer in anyway, so
-// using just the base element's own faces — silently dropping the overlay —
+// using just the base element's own faces - silently dropping the overlay -
 // is the closest this pass can render it, and is a lot better than the
 // whole block excluding to nothing (which is what "what happened to the
 // grass" turned out to be).
@@ -248,7 +255,7 @@ const json* FindOpaqueCubeElement(const json& elements) {
 // range into concrete property values. Properties pack with the
 // last-declared one varying fastest (verified against grass_block's single
 // "snowy" bool: offset 0 -> snowy=true, offset 1 -> snowy=false, matching
-// defaultState == maxStateId == snowy=false) — so states are walked in
+// defaultState == maxStateId == snowy=false) - so states are walked in
 // reverse, mixed-radix style. "bool" properties have no explicit "values"
 // array in blocks.json; their implicit order is [true, false].
 DecodedProps DecodeProps(const std::vector<StateProp>& states, int32_t offset) {
@@ -291,15 +298,15 @@ DecodedProps ParseVariantKey(const std::string& key) {
 
 // True when every property named in `variantProps` (parsed from one variant
 // key) matches the corresponding value in `props` (the block's full decoded
-// state) — NOT full map equality. Vanilla blockstate JSON only lists the
+// state) - NOT full map equality. Vanilla blockstate JSON only lists the
 // properties that actually change which model is picked: stairs/slabs/
 // fences/... all have a real "waterlogged" state (it's in blocks.json, so
 // DecodeProps always includes it in `props`), but no variant key ever
-// mentions "waterlogged" — water is layered on separately in real Minecraft,
+// mentions "waterlogged" - water is layered on separately in real Minecraft,
 // not part of the model choice. Requiring exact equality against the FULL
 // prop set meant `ParseVariantKey(key)` (missing "waterlogged") could never
 // equal `props` (which always has it), so every state of every waterlogged-
-// capable block failed to match here and rendered as nothing — the actual
+// capable block failed to match here and rendered as nothing - the actual
 // cause of stairs/slabs/etc. showing up as holes, not anything specific to
 // their shape.
 bool VariantKeyMatches(const DecodedProps& variantProps, const DecodedProps& props) {
@@ -312,11 +319,11 @@ bool VariantKeyMatches(const DecodedProps& variantProps, const DecodedProps& pro
 
 // Finds the model id for the variant matching `props` in a "variants"-style
 // blockstate JSON, plus that variant's model-space rotation (degrees, always
-// a multiple of 90 in vanilla data) — "y" turns a stair/etc.'s baked-in
+// a multiple of 90 in vanilla data) - "y" turns a stair/etc.'s baked-in
 // facing into the other three (e.g. polished_deepslate_stairs.json's base
 // model faces east; y=90/180/270 give south/west/north), "x" flips it
 // (half=top uses x=180 to turn a bottom stair upside down). Ignores
-// "multipart" blockstates entirely — those never have a "variants" key, so
+// "multipart" blockstates entirely - those never have a "variants" key, so
 // this always returns false for them; see ResolveMultipartNonCubeVisual for
 // the separate path that resolves fences/walls (the one multipart shape
 // this pass handles). A variant's value may be a single object or an array
@@ -342,7 +349,7 @@ bool FindVariantModel(const json& blockstateJson, const DecodedProps& props, std
 }
 
 // cos/sin for a rotation restricted to a multiple of 90 degrees, as exact
-// integers — avoids the float noise plain std::cos/sin(radians(90)) would
+// integers - avoids the float noise plain std::cos/sin(radians(90)) would
 // introduce (cos(90 deg) isn't exactly 0), which would otherwise leave
 // rotated box corners very slightly off their intended 0..16 grid values.
 void SinCos90(int deg, int& outCos, int& outSin) {
@@ -355,7 +362,7 @@ void SinCos90(int deg, int& outCos, int& outSin) {
 }
 
 // Rotates a direction (no translation) by xDeg around the X axis, then yDeg
-// around the Y axis — the same order (x then y) a blockstate variant's own
+// around the Y axis - the same order (x then y) a blockstate variant's own
 // "x"/"y" fields are applied in. Used for both element corners (as an offset
 // from the block center) and face normals (to figure out which face index a
 // rotated face belongs to).
@@ -380,7 +387,7 @@ glm::vec3 RotateDirection(glm::vec3 v, int xDeg, int yDeg) {
 }
 
 // Rotates a model-space point (0..16 units) around the block's center
-// (8,8,8) — used for element box corners.
+// (8,8,8) - used for element box corners.
 glm::vec3 RotatePoint(const glm::vec3& p, int xDeg, int yDeg) {
     const glm::vec3 center(8.0f, 8.0f, 8.0f);
     return RotateDirection(p - center, xDeg, yDeg) + center;
@@ -401,13 +408,13 @@ int FaceIndexFromNormal(const glm::vec3& n) {
 }
 
 // Rotates one already-built element in place by the variant's x/y (see
-// FindVariantModel) — both the box itself and which physical direction each
+// FindVariantModel) - both the box itself and which physical direction each
 // of its faces now points, so e.g. a stair's "north" face (as baked into the
 // unrotated model file) ends up keyed under NonCubeElement::faceTextures[2]
 // (North) only when the rotation actually still leaves it facing north;
 // otherwise the texture moves to whichever face index it's rotated onto.
 // No-op (skipped entirely by the caller) when both are 0, which is by far
-// the common case (most non-cube blocks — slabs, snow layers, ... — don't
+// the common case (most non-cube blocks - slabs, snow layers, ... - don't
 // rotate at all).
 void ApplyElementRotation(NonCubeElement& element, int xDeg, int yDeg) {
     glm::vec3 c0 = RotatePoint(element.from, xDeg, yDeg);
@@ -440,7 +447,7 @@ uint16_t InternVisual(const FaceNames& faces) {
 }
 
 // Vanilla has no per-block "is this translucent" field in minecraft-data or
-// the blockstate/model JSON we already parse — real rendering-layer
+// the blockstate/model JSON we already parse - real rendering-layer
 // assignment lives in code, not data. Rather than shipping a huge hardcoded
 // per-version block list, this covers the name patterns the task actually
 // asked for (glass, slime, honey) plus the other common vanilla translucent
@@ -454,7 +461,7 @@ bool IsTransparentCubeName(const std::string& name) {
     return named.contains(name);
 }
 
-// True for real fences/walls — every vanilla fence/wall name ends in
+// True for real fences/walls - every vanilla fence/wall name ends in
 // "_fence"/"_wall" (fence gates end in "_fence_gate", excluded by suffix
 // mismatch). Other multipart blockstates (redstone dust, panes, ...) stay excluded.
 bool IsFenceOrWallName(const std::string& name) {
@@ -465,32 +472,36 @@ bool IsFenceOrWallName(const std::string& name) {
 }
 
 // Vanilla fluid rendering is code-driven, not model-JSON-driven (water.json's
-// model resolves to zero elements) — see ResolveWaterVisual.
+// model resolves to zero elements) - see ResolveWaterVisual.
 bool IsWaterName(const std::string& name) {
     return name == "water";
+}
+
+bool IsFluidName(const std::string& name) {
+    return name == "water" || name == "lava";
 }
 
 // Resolves one state id to a visual id, or 0 if the variant/model/texture
 // chain doesn't fully resolve to a renderable full cube. Any unexpected
 // shape in the resource-pack JSON (a "texture" value that isn't a string,
-// etc.) is treated the same as "doesn't resolve" rather than thrown —
+// etc.) is treated the same as "doesn't resolve" rather than thrown -
 // callers must never have a single odd block's data take down Init() for
 // every other block.
 uint16_t ResolveStateVisual(const BlockDef& def, const json& blockstateJson, int32_t stateId) {
     try {
         // Known-translucent full cubes (glass, slime, honey, ice, ...) are
         // deliberately excluded here even though they'd otherwise resolve
-        // fine — they need ResolveStateNonCubeVisual's alpha-blended,
+        // fine - they need ResolveStateNonCubeVisual's alpha-blended,
         // no-backface-cull path below instead, not the opaque one. Water's
         // model has no elements at all (see ResolveWaterVisual) so it would
         // fall through to 0 here regardless; excluded explicitly anyway to
         // say so, rather than relying on that being true incidentally.
-        if (IsTransparentCubeName(def.name) || IsWaterName(def.name)) return 0;
+        if (IsTransparentCubeName(def.name) || IsFluidName(def.name)) return 0;
 
         DecodedProps props = DecodeProps(def.states, stateId - def.minStateId);
 
         std::string modelId;
-        int xDeg, yDeg; // Unused here — a full opaque cube's face textures don't depend on the variant's rotation (a pre-existing simplification, unrelated to this pass).
+        int xDeg, yDeg; // Unused here - a full opaque cube's face textures don't depend on the variant's rotation (a pre-existing simplification, unrelated to this pass).
         if (!FindVariantModel(blockstateJson, props, modelId, xDeg, yDeg)) return 0;
 
         const ResolvedModel& model = ResolveModel(modelId);
@@ -553,7 +564,7 @@ void AppendModelElements(const ResolvedModel& model, int xDeg, int yDeg, std::ve
                     element.faceTextures[static_cast<size_t>(f)] = stem;
 
                     // Defaults to the full texture when this face doesn't
-                    // specify its own "uv" — every vanilla template this
+                    // specify its own "uv" - every vanilla template this
                     // pass actually sees (slabs, snow layers, torches, fence/
                     // wall posts and arms, ...) does specify one, but this
                     // keeps a missing one from rendering as nothing rather
@@ -570,7 +581,7 @@ void AppendModelElements(const ResolvedModel& model, int xDeg, int yDeg, std::ve
             }
         }
 
-        // Stairs (and anything else a variant/part rotates — see
+        // Stairs (and anything else a variant/part rotates - see
         // FindVariantModel) bake their model file for one fixed orientation
         // ("facing=east" for vanilla stairs, "north" for a fence/wall arm);
         // the variant/part's x/y turn that into the other facings. Skipped
@@ -584,14 +595,12 @@ void AppendModelElements(const ResolvedModel& model, int xDeg, int yDeg, std::ve
 
 // Builds water's flat-topped box for one state id, from vanilla's "level"
 // property (0-15: bit 3 is a falling flag, the low 3 bits are a 0(source)-7
-// (thinnest flowing) height stage — see blocks.json's water entry). Height
-// ratio (8-stage)/9 matches FluidState's own getOwnHeight; source and
-// falling both render full cube height rather than FluidRenderer's real ~8/9
-// source fudge factor and per-corner falling logic — a deliberate
-// simplification per this task's own "flat lowered top per level" allowance,
-// not an attempt at vanilla's sloped-corner interpolation. All six faces
+// (thinnest flowing) height stage - see blocks.json's water entry). Height
+// ratio (8-stage)/9 matches FluidState's own getOwnHeight. NonCubicMesher's
+// MeshFluid does the real corner interpolation and the full-height-when-
+// submerged rule from this height. All six faces
 // reuse the single static "water_still" texture (TextureManager only keeps
-// frame 0 of an animated PNG — see its own LoadResourcePack comment — so
+// frame 0 of an animated PNG - see its own LoadResourcePack comment - so
 // there's no flowing-direction texture to pick between anyway) at the full
 // 0,0,16,16 UV rect; NonCubicMesher stretches that rect to whatever height
 // this element ends up with.
@@ -601,18 +610,22 @@ uint16_t ResolveWaterVisual(const BlockDef& def, int32_t stateId) {
     int level = (levelIt != props.end()) ? std::atoi(levelIt->second.c_str()) : 0;
     int stage = level & 7;
     bool falling = level >= 8;
-    float topY = (falling || stage == 0) ? 16.0f : (8.0f - static_cast<float>(stage)) / 9.0f * 16.0f;
+    bool lava = def.name == "lava";
+    float amount = (falling || stage == 0) ? 8.0f : 8.0f - static_cast<float>(stage);
+    float topY = amount / 9.0f * 16.0f;
 
     NonCubeElement element;
     element.from = glm::vec3(0.0f, 0.0f, 0.0f);
     element.to = glm::vec3(16.0f, topY, 16.0f);
     for (int f = 0; f < 6; f++) {
-        element.faceTextures[static_cast<size_t>(f)] = "water_still";
+        element.faceTextures[static_cast<size_t>(f)] = lava ? "lava_still" : "water_still";
         element.faceUVs[static_cast<size_t>(f)] = glm::vec4(0.0f, 0.0f, 16.0f, 16.0f);
     }
 
     NonCubeVisual visual;
     visual.shape = NonCubeShape::Liquid;
+    visual.fluidKind = lava ? 2 : 1;
+    visual.fluidHeight = amount / 9.0f;
     visual.elements.push_back(std::move(element));
     return InternNonCubeVisual(std::move(visual));
 }
@@ -620,12 +633,12 @@ uint16_t ResolveWaterVisual(const BlockDef& def, int32_t stateId) {
 // Resolves one state id to a non-cube visual, for any state that
 // ResolveStateVisual above couldn't place on the opaque full-cube path.
 // Shares FindVariantModel/ResolveModel with the opaque path so both read the
-// exact same resolved textures/elements — only the classification differs.
-// Water is intercepted before any of that generic parsing — see
+// exact same resolved textures/elements - only the classification differs.
+// Water is intercepted before any of that generic parsing - see
 // ResolveWaterVisual's own comment for why its model file can't supply it.
 uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJson, int32_t stateId) {
     try {
-        if (IsWaterName(def.name)) return ResolveWaterVisual(def, stateId);
+        if (IsFluidName(def.name)) return ResolveWaterVisual(def, stateId);
 
         DecodedProps props = DecodeProps(def.states, stateId - def.minStateId);
 
@@ -639,10 +652,10 @@ uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJs
         // Vanilla's block/cross template model leaves a "cross" texture
         // variable unresolved in its own file; only a child model (grass,
         // flowers, saplings, ...) that extends it defines what "#cross"
-        // actually points to — so seeing a resolved "cross" key here means
+        // actually points to - so seeing a resolved "cross" key here means
         // this block extends that template, without needing to track model
         // identity through the parent chain (ResolveModel deliberately
-        // doesn't keep it — see its own comment).
+        // doesn't keep it - see its own comment).
         auto crossTex = model.textures.find("cross");
         if (crossTex != model.textures.end()) {
             std::string stem;
@@ -658,7 +671,7 @@ uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJs
         bool transparentCube = fullCubeShape && IsTransparentCubeName(def.name);
         // A full cube that ISN'T one of the known translucent names already
         // resolved via the opaque path (or failed for an unrelated reason,
-        // e.g. a missing texture) — either way, not this function's job.
+        // e.g. a missing texture) - either way, not this function's job.
         if (fullCubeShape && !transparentCube) return 0;
 
         NonCubeVisual visual;
@@ -676,12 +689,12 @@ uint16_t ResolveStateNonCubeVisual(const BlockDef& def, const json& blockstateJs
 
 // Resolves one state id of a "multipart" blockstate to a non-cube visual by
 // unioning the elements of every part whose "when" matches this state's
-// decoded properties — the same evaluation real Minecraft's own client does.
+// decoded properties - the same evaluation real Minecraft's own client does.
 // Scoped to fences/walls only this pass (see IsFenceOrWallName); every other
 // multipart block (redstone dust, tripwire, vines, glass panes, iron bars,
 // ...) is still excluded, same as before this function existed.
 //
-// Deliberately does NOT peek at neighbor blocks to decide connectivity —
+// Deliberately does NOT peek at neighbor blocks to decide connectivity -
 // minecraft-data's blocks.json shows oak_fence's states already include
 // real north/east/south/west properties (cobblestone_wall's are a
 // none/low/tall enum plus "up"), meaning the server has already computed
@@ -703,8 +716,8 @@ uint16_t ResolveMultipartNonCubeVisual(const BlockDef& def, const json& blocksta
             if (part.contains("when")) {
                 const json& when = part["when"];
                 // "OR"-style conditions never appear in any real fence/wall
-                // blockstate (every "when" here is a flat property match —
-                // verified against oak_fence.json/cobblestone_wall.json) —
+                // blockstate (every "when" here is a flat property match -
+                // verified against oak_fence.json/cobblestone_wall.json) -
                 // skip rather than mis-render if one ever shows up.
                 if (!when.is_object() || when.contains("OR")) continue;
 
@@ -739,7 +752,7 @@ uint16_t ResolveMultipartNonCubeVisual(const BlockDef& def, const json& blocksta
 }
 
 // The real body of Init(), split out so the public entry point below can
-// wrap it in one last catch-all — nothing in here should be able to bring
+// wrap it in one last catch-all - nothing in here should be able to bring
 // the whole app down over a single bad block/file; anything that does is a
 // bug in this function, not a reason to crash the client.
 // Loads blockCollisionShapes.json into g_collisionShapes (by shape id) and
@@ -748,12 +761,12 @@ uint16_t ResolveMultipartNonCubeVisual(const BlockDef& def, const json& blocksta
 // units; "blocks" maps a block name to either one shape id (every state) or
 // an array indexed by (stateId - minStateId). Leaves both tables empty on any
 // failure, which makes MapStateIdCollisionShape report UNKNOWN and every
-// block fall back to "opaque full cube or nothing" — degraded, not broken.
+// block fall back to "opaque full cube or nothing" - degraded, not broken.
 void LoadCollisionShapes(const std::vector<BlockDef>& blockDefs, int32_t maxStateId) {
     std::ifstream file(COLLISION_SHAPES_JSON_PATH);
     if (!file) {
         Log::Error("BlockRegistry: couldn't open " + COLLISION_SHAPES_JSON_PATH
-            + " — collision falls back to full cubes only (shulker boxes, chests, slabs, ... won't be solid).");
+            + " - collision falls back to full cubes only (shulker boxes, chests, slabs, ... won't be solid).");
         return;
     }
 
@@ -843,15 +856,15 @@ void InitImpl() {
     Log::Info("BlockRegistry: reading " + BLOCKS_JSON_PATH
         + " (cwd: " + fs::current_path().string() + ")");
 
-    if (!fs::exists(ASSETS_ROOT)) {
-        Log::Error("BlockRegistry: resource-pack assets root not found: " + ASSETS_ROOT
-            + " — every block will render as nothing this run.");
+    if (!ResourceManager::Instance().Exists(ASSETS_ROOT + "/blockstates/stone.json")) {
+        Log::Error("BlockRegistry: resource-pack assets not found: " + ASSETS_ROOT
+            + " - every block will render as nothing this run.");
     }
 
     std::ifstream blocksFile(BLOCKS_JSON_PATH);
     if (!blocksFile) {
         Log::Error("BlockRegistry: couldn't open " + BLOCKS_JSON_PATH
-            + " — every block will render as nothing this run.");
+            + " - every block will render as nothing this run.");
         return;
     }
 
@@ -878,6 +891,8 @@ void InitImpl() {
             def.maxStateId = b.value("maxStateId", def.minStateId);
             def.defaultState = b.value("defaultState", def.minStateId);
             def.hardness = b.value("hardness", 0.0f);
+            def.emitLight = static_cast<uint8_t>(std::clamp(b.value("emitLight", 0), 0, 15));
+            def.filterLight = static_cast<uint8_t>(std::clamp(b.value("filterLight", 0), 0, 15));
             def.diggable = b.value("diggable", true);
             def.requiresTool = b.contains("harvestTools") && b["harvestTools"].is_object() && !b["harvestTools"].empty();
             if (def.requiresTool) {
@@ -932,7 +947,7 @@ void InitImpl() {
             g_stateIdIsCraftingTable[static_cast<size_t>(stateId)] = 1;
     }
 
-    // Independent of the visual resolution below — collision must not depend
+    // Independent of the visual resolution below - collision must not depend
     // on whether a block has drawable model geometry (see GetCollisionBoxes).
     try {
         LoadCollisionShapes(blockDefs, maxStateId);
@@ -942,11 +957,15 @@ void InitImpl() {
         Log::Error(std::string("[ERROR] BlockRegistry: failed loading collision shapes: ") + e.what());
     }
 
-    // See MapStateIdBreakTicks — a per-state approximation of vanilla's
+    // See MapStateIdBreakTicks - a per-state approximation of vanilla's
     // hand-mining time from blocks.json's own hardness/diggable/harvestTools
     // fields, independent of the visual-resolution loop below.
     g_stateIdToBreakTicks.assign(static_cast<size_t>(maxStateId) + 1, -1);
     g_stateIdToBreakInfo.assign(static_cast<size_t>(maxStateId) + 1, 0);
+    g_stateIdEmitLight.assign(static_cast<size_t>(maxStateId) + 1, 0);
+    g_stateIdFilterLight.assign(static_cast<size_t>(maxStateId) + 1, 0);
+    g_stateIdBlockEntityKind.assign(static_cast<size_t>(maxStateId) + 1, 0);
+    g_stateIdBlockEntityData.assign(static_cast<size_t>(maxStateId) + 1, 0);
     for (const BlockDef& def : blockDefs) {
         uint16_t breakInfoId = 0;
         if (g_breakInfos.size() < 0xFFFF) {
@@ -963,7 +982,7 @@ void InitImpl() {
         if (!def.diggable || def.hardness < 0.0f) {
             ticks = -1; // Unbreakable (bedrock, ...).
         } else if (def.hardness == 0.0f) {
-            ticks = 0; // Instant, same as creative — flowers, torches, redstone dust, ...
+            ticks = 0; // Instant, same as creative - flowers, torches, redstone dust, ...
         } else {
             int divisor = def.requiresTool ? 100 : 30; // See MapStateIdBreakTicks' own comment.
             ticks = std::max(1, static_cast<int32_t>(std::ceil(def.hardness * static_cast<float>(divisor))));
@@ -972,6 +991,23 @@ void InitImpl() {
             if (stateId < 0 || static_cast<size_t>(stateId) >= g_stateIdToBreakTicks.size()) continue;
             g_stateIdToBreakTicks[static_cast<size_t>(stateId)] = ticks;
             g_stateIdToBreakInfo[static_cast<size_t>(stateId)] = breakInfoId;
+            g_stateIdEmitLight[static_cast<size_t>(stateId)] = def.emitLight;
+            g_stateIdFilterLight[static_cast<size_t>(stateId)] = def.filterLight;
+        }
+
+        uint8_t entityKind = def.name == "chest" ? 1 : def.name == "trapped_chest" ? 2 : def.name == "ender_chest" ? 3 : 0;
+        if (entityKind != 0) {
+            for (int32_t stateId = def.minStateId; stateId <= def.maxStateId; stateId++) {
+                if (stateId < 0 || static_cast<size_t>(stateId) >= g_stateIdBlockEntityKind.size()) continue;
+                DecodedProps props = DecodeProps(def.states, stateId - def.minStateId);
+                const std::string& facing = props["facing"];
+                uint8_t data = facing == "south" ? 1 : facing == "west" ? 2 : facing == "east" ? 3 : 0;
+                const std::string& type = props["type"];
+                if (type == "left") data |= 1 << 2;
+                else if (type == "right") data |= 2 << 2;
+                g_stateIdBlockEntityKind[static_cast<size_t>(stateId)] = entityKind;
+                g_stateIdBlockEntityData[static_cast<size_t>(stateId)] = data;
+            }
         }
     }
 
@@ -979,15 +1015,14 @@ void InitImpl() {
 
     for (const BlockDef& def : blockDefs) {
         try {
-            fs::path bsPath = fs::path(ASSETS_ROOT) / "blockstates" / (def.name + ".json");
-            std::ifstream bsFile(bsPath);
+            auto bsBytes = ResourceManager::Instance().ReadBytes(ASSETS_ROOT + "/blockstates/" + def.name + ".json");
 
             json bsJson;
             bool hasVariants = false;
             bool hasMultipart = false;
-            if (bsFile) {
+            if (bsBytes) {
                 try {
-                    bsFile >> bsJson;
+                    bsJson = json::parse(bsBytes->begin(), bsBytes->end());
                     hasVariants = bsJson.contains("variants") && bsJson["variants"].is_object();
                     hasMultipart = !hasVariants && bsJson.contains("multipart") && bsJson["multipart"].is_array();
                 } catch (const std::exception&) {
@@ -997,7 +1032,7 @@ void InitImpl() {
             }
 
             // Fences/walls are the one "multipart" shape resolved this pass
-            // (see IsFenceOrWallName/ResolveMultipartNonCubeVisual) — every
+            // (see IsFenceOrWallName/ResolveMultipartNonCubeVisual) - every
             // other multipart block still falls through to the exclusion
             // below, same as before.
             bool isFenceOrWall = hasMultipart && IsFenceOrWallName(def.name);
@@ -1005,7 +1040,7 @@ void InitImpl() {
             if (!hasVariants && !isFenceOrWall) {
                 // No blockstate file (fluids, cave_air/void_air, ...), or an
                 // unhandled "multipart" blockstate (redstone dust, tripwire,
-                // vines, glass panes, iron bars, ...) — non-cube by
+                // vines, glass panes, iron bars, ...) - non-cube by
                 // construction. Whole range stays visual 0.
                 excludedBlocks++;
                 continue;
@@ -1054,7 +1089,7 @@ void InitImpl() {
         }
     }
 
-    Log::Info("BlockRegistry: loaded minecraft-data " + std::string(MC_DATA_VERSION) + " — "
+    Log::Info("BlockRegistry: loaded minecraft-data " + std::string(MC_DATA_VERSION) + " - "
         + std::to_string(resolvedBlocks) + " blocks textured as full cubes, "
         + std::to_string(nonCubeResolvedBlocks) + " textured as cross/partial/transparent-cube visuals, "
         + std::to_string(excludedBlocks) + " excluded this pass (fluid/multipart/unresolvable), "
@@ -1073,6 +1108,38 @@ void Init() {
     }
 }
 
+std::shared_lock<std::shared_mutex> ReadLock() {
+    return std::shared_lock<std::shared_mutex>(g_reloadMutex);
+}
+
+Block VisualRemap::Apply(const Block& block) const {
+    auto it = pairs.find((static_cast<uint32_t>(block.visualId) << 16) | block.nonCubeVisualId);
+    if (it == pairs.end()) return block;
+    Block result = block;
+    result.visualId = static_cast<uint16_t>(it->second >> 16);
+    result.nonCubeVisualId = static_cast<uint16_t>(it->second & 0xFFFF);
+    return result;
+}
+
+VisualRemap Reload() {
+    std::unique_lock lock(g_reloadMutex);
+
+    std::vector<uint16_t> oldVisual = g_stateIdToVisual;
+    std::vector<uint16_t> oldNonCube = g_stateIdToNonCubeVisual;
+
+    Init();
+
+    VisualRemap remap;
+    size_t count = std::min(oldVisual.size(), g_stateIdToVisual.size());
+    for (size_t stateId = 0; stateId < count; stateId++) {
+        uint32_t oldKey = (static_cast<uint32_t>(oldVisual[stateId]) << 16) | oldNonCube[stateId];
+        if (oldKey == 0) continue; // Ambiguous: air or unresolved.
+        uint32_t newKey = (static_cast<uint32_t>(g_stateIdToVisual[stateId]) << 16) | g_stateIdToNonCubeVisual[stateId];
+        remap.pairs.emplace(oldKey, newKey); // First state wins.
+    }
+    return remap;
+}
+
 uint16_t MapStateId(int32_t stateId) {
     if (stateId >= 0 && stateId <= g_maxLoadedStateId) {
         return g_stateIdToVisual[static_cast<size_t>(stateId)];
@@ -1083,7 +1150,7 @@ uint16_t MapStateId(int32_t stateId) {
         if (g_loggedOutOfRangeIds.insert(stateId).second) {
             Log::Info("Block state id " + std::to_string(stateId)
                 + " is outside the loaded block registry's range (0.." + std::to_string(g_maxLoadedStateId)
-                + ") — possible protocol/minecraft-data version mismatch. Rendering as nothing.");
+                + ") - possible protocol/minecraft-data version mismatch. Rendering as nothing.");
         }
     }
     return 0;
@@ -1126,7 +1193,7 @@ int32_t MapStateIdBreakTicks(int32_t stateId) {
     if (stateId >= 0 && static_cast<size_t>(stateId) < g_stateIdToBreakTicks.size()) {
         return g_stateIdToBreakTicks[static_cast<size_t>(stateId)];
     }
-    return -1; // Out-of-range id — treat as unbreakable rather than guessing instant.
+    return -1; // Out-of-range id - treat as unbreakable rather than guessing instant.
 }
 
 const BreakInfo& GetBreakInfo(uint16_t breakInfoId) {
@@ -1135,6 +1202,11 @@ const BreakInfo& GetBreakInfo(uint16_t breakInfoId) {
 }
 
 Block ResolveStateId(int32_t stateId) {
+    std::shared_lock lock(g_reloadMutex);
+    return ResolveStateIdUnlocked(stateId);
+}
+
+Block ResolveStateIdUnlocked(int32_t stateId) {
     Block block;
     block.visualId = MapStateId(stateId);
     if (block.visualId == 0) block.nonCubeVisualId = MapStateIdNonCube(stateId);
@@ -1144,10 +1216,19 @@ Block ResolveStateId(int32_t stateId) {
         block.breakInfoId = g_stateIdToBreakInfo[static_cast<size_t>(stateId)];
     if (stateId >= 0 && static_cast<size_t>(stateId) < g_stateIdIsCraftingTable.size())
         block.isCraftingTable = g_stateIdIsCraftingTable[static_cast<size_t>(stateId)] != 0;
+    if (stateId >= 0 && static_cast<size_t>(stateId) < g_stateIdEmitLight.size()) {
+        block.lightEmission = g_stateIdEmitLight[static_cast<size_t>(stateId)];
+        block.lightFilter = g_stateIdFilterLight[static_cast<size_t>(stateId)];
+    }
+    if (stateId >= 0 && static_cast<size_t>(stateId) < g_stateIdBlockEntityKind.size()) {
+        block.blockEntityKind = g_stateIdBlockEntityKind[static_cast<size_t>(stateId)];
+        block.blockEntityData = g_stateIdBlockEntityData[static_cast<size_t>(stateId)];
+    }
     return block;
 }
 
 int32_t DefaultStateIdForName(const std::string& blockName) {
+    std::shared_lock lock(g_reloadMutex);
     auto it = g_nameToDefaultState.find(blockName);
     return it != g_nameToDefaultState.end() ? it->second : -1;
 }
@@ -1158,7 +1239,7 @@ CollisionBoxes GetCollisionBoxes(const Block& block) {
         return CollisionBoxes{};
     }
 
-    // Fallback — see Block::UNKNOWN_COLLISION_SHAPE.
+    // Fallback - see Block::UNKNOWN_COLLISION_SHAPE.
     CollisionBoxes result;
     if (block.visualId != 0) {
         result.boxes[0] = AABB{ glm::vec3(0.0f), glm::vec3(1.0f) };

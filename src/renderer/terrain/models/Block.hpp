@@ -10,12 +10,12 @@ struct Block {
     // Index into BlockRegistry's interned BlockVisual table. 0 is reserved
     // for both true air and any block BlockRegistry couldn't (yet) resolve
     // to a full-cube visual (non-cube shapes, fluids, multipart blockstates,
-    // etc.) — those either render as nothing or go through nonCubeVisualId
+    // etc.) - those either render as nothing or go through nonCubeVisualId
     // below instead.
     uint16_t visualId = 0;
 
     // Index into BlockRegistry's interned NonCubeVisual table (see
-    // BlockRegistry.hpp) — set only when visualId is 0 and the block
+    // BlockRegistry.hpp) - set only when visualId is 0 and the block
     // resolved to a transparent full cube (glass, slime, ...), a
     // partial-volume shape (slabs, carpets, ...), or a cross-shaped plant
     // (grass, flowers, ...). 0 means nothing to draw here via that path
@@ -29,40 +29,57 @@ struct Block {
     static constexpr uint16_t UNKNOWN_COLLISION_SHAPE = 0xFFFF;
 
     // Index into BlockRegistry's collision-shape table (minecraft-data's
-    // blockCollisionShapes.json), resolved per protocol state id — 0 means no
+    // blockCollisionShapes.json), resolved per protocol state id - 0 means no
     // collision at all (air, plants, fluids). Deliberately independent of
     // the two visual ids above: collision used to be derived from the render
     // model, which gave every block without drawable model geometry (shulker
-    // boxes, chests, beds, signs, ... — anything drawn by a block-entity
+    // boxes, chests, beds, signs, ... - anything drawn by a block-entity
     // renderer) no collision at all, so the client let the player sink
     // into blocks the server treats as solid and got teleported back for it.
     uint16_t collisionShapeId = UNKNOWN_COLLISION_SHAPE;
 
     // Index into BlockRegistry's BreakInfo table (hardness, tool class,
-    // which tools can harvest it) — what InteractionManager scales
+    // which tools can harvest it) - what InteractionManager scales
     // breakTicks by when a tool is held. 0 = no info (hand time only).
     uint16_t breakInfoId = 0;
 
     // Ticks (1/20s) to hand-mine this block, resolved per state id at parse
-    // time — see BlockRegistry::MapStateIdBreakTicks. -1 (the default) also
+    // time - see BlockRegistry::MapStateIdBreakTicks. -1 (the default) also
     // covers a Block never built from a real state id, same fail-safe
     // direction as UNKNOWN_COLLISION_SHAPE.
     int32_t breakTicks = -1;
 
     bool isCraftingTable = false;
 
+    // From blocks.json's emitLight/filterLight. filterLight is 255 when the
+    // Block wasn't built from a state id (opacity then comes from visualId).
+    uint8_t lightEmission = 0;
+    uint8_t lightFilter = 255;
+
+    // Chest family drawn by ModeledBERenderer: kind 0 none, 1 chest, 2 trapped,
+    // 3 ender. Data: facing (0 north, 1 south, 2 west, 3 east) in bits 0-1,
+    // type (0 single, 1 left, 2 right) in bits 2-3.
+    uint8_t blockEntityKind = 0;
+    uint8_t blockEntityData = 0;
+
+    // How much light this block absorbs: 15 blocks it entirely.
+    int LightOpacity() const {
+        if (lightFilter != 255) return lightFilter;
+        return visualId != 0 ? 15 : 0;
+    }
+
     bool isOpaque() const {
         return visualId != 0;
     }
 
-    // True air — neither a full-cube nor a non-cube visual. Used by
+    // True air - neither a full-cube nor a non-cube visual. Used by
     // Chunk::IsSectionEmpty to skip meshing/uploading a section that has
     // nothing to draw at all (common near build-height limits).
     bool isAir() const {
         return visualId == 0 && nonCubeVisualId == 0;
     }
 
-    // Solid for collision purposes, per the real collision shape — see
+    // Solid for collision purposes, per the real collision shape - see
     // collisionShapeId.
     bool hasCollision() const {
         return collisionShapeId == UNKNOWN_COLLISION_SHAPE ? isOpaque() : collisionShapeId != 0;

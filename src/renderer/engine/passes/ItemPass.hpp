@@ -45,6 +45,7 @@ public:
         };
         std::vector<Drop> drops;
         auto now = std::chrono::steady_clock::now();
+        bool occlusionCulling = std::get<bool>(state->config->Get("Graphics.EntityOcclusionCulling", false));
         {
             std::lock_guard<std::mutex> lock(state->entitiesMutex);
             state->ForEachEntity([&](uint32_t id, const Entity& entity)
@@ -52,7 +53,7 @@ public:
                 if (entity.itemId == 0 || !entity.visible) return;
                 glm::vec3 position = entity.InterpolatedPosition(now);
                 if (glm::distance(position, frame.scene->cameraPosition) > MAX_DISTANCE) return;
-                if (occlusionSnapshot.IsEntityOccluded(position, entity.boundingBox.x, entity.boundingBox.y)) return;
+                if (occlusionCulling && occlusionSnapshot.IsEntityOccluded(position, entity.boundingBox.x, entity.boundingBox.y)) return;
                 drops.push_back({ position, entity.itemId, id });
             });
         }

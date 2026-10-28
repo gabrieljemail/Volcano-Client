@@ -1,0 +1,27 @@
+## Minimum (needed to boot the game)
+OS: 64-bit Windows 8/10/11, Ubuntu 18.04+, Arch Linux (kernel 6.0.0+), Alpine Linux (kernel 6.0.0+), Fedora 18+
+CPU: Intel Celeron N3350, AMD 3020e
+GPU: Intel HD Graphics 500, AMD Radeon Graphics, NVIDIA GeForce GT 730M
+RAM: 2 GB (Linux), 4 GB (Windows)
+
+On LOW, your FPS should be: 15-20
+
+## Playable (gets at least 60 FPS on LOW or MED)
+OS: Windows 11, Ubuntu 24.04+, Arch Linux (kernel 7.3.0+), Alpine Linux (kernel 7.3.0+), Fedora 25+
+CPU: Intel Core i5-6600, AMD Ryzen 5 1400
+GPU: Intel HD Graphics 530, AMD Vega Graphics, NVIDIA GeForce GT 730M
+RAM: 4 GB (Windows & Linux)
+
+On LOW, your FPS should be: 150-170 (Linux), 110-140 (Windows)
+On MED, your FPS should be: 70-90 (Linux), 80-85 (Windows)
+On HIGH, your FPS should be: 50-70 (Linux), 45-55 (Windows)
+
+## Smoothest Experience (gets 120 FPS at max settings)
+OS: Arch Linux (kernel 7.3.0+)
+CPU: AMD Ryzen 5 5500
+GPU: NVIDIA GeForce GTX 960
+RAM: 4 GB (Linux), 8 GB (Windows)
+
+On LOW, your FPS should be: 350-425 (Linux), 350-375 (Windows)
+On MED, your FPS should be: 220-240 (Linux), 210-220 (Windows)
+On HIGH, your FPS should be: 190-200 (Linux), 180-200 (Windows)

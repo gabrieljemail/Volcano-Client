@@ -10,7 +10,7 @@
 namespace Volcano {
 
 // A secondary-trigger click that landed on an entity (see
-// InteractionManager::SecondaryTriggerStart) — right-clicking it (feeding
+// InteractionManager::SecondaryTriggerStart) - right-clicking it (feeding
 // an animal, opening a villager's trades, mounting a horse, ...).
 struct InteractEntityEvent {
     uint32_t entityId;

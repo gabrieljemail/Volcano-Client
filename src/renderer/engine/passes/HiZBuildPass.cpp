@@ -20,7 +20,7 @@ void HiZBuildPass::Create(const ShaderLibrary& shaders)
 
     // Created directly through VMA (not CreateBuffer) since these need
     // host-READ-friendly memory (RANDOM access, i.e. cached), and so they
-    // stay out of VulkanInit's allocatedBuffers sweep — freed in Destroy().
+    // stay out of VulkanInit's allocatedBuffers sweep - freed in Destroy().
     for (Slot& slot : slots)
     {
         VkBufferCreateInfo bufferInfo{};
@@ -76,8 +76,16 @@ void HiZBuildPass::BeginFrame(uint32_t frameIndex)
     slot.pending = false;
 
     // This slot's fence was just waited on by BeginFrame, so the GPU copy
-    // into it is finished — invalidate in case the memory isn't coherent.
+    // into it is finished - invalidate in case the memory isn't coherent.
     vmaInvalidateAllocation(vmaAllocator, slot.allocation, 0, VK_WHOLE_SIZE);
+
+    const size_t texelCount = static_cast<size_t>(slot.width) * slot.height;
+    const bool changed = !occlusionSnapshot.valid
+        || occlusionSnapshot.viewProj != slot.viewProj
+        || occlusionSnapshot.width != slot.width || occlusionSnapshot.height != slot.height
+        || occlusionSnapshot.level != slot.level
+        || std::memcmp(occlusionSnapshot.depth.data(), slot.mapped, texelCount * sizeof(float)) != 0;
+    if (changed) occlusionSnapshot.serial++;
 
     occlusionSnapshot.viewProj = slot.viewProj;
     occlusionSnapshot.fullWidth = slot.fullWidth;
@@ -85,8 +93,8 @@ void HiZBuildPass::BeginFrame(uint32_t frameIndex)
     occlusionSnapshot.level = slot.level;
     occlusionSnapshot.width = slot.width;
     occlusionSnapshot.height = slot.height;
-    occlusionSnapshot.depth.resize(static_cast<size_t>(slot.width) * slot.height);
-    std::memcpy(occlusionSnapshot.depth.data(), slot.mapped, occlusionSnapshot.depth.size() * sizeof(float));
+    occlusionSnapshot.depth.resize(texelCount);
+    std::memcpy(occlusionSnapshot.depth.data(), slot.mapped, texelCount * sizeof(float));
     occlusionSnapshot.valid = true;
 }
 
@@ -96,7 +104,7 @@ void HiZBuildPass::Record(VkCommandBuffer cmd, uint32_t frameIndex, const glm::m
 
     // depthImage comes out of the main render pass in
     // DEPTH_STENCIL_ATTACHMENT_OPTIMAL (its VkAttachmentDescription's
-    // finalLayout) — hiz_copy.comp's descriptor set declared it as
+    // finalLayout) - hiz_copy.comp's descriptor set declared it as
     // SHADER_READ_ONLY_OPTIMAL (see CreateHiZResources), so it has to
     // actually be in that layout before the dispatch below reads it. Not
     // transitioned back afterward: the render pass's depth attachment has
@@ -114,11 +122,11 @@ void HiZBuildPass::Record(VkCommandBuffer cmd, uint32_t frameIndex, const glm::m
     depthBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     // Whether a depth write actually lands at EARLY_FRAGMENT_TESTS or
     // LATE_FRAGMENT_TESTS is implementation-defined (depends on whether the
-    // GPU can early-z it) — this render pass has no exit dependency of its
+    // GPU can early-z it) - this render pass has no exit dependency of its
     // own (only one for VK_SUBPASS_EXTERNAL -> 0, entering), so this
     // barrier is the ONLY thing synchronizing the compute read below
     // against the depth write. Missing either stage here means an
-    // unsynchronized read on whichever GPUs use that one — this was
+    // unsynchronized read on whichever GPUs use that one - this was
     // LATE-only, which is why the pyramid read back as a constant 0
     // (racing ahead of the real writes) instead of real depth values.
     vkCmdPipelineBarrier(cmd,
@@ -127,7 +135,7 @@ void HiZBuildPass::Record(VkCommandBuffer cmd, uint32_t frameIndex, const glm::m
         0, 0, nullptr, 0, nullptr, 1, &depthBarrier);
 
     // hizImage's mips are kept in VK_IMAGE_LAYOUT_GENERAL permanently after
-    // their one-shot creation-time transition (see CreateHiZResources) —
+    // their one-shot creation-time transition (see CreateHiZResources) -
     // every step below is just an execution/memory dependency (a plain
     // VkMemoryBarrier), never a layout change.
     VkMemoryBarrier computeBarrier{};

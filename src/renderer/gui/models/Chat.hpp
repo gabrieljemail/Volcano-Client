@@ -2,6 +2,7 @@
 #ifndef GUI_CHAT_H
 #define GUI_CHAT_H
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <mutex>
@@ -18,7 +19,7 @@ struct ChatLine {
 
 // Thread-safe, process-wide chat/log scrollback. A single store backs both
 // the in-game chat window (GUIController::Render reads a snapshot every
-// frame) and Log::Debug's optional chat mirroring — the network thread and
+// frame) and Log::Debug's optional chat mirroring - the network thread and
 // the main/render thread both append to it, so every access goes through
 // `mutex`.
 //
@@ -35,11 +36,15 @@ public:
     // while calling into ImGui.
     static std::vector<ChatLine> GetLines();
 
+    // Goes up whenever a line is added, so a reader can tell when its snapshot is stale.
+    static uint64_t GetRevision() { return revision.load(); }
+
     static constexpr size_t MAX_LINES = 200;
 
 private:
     static std::mutex mutex;
     static std::deque<ChatLine> lines;
+    static std::atomic<uint64_t> revision;
 
     static void Push(ChatLine line);
 };

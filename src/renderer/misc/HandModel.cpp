@@ -14,6 +14,10 @@
 #include "../entity/models/EntityJsonModel.hpp"
 #include "../../GlobalState.hpp"
 #include "../../Logger.hpp"
+#include "../../Math.hpp"
+#include "../../Player.hpp"
+#include "../terrain/models/World.hpp"
+#include "../../TickLoop.hpp"
 #include "../../interaction/InteractionManager.hpp"
 #include "../../inventory/ItemBehavior.hpp"
 #include "../../inventory/ItemRegistry.hpp"
@@ -25,38 +29,41 @@ namespace {
 constexpr float PI = glm::pi<float>();
 constexpr float SWING_SECONDS = 0.3f; // Vanilla's 6-tick arm swing.
 constexpr float UNITS_PER_BLOCK = 16.0f;
-constexpr float SWING_HANDOFF = 0.8f; // Swing progress where the attack indicator takes over the hand height.
+// An attack's swing plays in full at the raised hand height until the attack indicator is this full (0 to 1);
+// then it is cut and the hand shows the indicator instead, low and rising as it charges.
+constexpr float SWING_CUT_STRENGTH = 0.5f;
+// Swings that aren't attacks (placing, mining) play out; the hand drops after this much of one.
+constexpr float SWING_HANDOFF = 0.85f;
 
 // Anything nearer than this in a hand-sized draw is always in front of the
 // world, so the hands never clip into walls (vanilla clears depth instead).
 constexpr float HAND_MAX_DEPTH = 0.01f;
-constexpr float HAND_FOV_DEGREES = 70.0f; // Vanilla's default FOV.
+constexpr float HAND_FOV_DEGREES = 80.0f; // Vanilla's default FOV.
 constexpr float HELD_ITEM_PITCH_DEGREES = 0.0f; // Pitch of held items about their center; negative tips them forward.
 
 struct ArmPush {
     glm::mat4 mvp;
+    glm::vec4 shade; // x: brightness.
 };
 
 glm::mat4 RotateX(const glm::mat4& m, float degrees) { return glm::rotate(m, glm::radians(degrees), glm::vec3(1, 0, 0)); }
 glm::mat4 RotateY(const glm::mat4& m, float degrees) { return glm::rotate(m, glm::radians(degrees), glm::vec3(0, 1, 0)); }
 glm::mat4 RotateZ(const glm::mat4& m, float degrees) { return glm::rotate(m, glm::radians(degrees), glm::vec3(0, 0, 1)); }
 
+// Vanilla's hand sway: the hands trail look changes (lag halves every tick)
+// and tilt by a tenth of the gap. Angles are in Minecraft's convention.
+struct HandSway {
+    float yaw = 0.0f, pitch = 0.0f;
+    float lagYaw = 0.0f, lagPitch = 0.0f;
+    bool valid = false;
+};
+HandSway sway;
+
 // 0..1 through the current swing, or 0 when idle. While a block is being
 // mined the swing repeats until the break finishes or is cancelled.
 float SwingProgress(GlobalState* state)
 {
-    int64_t startNs = state->localSwingNs.load(std::memory_order_relaxed);
-    if (startNs == 0) return 0.0f;
-    int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()
-    ).count();
-    float seconds = static_cast<float>(nowNs - startNs) * 1e-9f;
-    if (seconds < 0.0f) return 0.0f;
-    if (seconds >= SWING_SECONDS - 0.1f && state->miningTicksRequired.load(std::memory_order_relaxed) > 0)
-    {
-        seconds = std::fmod(seconds, SWING_SECONDS);
-    }
-    return seconds < SWING_SECONDS ? seconds / SWING_SECONDS : 0.0f;
+    return state->GetLocalSwingProgress();
 }
 
 // ItemInHandRenderer.applyEatTransform; `usage` runs 0 (just started) to 1.
@@ -327,7 +334,7 @@ void HandModel::CreatePipeline(const Engine::ShaderLibrary& shaders)
     }
 }
 
-void HandModel::DrawArm(VkCommandBuffer cmd, const ArmMesh& mesh, const glm::mat4& mvp)
+void HandModel::DrawArm(VkCommandBuffer cmd, const ArmMesh& mesh, const glm::mat4& mvp, float brightness)
 {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     VkDescriptorSet skinSet = EntityRenderer::GetDefaultSkinSet();
@@ -335,7 +342,7 @@ void HandModel::DrawArm(VkCommandBuffer cmd, const ArmMesh& mesh, const glm::mat
     VkDeviceSize vertexOffset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &vertexOffset);
     vkCmdBindIndexBuffer(cmd, mesh.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-    ArmPush push{ mvp };
+    ArmPush push{ mvp, glm::vec4(brightness, 0.0f, 0.0f, 0.0f) };
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
     vkCmdDrawIndexed(cmd, mesh.indexCount, 1, 0, 0, 0);
 }
@@ -346,6 +353,8 @@ void HandModel::Record(Engine::FrameContext& frame)
     if (!ready || state == nullptr || state->itemRenderer == nullptr) return;
     if (state->connectionPhase.load() != ConnectionPhase::Playing) return;
     if (state->localGameMode.load() == 3) return; // Spectators have no hands.
+    if (!state->player->camera.IsFirstPerson()) return;
+    if (std::get<bool>(state->config->Get("Graphics.BodyView", false))) return; // The body is drawn instead.
 
     float scale = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.HandScale", uint32_t{100}))) / 100.0f;
     bool leftHanded = std::get<bool>(state->config->Get("Graphics.LeftHanded", false));
@@ -367,14 +376,96 @@ void HandModel::Record(Engine::FrameContext& frame)
     float elapsedTicks = lastRecordNs == 0 ? 0.0f
         : std::min(static_cast<float>(nowNs - lastRecordNs) * 1e-9f * 20.0f, 1.0f);
     lastRecordNs = nowNs;
-    float strength = state->interaction != nullptr ? state->interaction->GetAttackStrengthScale() : 1.0f;
-    float targetHeight = strength * strength * strength;
-    // Held still during the swing; the drop and rise start once it's nearly
-    // done, so the hand never flashes back to rest between the two.
-    if (attack <= 0.0f || attack >= SWING_HANDOFF)
+
+    float viewYaw = -state->player->camera.GetYaw(), viewPitch = -state->player->camera.GetPitch();
+    if (sway.valid)
     {
-        mainHandHeight += std::clamp(targetHeight - mainHandHeight, -0.4f * elapsedTicks, 0.4f * elapsedTicks);
+        sway.lagYaw += std::remainder(viewYaw - sway.yaw, 360.0f);
+        sway.lagPitch += viewPitch - sway.pitch;
     }
+    sway.yaw = viewYaw;
+    sway.pitch = viewPitch;
+    sway.valid = true;
+    float decay = std::pow(0.5f, elapsedTicks);
+    sway.lagYaw *= decay;
+    sway.lagPitch *= decay;
+    glm::mat4 swayMatrix = RotateY(RotateX(glm::mat4(1.0f), sway.lagPitch * 0.1f), sway.lagYaw * 0.1f);
+
+    // Swimming: the hands dip and stroke in alternation, scaled by the swim ease.
+    float swimAmount = state->tickLoop != nullptr ? state->tickLoop->GetMovementSnapshot().swimAmount : 0.0f;
+    float strokePhase = static_cast<float>(nowNs % 2600000000LL) * 1e-9f * 6.2831853f / 1.3f;
+    auto swimStroke = [&](float invert)
+    {
+        float stroke = std::sin(strokePhase) * invert;
+        glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(invert * 0.04f * swimAmount, (-0.06f + 0.05f * stroke) * swimAmount, 0.0f));
+        m = RotateZ(m, stroke * 8.0f * swimAmount);
+        return RotateX(m, (-6.0f + 6.0f * stroke) * swimAmount);
+    };
+
+    // The partial tick keeps the charge (and so the hand height) smooth
+    // between the 20 Hz ticks; the faster the attack speed, the quicker it fills.
+    float partialTick = state->tickLoop != nullptr ? state->tickLoop->GetPartialTick() : 0.0f;
+    float strength = state->interaction != nullptr ? state->interaction->GetAttackStrengthScale(partialTick) : 1.0f;
+    float targetHeight = strength * strength * strength;
+
+    // An attack resets the indicator, so a swing that starts with it low is one: it plays at the raised hand
+    // until the indicator reaches SWING_CUT_STRENGTH (or the swing ends), then cuts to the indicator's height.
+    if (attack <= 0.0f)
+    {
+        if (swingMode == SwingMode::Playing) mainHandHeight = targetHeight;
+        swingMode = SwingMode::Idle;
+    }
+    else
+    {
+        if (swingMode == SwingMode::Idle)
+        {
+            bool mining = state->miningTicksRequired.load(std::memory_order_relaxed) > 0;
+            swingMode = (strength < SWING_CUT_STRENGTH && !mining) ? SwingMode::Playing : SwingMode::Plain;
+        }
+        if (swingMode == SwingMode::Playing && strength >= SWING_CUT_STRENGTH)
+        {
+            swingMode = SwingMode::Cut;
+            mainHandHeight = targetHeight;
+        }
+    }
+
+    float shownAttack = attack;
+    if (swingMode == SwingMode::Playing)
+    {
+        mainHandHeight = 1.0f;
+    }
+    else if (swingMode == SwingMode::Cut)
+    {
+        shownAttack = 0.0f;
+        mainHandHeight = Math::MoveToward(mainHandHeight, targetHeight, 0.4f * elapsedTicks);
+    }
+    else if (attack <= 0.0f || attack >= SWING_HANDOFF)
+    {
+        // Held still during a plain swing; the drop and rise start once it's nearly done.
+        mainHandHeight = Math::MoveToward(mainHandHeight, targetHeight, 0.4f * elapsedTicks);
+    }
+
+    // The server's light at the player's eye, through the terrain's curve (no
+    // shadows or AO), eased so stepping through a doorway doesn't pop.
+    float targetLight = 1.0f;
+    if (state->world != nullptr)
+    {
+        const Engine::SceneView& scene = *frame.scene;
+        glm::vec3 eye = scene.cameraPosition;
+        LightSample sample = state->world->GetLightSample(static_cast<int>(std::floor(eye.x)),
+            static_cast<int>(std::floor(eye.y)), static_cast<int>(std::floor(eye.z)));
+        auto curve = [&](float level) { return level / (1.0f + scene.lightFalloff * (1.0f - level)); };
+        float skyBrightness = glm::mix(0.05f, 1.0f, curve(static_cast<float>(sample.sky) / 15.0f) * scene.dayBrightness);
+        float blockBrightness = glm::mix(0.05f, 1.0f, curve(static_cast<float>(sample.block) / 15.0f));
+        float level = std::max(std::min(skyBrightness, 0.85f), blockBrightness);
+        if (scene.lightingEnabled)
+        {
+            float inverted = 1.0f - level;
+            float bright = 1.0f - inverted * inverted * inverted * inverted;
+            targetLight = glm::mix(level, bright, scene.brightnessFactor);
+        }
+    }
+    handLight += (targetLight - handLight) * std::min(elapsedTicks * 0.5f, 1.0f);
 
     // Eating and drinking progress, for the item bob.
     bool consuming = false;
@@ -409,6 +500,7 @@ void HandModel::Record(Engine::FrameContext& frame)
     // stretch the hand.
     glm::mat4 proj = glm::perspective(glm::radians(HAND_FOV_DEGREES), width / std::max(height, 1.0f), 0.05f, 1000.0f);
     proj[1][1] *= -1.0f; // Vulkan clip space has Y pointing down.
+    proj = proj * frame.scene->viewBob; // The hand bobs with the view, as in vanilla.
     glm::mat4 scaling = glm::scale(glm::mat4(1.0f), glm::vec3(scale));
 
     for (int handIndex = 0; handIndex < 2; handIndex++)
@@ -417,21 +509,21 @@ void HandModel::Record(Engine::FrameContext& frame)
         const ItemStack& stack = isMain ? mainhand : offhand;
         bool rightArm = isMain != leftHanded;
         float invert = rightArm ? 1.0f : -1.0f;
-        float handAttack = isMain ? attack : 0.0f;
+        float handAttack = isMain ? shownAttack : 0.0f;
         float height = isMain ? mainHandHeight : 1.0f;
 
         if (stack.IsEmpty())
         {
             if (!isMain) continue;
-            glm::mat4 m = ArmTransform(invert, handAttack, height) * scaling;
-            DrawArm(cmd, rightArm ? rightArmMesh : leftArmMesh, proj * m);
+            glm::mat4 m = swayMatrix * swimStroke(invert) * ArmTransform(invert, handAttack, height) * scaling;
+            DrawArm(cmd, rightArm ? rightArmMesh : leftArmMesh, proj * m, handLight);
             continue;
         }
 
         const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(stack.itemId);
         if (item == nullptr) continue;
 
-        glm::mat4 m(1.0f);
+        glm::mat4 m = swayMatrix * swimStroke(invert);
         if (isMain && consuming) m = EatTransform(m, invert, usage, ticksLeft);
         m = glm::translate(m, glm::vec3(invert * 0.56f, -0.52f + (height - 1.0f) * 0.6f, -0.72f));
         if (!(isMain && consuming) && handAttack > 0.0f) m = SwingItem(m, invert, handAttack);
@@ -439,7 +531,7 @@ void HandModel::Record(Engine::FrameContext& frame)
 
         state->itemRenderer->RecordItem(cmd, item->name,
             rightArm ? "firstperson_righthand" : "firstperson_lefthand", m, proj,
-            RotateX(glm::mat4(1.0f), HELD_ITEM_PITCH_DEGREES));
+            RotateX(glm::mat4(1.0f), HELD_ITEM_PITCH_DEGREES), 1.0f - handLight);
     }
 
     VkViewport fullViewport{ 0.0f, 0.0f, width, height, 0.0f, 1.0f };

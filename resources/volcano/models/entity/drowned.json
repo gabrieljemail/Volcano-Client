@@ -1,0 +1,13 @@
+{
+    "_comment": "DrownedModel.createBodyLayer: humanoid with an un-mirrored left arm/leg at their own UVs, 64x64.",
+    "textureWidth": 64,
+    "textureHeight": 64,
+    "boxes": [
+        { "name": "head",      "origin": [-4, -8, -4], "size": [8, 8, 8],  "uv": [0, 0],   "pivot": [0, 0, 0] },
+        { "name": "body",      "origin": [-4,  0, -2], "size": [8, 12, 4], "uv": [16, 16], "pivot": [0, 0, 0] },
+        { "name": "right_arm", "origin": [-3, -2, -2], "size": [4, 12, 4], "uv": [40, 16], "pivot": [-5, 2, 0] },
+        { "name": "left_arm",  "origin": [-1, -2, -2], "size": [4, 12, 4], "uv": [32, 48], "pivot": [5, 2, 0] },
+        { "name": "right_leg", "origin": [-2,  0, -2], "size": [4, 12, 4], "uv": [0, 16],  "pivot": [-1.9, 12, 0] },
+        { "name": "left_leg",  "origin": [-2,  0, -2], "size": [4, 12, 4], "uv": [16, 48], "pivot": [1.9, 12, 0] }
+    ]
+}

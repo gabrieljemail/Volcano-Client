@@ -15,7 +15,7 @@ namespace Volcano::GUI {
 // "Connecting to host:port...", "Configuring..." (with the Configuration
 // packet currently being processed), then "Loading terrain...".
 //
-// Doesn't open or close itself — the caller (VolcanoClient.cpp) opens it
+// Doesn't open or close itself - the caller (VolcanoClient.cpp) opens it
 // when it starts a connection attempt and closes it once worldReady flips,
 // since it owns the NetworkThread and the screens to return to.
 //

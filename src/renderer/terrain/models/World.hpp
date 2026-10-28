@@ -15,12 +15,12 @@ namespace Volcano {
 
 // World/chunk store. Written from the main thread (placeholder generation
 // at startup, and network-thread-parsed chunks handed off and inserted from
-// the main thread — see GlobalState::NetworkInbox) and read every tick from
+// the main thread - see GlobalState::NetworkInbox) and read every tick from
 // RenderThread via TickLoop::Tick's collision checks, so the
 // chunk map itself is guarded by a shared_mutex: readers (GetBlock) take a
 // shared lock, writers (GetOrCreateChunk/InsertChunk/SetBlock) take a
 // unique lock. Individual Chunk contents have no separate synchronization
-// of their own — SetBlock's in-place mutation is safe only because it also
+// of their own - SetBlock's in-place mutation is safe only because it also
 // takes this same unique lock (blocking every reader world-wide for the
 // duration, not just the one chunk being edited; edits are rare enough
 // player-triggered events that this coarseness doesn't matter).
@@ -58,13 +58,37 @@ public:
         return chunks.find(ChunkKey(chunkX, chunkZ)) != chunks.end();
     }
 
-    // Drops every chunk — used when returning to the connect screen after a
+    // Drops every chunk - used when returning to the connect screen after a
     // disconnect, so a fresh connection doesn't layer new chunks on top of
     // the previous session's leftover world.
     void Clear()
     {
         std::unique_lock lock(mutex);
         chunks.clear();
+    }
+
+    // Rewrites every block of every loaded chunk through fn(Block) -> Block
+    // under the unique lock (resource reload remaps visual ids).
+    template<typename Fn>
+    void TransformBlocks(Fn&& fn)
+    {
+        std::unique_lock lock(mutex);
+        for (auto& [key, chunk] : chunks) chunk.TransformBlocks(fn);
+    }
+
+    // Every non-empty section of every loaded chunk, for a full remesh.
+    std::vector<SectionKey> NonEmptySections() const
+    {
+        std::vector<SectionKey> keys;
+        std::shared_lock lock(mutex);
+        for (const auto& [key, chunk] : chunks)
+        {
+            for (int sectionY = 0; sectionY < SECTIONS_PER_CHUNK; sectionY++)
+            {
+                if (!chunk.IsSectionEmpty(sectionY)) keys.push_back({ chunk.getX(), chunk.getZ(), sectionY });
+            }
+        }
+        return keys;
     }
 
     // Solid-block lookup for collision, in world-block coordinates (not
@@ -95,7 +119,7 @@ public:
     }
 
     // Same shape as GetBlock, for the meshers' cross-chunk light lookups.
-    // Both channels in one lookup/lock — see LightSample's own comment.
+    // Both channels in one lookup/lock - see LightSample's own comment.
     LightSample GetLightSample(int worldX, int worldY, int worldZ) const
     {
         int chunkX = FloorDiv(worldX, CHUNK_SIZE_X);
@@ -103,16 +127,49 @@ public:
 
         std::shared_lock lock(mutex);
         auto it = chunks.find(ChunkKey(chunkX, chunkZ));
-        if (it == chunks.end()) return LightSample{}; // No chunk loaded there — same default as Chunk's own.
+        if (it == chunks.end()) return LightSample{}; // No chunk loaded there - same default as Chunk's own.
 
         int localX = worldX - chunkX * CHUNK_SIZE_X;
         int localZ = worldZ - chunkZ * CHUNK_SIZE_Z;
         return it->second.getLightSample(localX, worldY - WORLD_MIN_Y, localZ);
     }
 
+    // Calls fn(worldPosition, block) for every block with a block-entity kind
+    // inside the inclusive box. Holds the shared lock for the whole scan.
+    template<typename Fn>
+    void ForEachBlockEntityInBox(glm::ivec3 minCorner, glm::ivec3 maxCorner, Fn&& fn) const
+    {
+        int minY = std::max(minCorner.y, WORLD_MIN_Y);
+        int maxY = std::min(maxCorner.y, WORLD_MIN_Y + CHUNK_SIZE_Y - 1);
+        std::shared_lock lock(mutex);
+        for (int chunkX = FloorDiv(minCorner.x, CHUNK_SIZE_X); chunkX <= FloorDiv(maxCorner.x, CHUNK_SIZE_X); chunkX++)
+        {
+            for (int chunkZ = FloorDiv(minCorner.z, CHUNK_SIZE_Z); chunkZ <= FloorDiv(maxCorner.z, CHUNK_SIZE_Z); chunkZ++)
+            {
+                auto it = chunks.find(ChunkKey(chunkX, chunkZ));
+                if (it == chunks.end()) continue;
+                int x0 = std::max(minCorner.x, chunkX * CHUNK_SIZE_X);
+                int x1 = std::min(maxCorner.x, chunkX * CHUNK_SIZE_X + CHUNK_SIZE_X - 1);
+                int z0 = std::max(minCorner.z, chunkZ * CHUNK_SIZE_Z);
+                int z1 = std::min(maxCorner.z, chunkZ * CHUNK_SIZE_Z + CHUNK_SIZE_Z - 1);
+                for (int x = x0; x <= x1; x++)
+                {
+                    for (int z = z0; z <= z1; z++)
+                    {
+                        for (int y = minY; y <= maxY; y++)
+                        {
+                            Block block = it->second.getBlock(x - chunkX * CHUNK_SIZE_X, y - WORLD_MIN_Y, z - chunkZ * CHUNK_SIZE_Z);
+                            if (block.blockEntityKind != 0) fn(glm::ivec3(x, y, z), block);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Read access to an already-loaded chunk, for MeshingThread re-meshing
     // a dirty section (SetBlock's caller already has the chunk coordinates,
-    // not a Chunk — the dirty-remesh queue carries only SectionKeys, not
+    // not a Chunk - the dirty-remesh queue carries only SectionKeys, not
     // chunk data, since the chunk itself already lives here). nullptr if
     // nothing is loaded at that column.
     const Chunk* GetChunk(int chunkX, int chunkZ) const
@@ -125,13 +182,13 @@ public:
     // Mutates one block in an already-loaded chunk and reports which mesh
     // sections need to be rebuilt as a result. No-op (empty return) if
     // `localPosition` is out of the chunk's 16x384x16 bounds or the chunk
-    // isn't loaded — there's nothing to edit or remesh either way.
+    // isn't loaded - there's nothing to edit or remesh either way.
     //
     // `chunkPos` uses this codebase's usual world-axis convention (X/Z
     // horizontal, Y vertical) even though a chunk COLUMN only has an X/Z
-    // identity — chunkPos.y is simply unused; the section's own vertical
+    // identity - chunkPos.y is simply unused; the section's own vertical
     // index comes from localPosition.y instead. (glm::ivec3, not vec3 as
-    // originally asked — chunk/block indices must be integers, matching
+    // originally asked - chunk/block indices must be integers, matching
     // every other lookup in this file.)
     //
     // Beyond the edited section itself, a boundary edit invalidates a
@@ -141,14 +198,14 @@ public:
     // a 16-row boundary, and the neighboring CHUNK's same-Y section if the
     // edit was on an X/Z chunk edge (local x/z 0 or 15).
     //
-    // Returns SectionKeys rather than enqueueing them itself — World has no
+    // Returns SectionKeys rather than enqueueing them itself - World has no
     // GlobalState/queue access, so the caller (e.g. BreakBlockEvent, or
-    // MeshingThread draining a server Block Update correction — see
+    // MeshingThread draining a server Block Update correction - see
     // NetworkInbox::pendingBlockEdits) is responsible for pushing them into
     // GlobalState::NetworkInbox::dirtySections.
     //
     // uint16_t overload: visualId only ("produces a plain opaque-or-nothing
-    // Block" — see Chunk::setBlock's own comment), enough for breaking a
+    // Block" - see Chunk::setBlock's own comment), enough for breaking a
     // block (visualId 0 = air). The Block overload below sets the full
     // visual/collision state, for anything that isn't just "air" (a server
     // Block Update correcting a mispredicted edit to some other block).
@@ -166,7 +223,7 @@ public:
         });
     }
 
-    // World-block-coordinate convenience overloads — floor-divs into
+    // World-block-coordinate convenience overloads - floor-divs into
     // chunk+local the same way GetBlock does, for callers that only have a
     // world position (e.g. a Block Update packet's own coordinates).
     std::vector<SectionKey> SetBlock(glm::ivec3 worldPosition, uint16_t newState)
@@ -177,6 +234,23 @@ public:
     std::vector<SectionKey> SetBlock(glm::ivec3 worldPosition, const Block& newBlock)
     {
         return SetBlock(ChunkOf(worldPosition), LocalOf(worldPosition), newBlock);
+    }
+
+    // Overwrites one light channel of one cell. False if its chunk isn't loaded.
+    bool SetLight(int worldX, int worldY, int worldZ, bool sky, uint8_t value)
+    {
+        int chunkX = FloorDiv(worldX, CHUNK_SIZE_X);
+        int chunkZ = FloorDiv(worldZ, CHUNK_SIZE_Z);
+
+        std::unique_lock lock(mutex);
+        auto it = chunks.find(ChunkKey(chunkX, chunkZ));
+        if (it == chunks.end()) return false;
+
+        int localX = worldX - chunkX * CHUNK_SIZE_X;
+        int localZ = worldZ - chunkZ * CHUNK_SIZE_Z;
+        if (sky) it->second.setSkyLight(localX, worldY - WORLD_MIN_Y, localZ, value);
+        else it->second.setBlockLight(localX, worldY - WORLD_MIN_Y, localZ, value);
+        return true;
     }
 
     // Applies changed light sections and invalidates meshes that sample their
@@ -282,7 +356,7 @@ private:
     // Shared by both chunk-local SetBlock overloads: bounds-check, look up
     // the chunk, apply `mutate` (the one line that differs between the
     // uint16_t and full-Block overloads), then compute the same dirty-
-    // section set either way — see the public SetBlock's own comment for
+    // section set either way - see the public SetBlock's own comment for
     // what that covers.
     template <typename MutateFn>
     std::vector<SectionKey> SetBlockImpl(glm::ivec3 chunkPos, glm::ivec3 localPosition, MutateFn mutate)
@@ -316,6 +390,11 @@ private:
 
         if (localPosition.z == 0) dirty.push_back({ chunkPos.x, chunkPos.z - 1, sectionY });
         else if (localPosition.z == CHUNK_SIZE_Z - 1) dirty.push_back({ chunkPos.x, chunkPos.z + 1, sectionY });
+
+        // Corner column: the diagonal chunk reads this block for fluid corner heights.
+        int diagonalX = localPosition.x == 0 ? -1 : (localPosition.x == CHUNK_SIZE_X - 1 ? 1 : 0);
+        int diagonalZ = localPosition.z == 0 ? -1 : (localPosition.z == CHUNK_SIZE_Z - 1 ? 1 : 0);
+        if (diagonalX != 0 && diagonalZ != 0) dirty.push_back({ chunkPos.x + diagonalX, chunkPos.z + diagonalZ, sectionY });
 
         return dirty;
     }

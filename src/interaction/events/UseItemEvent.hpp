@@ -8,7 +8,7 @@
 
 namespace Volcano {
 
-// A secondary-trigger click with nothing targeted — no block or entity in
+// A secondary-trigger click with nothing targeted - no block or entity in
 // reach (see InteractionManager::SecondaryTriggerStart/Hold). Eating,
 // drinking, drawing a bow, throwing an ender pearl, blocking with a shield,
 // etc. all go through this same packet; what actually happens is entirely

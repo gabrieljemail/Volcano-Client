@@ -35,7 +35,7 @@ VisibleChunkController::Frustum VisibleChunkController::ExtractFrustum(const glm
 
 // "Positive vertex" AABB-vs-plane test: for each plane, pick the box corner
 // furthest along the plane's inward normal and reject the box only if even
-// that corner is outside — a box straddling a plane (the common case at
+// that corner is outside - a box straddling a plane (the common case at
 // frustum edges) survives, which is what a conservative cull needs.
 bool VisibleChunkController::AabbIntersectsFrustum(const glm::vec3& min, const glm::vec3& max, const Frustum& frustum)
 {
@@ -54,7 +54,7 @@ bool VisibleChunkController::AabbIntersectsFrustum(const glm::vec3& min, const g
 }
 
 std::vector<const Mesh*> VisibleChunkController::GetVisibleMeshes(
-    const std::unordered_map<SectionKey, Mesh, SectionKeyHash>& meshes, const glm::mat4& viewProj)
+    const std::unordered_map<SectionKey, Mesh, SectionKeyHash>& meshes, const glm::mat4& viewProj, bool useOcclusion)
 {
     Frustum frustum = ExtractFrustum(viewProj);
 
@@ -71,13 +71,19 @@ std::vector<const Mesh*> VisibleChunkController::GetVisibleMeshes(
 
         if (!AabbIntersectsFrustum(sectionMin, sectionMax, frustum)) continue;
 
+        if (!useOcclusion)
+        {
+            visible.push_back(&mesh);
+            continue;
+        }
+
         // Hi-Z occlusion: drop sections fully hidden behind nearer
-        // geometry, per the pyramid from a couple of frames ago — see
+        // geometry, per the pyramid from a couple of frames ago - see
         // OcclusionSnapshot's own comment on the lag and why it's safe.
-        occlusionSnapshot.tested++;
+        if (occlusionSnapshot.collectStats) occlusionSnapshot.tested++;
         if (occlusionSnapshot.IsOccluded(sectionMin, sectionMax))
         {
-            occlusionSnapshot.occluded++;
+            if (occlusionSnapshot.collectStats) occlusionSnapshot.occluded++;
             continue;
         }
 

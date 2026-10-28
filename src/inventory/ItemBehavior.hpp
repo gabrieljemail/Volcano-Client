@@ -78,6 +78,22 @@ inline ItemBehavior ItemBehaviorFor(const ItemRegistry::ItemTypeInfo* item)
     return behavior;
 }
 
+// True for items whose block click passes in vanilla (Item.useOn returns
+// PASS) and that act through the UseItem packet that follows instead: buckets
+// (the server ray-casts for the fluid itself), boats, thrown items, bottles.
+inline bool UsesItemAfterBlockClick(const ItemRegistry::ItemTypeInfo* item)
+{
+    using ItemBehaviorDetail::EndsWith;
+    if (item == nullptr) return false;
+    const std::string& name = item->name;
+    return EndsWith(name, "_bucket") || name == "bucket" || name == "glass_bottle"
+        || EndsWith(name, "_boat") || EndsWith(name, "_raft") || EndsWith(name, "_chest_boat")
+        || name == "ender_pearl" || name == "ender_eye" || name == "snowball" || EndsWith(name, "egg")
+        || name == "fishing_rod" || name == "experience_bottle" || name == "splash_potion"
+        || name == "lingering_potion" || name == "wind_charge" || name == "firework_rocket"
+        || name == "bundle" || name == "writable_book" || name == "written_book" || name == "filled_map";
+}
+
 // True if the mainhand item would act on a clicked block, so the offhand
 // gets no turn. Weapons and an empty hand don't.
 inline bool UsesOnBlocks(const ItemRegistry::ItemTypeInfo* item)

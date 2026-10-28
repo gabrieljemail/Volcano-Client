@@ -9,7 +9,7 @@
 namespace Volcano {
 
 // A primary-trigger click that landed on an entity (see
-// InteractionManager::PrimaryTrigger) — melee-attacking it with whatever's
+// InteractionManager::PrimaryTrigger) - melee-attacking it with whatever's
 // in the mainhand slot. Vanilla always attacks with the mainhand; there's
 // no such thing as an offhand attack.
 struct AttackEvent {

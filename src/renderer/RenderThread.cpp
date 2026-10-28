@@ -6,23 +6,29 @@
 #include <string>
 #include <thread>
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <GLFW/glfw3.h>
+#include "../Math.hpp"
 #include "RenderThread.hpp"
 #include "gui/GUIController.hpp"
 #include "../TickLoop.hpp"
+#include "../ModLoader.hpp"
+#include "../DropKey.hpp"
 #include "../interaction/InteractionManager.hpp"
 #include "../platform/OS.hpp"
+#include "../resources/ResourceReloader.hpp"
 
 using namespace std;
 
 namespace Volcano {
-// Declared here rather than including network/NetworkClient.hpp — same
+// Declared here rather than including network/NetworkClient.hpp - same
 // reasoning as GUIController.cpp's own forward declarations of this
 // function's siblings: that header drags in asio.hpp, which on Windows
 // pulls in <windows.h>. This one free function is all PollInputs actually
 // needs from it.
 void SendHeldItemSlot(GlobalState* state, uint8_t slot);
+void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position, glm::ivec3 face);
 }
 
 namespace Volcano {
@@ -55,12 +61,14 @@ void RenderThread::RunFrame()
     DrawFrame();
     // Both PollInputs (F11, TickLoop's jump check) and DrawFrame (via
     // GUIController::Update()'s Escape check) read this frame's
-    // press/release edges above — only clear them now that both have
+    // press/release edges above - only clear them now that both have
     // had their chance, not before.
     state->input->EndFrame();
 
     // Everything above except pacing, split into real CPU work and time
     // blocked on the GPU (fence/acquire, reported by the engine).
+    // Debug HUD only; skipped while it's hidden.
+    if (!state->debugHudVisible) return;
     float totalMs = chrono::duration<float, std::milli>(chrono::steady_clock::now() - workStart).count();
     float waitMs = state->timings.waitRawMs.load();
     constexpr float smoothing = 0.05f;
@@ -74,7 +82,7 @@ void RenderThread::RunFrame()
 
 void RenderThread::Shutdown()
 {
-    // Waits for the GPU before destroying anything — see StopRendering.
+    // Waits for the GPU before destroying anything - see StopRendering.
     state->renderEngine->StopRendering();
 }
 
@@ -130,11 +138,21 @@ void RenderThread::PollInputs()
     // Process inputs.
     state->input->ProcessFrame();
 
+    if (state->modLoader != nullptr && state->modLoader->HasHandlers(EventType::KEY_PRESSED))
+    {
+        for (int key = 0; key <= GLFW_KEY_LAST; key++)
+        {
+            if (!state->input->IsKeyPressed(key)) continue;
+            VC_EventData data{ sizeof(VC_EventData), nullptr, key, 0, 0, 0 };
+            state->modLoader->Fire(EventType::KEY_PRESSED, &data);
+        }
+    }
+
     // Alt+F4 (Windows/Linux), Ctrl+Q (Linux), Cmd+Q (macOS) close the game
     // directly, checked before the Screen-open early return below so it
     // still works while stuck in a menu. Added because relying solely on
     // the OS's own WM_CLOSE handling for Alt+F4 (glfwWindowShouldClose,
-    // checked just above) wasn't reliable on every Windows version — see
+    // checked just above) wasn't reliable on every Windows version - see
     // the Pause screen's own comment for the underlying cursor/focus fight.
 #if defined(_WIN32) || defined(__linux__)
     bool altDown = state->input->IsKeyDown(GLFW_KEY_LEFT_ALT) || state->input->IsKeyDown(GLFW_KEY_RIGHT_ALT);
@@ -162,21 +180,37 @@ void RenderThread::PollInputs()
     // Picks up Window.* changes from a Settings screen (no-op otherwise).
     state->renderEngine->ApplyWindowSettings();
 
-    if (state->input->WasActivated("ToggleWireframe"))
+    // F3 toggles the debug HUD on release, like vanilla, so F3+Z (wireframe)
+    // can be used as a combo without also flipping the HUD.
+    if (state->input->IsKeyDown(GLFW_KEY_F3) && state->input->IsKeyPressed(GLFW_KEY_Z)
+        && !GUIController::IsChatInputOpen())
     {
         wireframeMode = !wireframeMode;
+        f3ComboUsed = true;
+    }
+    // F3+T reloads resource packs (applied at the start of DrawFrame).
+    if (state->input->IsKeyDown(GLFW_KEY_F3) && state->input->IsKeyPressed(GLFW_KEY_T)
+        && !GUIController::IsChatInputOpen())
+    {
+        reloadResourcesRequested = true;
+        f3ComboUsed = true;
+    }
+    if (state->input->IsActive("ToggleDebugHud"))
+    {
+        if (!f3ComboUsed) state->debugHudVisible = !state->debugHudVisible;
+        f3ComboUsed = false;
     }
 
     // Controls.ToggleSprint: a Sprint press latches sprinting on/off instead
     // of needing the key held. Read every frame, same as Graphics.Lighting
-    // below — this isn't hot enough to bother caching.
+    // below - this isn't hot enough to bother caching.
     bool toggleSprint = std::get<bool>(state->config->Get("Controls.ToggleSprint", false));
     if (toggleSprint && state->input->WasActivated("Sprint"))
     {
         sprintToggled = !sprintToggled;
     }
 
-    // F9 rebuilds every render pass's pipelines from disk — picks up edited
+    // F9 rebuilds every render pass's pipelines from disk - picks up edited
     // shader pack (or built-in) .spv files without restarting. Applied at
     // the start of the next frame, between frames, by the engine itself.
     if (state->input->WasActivated("ReloadShaders"))
@@ -184,7 +218,7 @@ void RenderThread::PollInputs()
         state->renderEngine->RequestShaderReload();
     }
 
-    // "G" toggles Graphics.Lighting — see SceneView::lightingEnabled, read
+    // "G" toggles Graphics.Lighting - see SceneView::lightingEnabled, read
     // fresh from config every frame in BuildSceneView, so flipping it
     // here just needs to persist the new value. Gated on chat/screen being
     // closed so typing "g" into the chat box or a text field doesn't also
@@ -197,22 +231,28 @@ void RenderThread::PollInputs()
         state->config->Save();
     }
 
+    if (!GUIController::IsChatInputOpen() && !GUIController::IsScreenOpen()
+        && state->input->WasActivated("CyclePerspective"))
+    {
+        state->player->camera.CyclePerspective();
+    }
+
     // While a Screen (connect screen, pause menu, death screen, ...) or the
-    // chat input box is open, ImGui owns the mouse/keyboard — don't let them
+    // chat input box is open, ImGui owns the mouse/keyboard - don't let them
     // also fly the camera or move the player underneath it. TickLoop::Advance
     // still runs every frame regardless (see its own inputAllowed parameter)
-    // — gravity/collision and applying the server's teleports (e.g. a
+    // - gravity/collision and applying the server's teleports (e.g. a
     // respawn) must keep going even with a screen up, or the player freezes
     // mid-air and a pending teleport never lands until the screen closes.
     bool inputAllowed = !GUIController::IsScreenOpen() && !GUIController::IsChatInputOpen();
 
-    // Hotbar slot selection ("1".."9" — see their registration in
+    // Hotbar slot selection ("1".."9" - see their registration in
     // VolcanoClient.cpp). Gated the same way "G"/ToggleLighting is: typing a
     // digit into chat or a text field must not also swap the held slot.
     // Applied immediately to local state (read straight off GlobalState by
     // GUIController::RenderHotbarAndArmor, no round trip needed for the HUD
     // to update) and reported to the server so its own notion of the held
-    // slot — which future block-interaction packets need to agree with —
+    // slot - which future block-interaction packets need to agree with -
     // doesn't silently drift from what's shown locally.
     if (inputAllowed)
     {
@@ -229,10 +269,41 @@ void RenderThread::PollInputs()
         }
     }
 
+    // Drop key: a tap drops one item, holding it (or Ctrl) drops the stack - see
+    // DropKeyTracker. The count is reduced locally at once; the server's slot
+    // update corrects it. Spectators have nothing to drop.
+    static DropKeyTracker dropKey;
+    if (inputAllowed && state->localGameMode.load() != 3)
+    {
+        bool ctrlDown = state->input->IsKeyDown(GLFW_KEY_LEFT_CONTROL) || state->input->IsKeyDown(GLFW_KEY_RIGHT_CONTROL);
+        DropKeyTracker::Result drop = dropKey.Update(state->input->IsActive("DropItem"),
+            state->input->IsActive("DropItemHold"), state->input->IsActive("DropItemRelease"), ctrlDown, frameDeltaTime);
+        if (drop != DropKeyTracker::Result::NONE)
+        {
+            bool wholeStack = drop == DropKeyTracker::Result::STACK;
+            bool hadItem = false;
+            {
+                std::lock_guard<std::mutex> lock(state->inventory.mutex);
+                ItemStack& held = state->inventory.hotbar.Get(state->inventory.selectedHotbarSlot);
+                hadItem = !held.IsEmpty();
+                if (hadItem)
+                {
+                    if (wholeStack || held.count <= 1) held = ItemStack{};
+                    else held.count--;
+                }
+            }
+            if (hadItem) SendPlayerAction(state, wholeStack ? DigStatus::DropItemStack : DigStatus::DropItem, glm::ivec3(0), glm::ivec3(0));
+        }
+    }
+    else
+    {
+        dropKey.Reset();
+    }
+
     if (inputAllowed)
     {
         // Mouse sensitivity is applied entirely at the axis level (see the
-        // Camera.X/Y registration in VolcanoClient.cpp) — pass 1.0f here so
+        // Camera.X/Y registration in VolcanoClient.cpp) - pass 1.0f here so
         // there's exactly one sensitivity knob, not two multiplied together.
         float dx = state->input->GetAxis("Camera.X");
         float dy = state->input->GetAxis("Camera.Y");
@@ -242,10 +313,10 @@ void RenderThread::PollInputs()
     }
 
     // Mainhand/offhand interaction (attack; block breaking/placing once
-    // added) — same inputAllowed gate as Hotbar/Camera above.
+    // added) - same inputAllowed gate as Hotbar/Camera above.
     state->interaction->Update(inputAllowed);
 
-    // Publish this frame's input, then drive TickLoop with it immediately —
+    // Publish this frame's input, then drive TickLoop with it immediately -
     // gravity/collision/movement run right here (see TickLoop's class
     // comment). Jump is gated by inputAllowed at this read site; Move/Sneak/
     // Sprint publish unconditionally, since FixedStep() zeroes them itself.
@@ -268,9 +339,24 @@ void RenderThread::DrawFrame()
     // Time the current frame.
     auto workStart = chrono::steady_clock::now();
 
+    // Safe point: no ImGui frame open and no command buffer recording.
+    if (reloadResourcesRequested || ResourceReloader::ConsumeRequest())
+    {
+        reloadResourcesRequested = false;
+        ResourceReloader::Reload(state);
+
+        // The reload took seconds; don't feed that into physics or pacing.
+        auto reloaded = chrono::steady_clock::now();
+        lastFrameTime = reloaded;
+        frameDeltaTime = 0.0f;
+        nextFrameTarget = reloaded;
+        workStart = reloaded;
+    }
+
     // Update GUI with new frame
     GUIController::NewFrame();
     GUIController::Update(frameDeltaTime);
+    if (state->modLoader != nullptr) state->modLoader->Fire(EventType::FRAME_BEGIN);
 
     // BeginFrame handles any pending resize/shader reload and acquires an
     // output image; false means this frame is skipped (stale or minimized
@@ -308,7 +394,7 @@ void RenderThread::DrawFrame()
 namespace {
 
 // Vanilla's own day-time convention: 0/24000 = dawn, 6000 = noon (brightest),
-// 12000 = dusk, 18000 = midnight (darkest) — see GlobalState::dayTimeTicks.
+// 12000 = dusk, 18000 = midnight (darkest) - see GlobalState::dayTimeTicks.
 // A single cosine gives a smooth day/night gradient without hardcoding a
 // multi-segment sunrise/sunset table: brightness is 1.0 exactly at noon,
 // 0.0 exactly at midnight, and 0.5 at both twilight points (dawn/dusk),
@@ -329,18 +415,30 @@ constexpr glm::vec3 SKY_TOP_DAY(0.471f, 0.655f, 1.0f);
 constexpr glm::vec3 SKY_HORIZON_NIGHT(0.02f, 0.02f, 0.05f);
 constexpr glm::vec3 SKY_HORIZON_DAY(0.753f, 0.847f, 1.0f);
 
-// C++ mirror of terrain.frag's NotGamma — see its own comment for the
+// C++ mirror of terrain.frag's NotGamma - see its own comment for the
 // curve's shape and where it comes from (the real notGamma(vec3) in
 // resources/minecraft/assets/minecraft/shaders/core/lightmap.fsh). Used
 // here to apply the same "Bright" curve to the sky clear color that the
 // shader applies to per-block lighting, so raising Graphics.Brightness
 // actually lifts the night sky instead of leaving it exactly as dark as a
-// pure day/night color lerp would — the "clear color interpolation is
+// pure day/night color lerp would - the "clear color interpolation is
 // linear" gap this was added to close.
 float NotGamma(float level)
 {
     float inverted = 1.0f - level;
     return 1.0f - (inverted * inverted * inverted * inverted);
+}
+
+// Vanilla's GameRenderer.bobView: a side-to-side sway and a dip with each
+// step, a roll with the sway and a slight nod.
+glm::mat4 ViewBobMatrix(const TickLoop::ViewBob& bob)
+{
+    float phase = -bob.walkDistance * glm::pi<float>();
+    float h = bob.bob;
+    glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(std::sin(phase) * h * 0.5f, -std::abs(std::cos(phase) * h), 0.0f));
+    m = glm::rotate(m, glm::radians(std::sin(phase) * h * 3.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    m = glm::rotate(m, glm::radians(std::abs(std::cos(phase - 0.2f) * h) * 5.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    return m;
 }
 
 } // namespace
@@ -350,9 +448,42 @@ Engine::SceneView RenderThread::BuildSceneView()
     Engine::SceneView scene;
 
     glm::vec3 renderPosition = state->tickLoop->GetRenderPosition();
-    scene.view = state->player->camera.GetViewMatrix(renderPosition);
+
+    // Body View: the camera rides higher so it sits at the model's eyes. Render-only; reach and
+    // raycasts still use the real eye the server checks.
+    glm::vec3 cameraBase = renderPosition;
+
+    // The tick thread eases the eye height 20 times a second; smoothing it per frame keeps the sneak dip from stepping.
+    {
+        static float smoothEye = -1.0f;
+        static std::chrono::steady_clock::time_point lastEye = std::chrono::steady_clock::now();
+        auto nowEye = std::chrono::steady_clock::now();
+        float deltaEye = std::min(std::chrono::duration<float>(nowEye - lastEye).count(), 0.1f);
+        lastEye = nowEye;
+        float eyeNow = state->player->camera.eyeHeight.load(std::memory_order_relaxed);
+        smoothEye = smoothEye < 0.0f ? eyeNow : Math::Damp(smoothEye, eyeNow, 30.0f, deltaEye);
+        cameraBase.y += smoothEye - eyeNow;
+    }
+    if (state->player->camera.IsFirstPerson() && std::get<bool>(state->config->Get("Graphics.BodyView", false)))
+    {
+        constexpr float STANDING_EYE = 1.62f;
+        constexpr float BODY_VIEW_EYE = 1.85f;
+        float eye = state->player->camera.eyeHeight.load(std::memory_order_relaxed);
+        cameraBase.y += (BODY_VIEW_EYE - STANDING_EYE) * std::min(eye / STANDING_EYE, 1.0f);
+    }
+    scene.view = state->player->camera.GetViewMatrix(cameraBase);
     scene.proj = BuildProjection(state->renderEngine->GetExtent());
-    scene.cameraPosition = state->player->camera.GetEyePosition(renderPosition);
+    scene.cameraPosition = state->player->camera.GetCameraPosition(cameraBase);
+
+    // View bobbing, applied in front of the camera as vanilla's bobView does.
+    // The camera position then comes from the bobbed view, so passes that draw
+    // camera-relative (particles, clouds) stay lined up with the terrain.
+    if (std::get<bool>(state->config->Get("Graphics.ViewBobbing", true)))
+    {
+        scene.viewBob = ViewBobMatrix(state->tickLoop->GetViewBob());
+        scene.view = scene.viewBob * scene.view;
+        scene.cameraPosition = glm::vec3(glm::inverse(scene.view)[3]);
+    }
 
     // Read once and shared between skyColor below and the UBO fields further
     // down (VulkanRenderEngine::SubmitFrame), rather than two separate config
@@ -369,6 +500,8 @@ Engine::SceneView RenderThread::BuildSceneView()
     scene.dayBrightness = DayBrightness(dayTime);
     scene.brightnessFactor = brightnessFactor;
     scene.lightFalloff = lightFalloff;
+    scene.specularStrength = static_cast<float>(
+        std::get<uint32_t>(state->config->Get("Graphics.Specular", uint32_t{50}))) / 100.0f;
 
     // Sun rises in the east (+X), is overhead at noon (6000), sets in the
     // west; the moon is always opposite. Phase advances once per day.
@@ -387,7 +520,7 @@ Engine::SceneView RenderThread::BuildSceneView()
     scene.fogStart = renderDistanceBlocks - std::clamp(renderDistanceBlocks / 10.0f, 4.0f, 64.0f);
 
     // Vanilla's hardcoded per-face shade (LevelRenderer::getShade), stored
-    // as a 0-100 percentage like Brightness above rather than a raw float —
+    // as a 0-100 percentage like Brightness above rather than a raw float -
     // Config has no float alternative (see ConfigValue). Face defaults are
     // Up=100, Down=40, North/South=80, East/West=60.
     scene.shadeTop = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.Shading.Top", uint32_t{100}))) / 100.0f;
@@ -397,7 +530,7 @@ Engine::SceneView RenderThread::BuildSceneView()
 
     // Same γ/NotGamma blend terrain.frag applies to per-block lighting, so
     // raising Graphics.Brightness lifts the night sky too instead of only
-    // affecting terrain — this is the "clear color interpolation is linear"
+    // affecting terrain - this is the "clear color interpolation is linear"
     // gap. Skipped entirely (not just blended toward brightnessFactor=0)
     // when lighting is off, matching "G"'s existing all-or-nothing meaning.
     float skyColorBrightness = lightingEnabled
@@ -419,6 +552,7 @@ Engine::SceneView RenderThread::BuildSceneView()
         && state->connectionPhase.load() != ConnectionPhase::Playing;
     scene.lightingEnabled = lightingEnabled;
     scene.wireframe = wireframeMode;
+    scene.indirectDraw = std::get<bool>(state->config->Get("Graphics.IndirectDraw", true));
     return scene;
 }
 
@@ -426,20 +560,20 @@ glm::mat4 RenderThread::BuildProjection(const Engine::RenderExtent& extent)
 {
     // A minimized window can report a zero-height extent for a frame.
     float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height > 0 ? extent.height : 1);
-    float baseFov = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOV", uint32_t{100})));
+    float baseFov = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOV", uint32_t{80})));
 
-    // Flying doesn't exist yet (no fly toggle — same placeholder
+    // Flying doesn't exist yet (no fly toggle - same placeholder
     // GUIController's movement-state panel uses) so only sprinting drives
     // this for now; whoever adds flight just needs to flip isFlying here,
     // the easing below already handles either.
     constexpr bool isFlying = false;
     bool boosted = isFlying || state->tickLoop->GetMovementSnapshot().sprinting;
     float targetFovOffset = boosted
-        ? static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOVEffects", uint32_t{5})))
+        ? static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOVEffects", uint32_t{10})))
         : 0.0f;
 
     // Framerate-independent exponential ease toward the target offset every
-    // frame instead of snapping the instant a sprint starts/stops — see
+    // frame instead of snapping the instant a sprint starts/stops - see
     // currentFovOffset's own comment. Also where a future FOV *decrease*
     // (aiming down sights, etc.) would plug in: just another signed target
     // fed into the same easing.
@@ -447,7 +581,7 @@ glm::mat4 RenderThread::BuildProjection(const Engine::RenderExtent& extent)
     currentFovOffset = glm::mix(currentFovOffset, targetFovOffset,
         1.0f - std::exp(-FOV_EASE_RATE * frameDeltaTime));
 
-    // Vulkan's clip space has Y pointing down — flip it so the image lands
+    // Vulkan's clip space has Y pointing down - flip it so the image lands
     // right-side-up.
     glm::mat4 p = glm::perspective(glm::radians(baseFov + currentFovOffset), aspect, 0.05f, 1000.0f);
     p[1][1] *= -1.0f;

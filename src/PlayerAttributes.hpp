@@ -10,7 +10,7 @@ namespace Volcano {
 
 // Backed by a real NBT::TagCompound (same field names Minecraft itself uses,
 // e.g. "generic.movement_speed"), but populated with hardcoded defaults for
-// now — there's no player-data file or server attribute sync to read from
+// now - there's no player-data file or server attribute sync to read from
 // yet. Same "slot" pattern as BiomeColors.hpp: once real NBT data is
 // available (a parsed player.dat, or a server attributes packet), it plugs
 // in here without changing how TickLoop reads attributes.
@@ -19,7 +19,7 @@ namespace Volcano {
 // handler writes the local player's resolved attributes (attack speed from
 // the held weapon, reach, movement speed, ...) here from NetworkThread,
 // while TickLoop (NetworkThread) and InteractionManager (render thread)
-// read them — so every access goes through `mutex`.
+// read them - so every access goes through `mutex`.
 class PlayerAttributes {
 public:
     PlayerAttributes() = default;

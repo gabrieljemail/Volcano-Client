@@ -1,0 +1,15 @@
+{
+    "_comment": "AdultChickenModel.createBodyLayer, 64x32 (chicken_temperate.png).",
+    "textureWidth": 64,
+    "textureHeight": 32,
+    "boxes": [
+        { "name": "head",      "origin": [-2, -6, -2],  "size": [4, 6, 3], "uv": [0, 0],   "pivot": [0, 15, -4] },
+        { "name": "beak", "part": "head",      "origin": [-2, -4, -4],  "size": [4, 2, 2], "uv": [14, 0],  "pivot": [0, 15, -4] },
+        { "name": "red_thing", "part": "head", "origin": [-1, -2, -3],  "size": [2, 2, 2], "uv": [14, 4],  "pivot": [0, 15, -4] },
+        { "name": "body",      "origin": [-3, -4, -3],  "size": [6, 8, 6], "uv": [0, 9],   "pivot": [0, 16, 0], "rotation": [90, 0, 0] },
+        { "name": "right_leg", "origin": [-1, 0, -3],   "size": [3, 5, 3], "uv": [26, 0],  "pivot": [-2, 19, 1] },
+        { "name": "left_leg",  "origin": [-1, 0, -3],   "size": [3, 5, 3], "uv": [26, 0],  "pivot": [1, 19, 1] },
+        { "name": "right_wing", "origin": [0, 0, -3],   "size": [1, 4, 6], "uv": [24, 13], "pivot": [-4, 13, 0] },
+        { "name": "left_wing",  "origin": [-1, 0, -3],  "size": [1, 4, 6], "uv": [24, 13], "pivot": [4, 13, 0] }
+    ]
+}

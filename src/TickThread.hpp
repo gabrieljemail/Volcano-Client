@@ -10,16 +10,16 @@ namespace Volcano {
 
 // Builds and sends this session's per-tick movement packets on its own
 // steady 1/20s wall-clock cadence, independent of NetworkThread's blocking
-// socket reads. Read-only w.r.t. player state — only samples position and
+// socket reads. Read-only w.r.t. player state - only samples position and
 // TickLoop's grounded/horizontalCollision (see TickLoop's class comment for
 // why it no longer drives the physics itself).
 //
 // Idles (like MeshingThread) until GlobalState::worldReady is set and a
 // connection exists, rather than being started/stopped per connection
-// attempt — started once, immediately, alongside MeshingThread.
+// attempt - started once, immediately, alongside MeshingThread.
 //
 // Reaches the socket only through GlobalState::activeConnection's
-// QueuePacket — never SendPacket directly, since this isn't the network
+// QueuePacket - never SendPacket directly, since this isn't the network
 // thread (see Connection's own comment).
 //
 // Its per-tick send sequence mirrors the real client's tick (see

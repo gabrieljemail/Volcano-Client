@@ -5,82 +5,54 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
-#include <stdexcept>
 #include <string>
 
 namespace Volcano {
 
-VkDeviceSize SlabBuffer::AffordableSize(VkDeviceSize wanted, double share, uint32_t slabCount)
+namespace {
+
+// Growth stops while this much (plus the new block) wouldn't stay free in
+// system RAM, so a big world can't push a low-RAM machine into swapping.
+constexpr uint64_t RAM_HEADROOM_BYTES = 256ull * 1024 * 1024;
+
+} // namespace
+
+void SlabBuffer::Init(VkDeviceSize limitIn, VkBufferUsageFlags usageIn)
 {
-    // Never plan to use more than 40% of what's free; 0 means the query failed.
-    constexpr double RAM_FRACTION = 0.4;
-    constexpr VkDeviceSize MIN_SLAB = 8ull * 1024 * 1024;
-
-    uint64_t available = Platform::OS::GetAvailablePhysicalMemoryBytes();
-    if (available == 0) return wanted;
-
-    double perSlab = static_cast<double>(available) * RAM_FRACTION * share / std::max(1u, slabCount);
-    VkDeviceSize capped = std::max<VkDeviceSize>(MIN_SLAB, std::min<VkDeviceSize>(wanted, static_cast<VkDeviceSize>(perSlab)));
-    if (capped < wanted) {
-        Log::Info("SlabBuffer: capping a " + std::to_string(wanted / (1024 * 1024)) + " MB slab to "
-            + std::to_string(capped / (1024 * 1024)) + " MB (" + std::to_string(available / (1024 * 1024))
-            + " MB RAM free).");
-    }
-    return capped;
+    std::lock_guard<std::mutex> lock(mutex);
+    usage = usageIn;
+    limit = std::max(limitIn, BLOCK_SIZE);
+    initialized = true;
 }
 
-void SlabBuffer::Init(VkDeviceSize capacityIn, VkBufferUsageFlags usage) {
+void SlabBuffer::Destroy()
+{
     std::lock_guard<std::mutex> lock(mutex);
-    used = 0;
-    freeRanges.clear();
+    for (auto& block : blocks) DestroyBlockLocked(*block);
+    blocks.clear();
     pendingFrees.clear();
-
-    // CreateBuffer doesn't report failure except through a null allocation.
-    // The host-visible heap can be small (low RAM, or capped without
-    // resizable BAR), so halve the request until it fits rather than failing.
-    constexpr VkDeviceSize MIN_CAPACITY = 8ull * 1024 * 1024;
-    capacity = capacityIn;
-    while (true) {
-        buffer = CreateBuffer(capacity, usage, true /* isUMA: host-visible, sequential write */);
-        if (buffer.buffer != VK_NULL_HANDLE && buffer.allocation != nullptr) break;
-
-        if (capacity <= MIN_CAPACITY) {
-            throw std::runtime_error("[ERROR] SlabBuffer couldn't allocate even " + std::to_string(MIN_CAPACITY)
-                + " bytes — the system is out of memory.");
-        }
-        capacity /= 2;
-    }
-    if (capacity != capacityIn) {
-        Log::Error("SlabBuffer: " + std::to_string(capacityIn / (1024 * 1024)) + " MB didn't fit; using "
-            + std::to_string(capacity / (1024 * 1024)) + " MB. Lower Graphics.SlabSize.* to silence this.");
-    }
-    vmaMapMemory(vmaAllocator, buffer.allocation, &mapped);
-
-    freeRanges[0] = capacity; // the whole slab starts out free
-}
-
-void SlabBuffer::Destroy() {
-    std::lock_guard<std::mutex> lock(mutex);
-    if (buffer.buffer == VK_NULL_HANDLE) return;
-
-    if (mapped) {
-        vmaUnmapMemory(vmaAllocator, buffer.allocation);
-        mapped = nullptr;
-    }
-
-    vmaDestroyBuffer(vmaAllocator, buffer.buffer, buffer.allocation);
-    buffer = AllocatedBuffer{};
     capacity = 0;
     used = 0;
-    freeRanges.clear();
-    pendingFrees.clear();
+    blockCount = 0;
+    initialized = false;
 }
 
-// Adds [offset, offset + size) to freeRanges, merging with any adjacent
-// free range on either side so the list doesn't fragment into slivers.
-void SlabBuffer::InsertFreeLocked(VkDeviceSize offset, VkDeviceSize size) {
+void SlabBuffer::DestroyBlockLocked(Block& block)
+{
+    if (block.buffer.buffer == VK_NULL_HANDLE) return;
+    if (block.mapped) vmaUnmapMemory(vmaAllocator, block.buffer.allocation);
+    vmaDestroyBuffer(vmaAllocator, block.buffer.buffer, block.buffer.allocation);
+    block.buffer = AllocatedBuffer{};
+    block.mapped = nullptr;
+}
+
+// Adds [offset, offset + size) to the block's free ranges, merging with any
+// adjacent free range on either side so the list doesn't fragment into slivers.
+void SlabBuffer::InsertFreeLocked(Block& block, VkDeviceSize offset, VkDeviceSize size)
+{
     if (size == 0) return;
 
+    auto& freeRanges = block.freeRanges;
     auto next = freeRanges.lower_bound(offset);
     if (next != freeRanges.begin()) {
         auto prev = std::prev(next);
@@ -97,56 +69,139 @@ void SlabBuffer::InsertFreeLocked(VkDeviceSize offset, VkDeviceSize size) {
     freeRanges[offset] = size;
 }
 
-void SlabBuffer::ReclaimPendingLocked() {
+void SlabBuffer::ReclaimPendingLocked()
+{
     uint64_t now = renderFrameCounter.load();
     while (!pendingFrees.empty() && now >= pendingFrees.front().frame + FREE_DELAY_FRAMES) {
-        InsertFreeLocked(pendingFrees.front().offset, pendingFrees.front().size);
+        const PendingFree& pending = pendingFrees.front();
+        for (size_t i = 0; i < blocks.size(); i++) {
+            Block& block = *blocks[i];
+            if (block.buffer.buffer != pending.buffer) continue;
+
+            InsertFreeLocked(block, pending.offset, pending.size);
+
+            // A block that's entirely free again is handed back (the first one
+            // stays, so a steady-state world doesn't churn VkBuffers).
+            if (i > 0 && block.freeRanges.size() == 1 && block.freeRanges.begin()->first == 0
+                && block.freeRanges.begin()->second == block.capacity) {
+                capacity -= block.capacity;
+                blockCount--;
+                DestroyBlockLocked(block);
+                blocks.erase(blocks.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+            break;
+        }
         pendingFrees.pop_front();
     }
 }
 
-bool SlabBuffer::Allocate(const void* data, VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize& outOffset) {
+bool SlabBuffer::AllocateFromBlockLocked(Block& block, const void* data, VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize& outOffset)
+{
+    // First fit. Division-based rounding: alignment (e.g.
+    // sizeof(PackedVertex) == 12) is not always a power of two, so the
+    // classic `& ~(alignment - 1)` bitmask trick doesn't round correctly.
+    for (auto it = block.freeRanges.begin(); it != block.freeRanges.end(); ++it) {
+        VkDeviceSize start = it->first;
+        VkDeviceSize end = start + it->second;
+        VkDeviceSize aligned = alignment > 0 ? ((start + alignment - 1) / alignment) * alignment : start;
+        if (aligned + size > end) continue;
+
+        block.freeRanges.erase(it);
+        // Alignment padding before, and the remainder after, stay free.
+        InsertFreeLocked(block, start, aligned - start);
+        InsertFreeLocked(block, aligned + size, end - (aligned + size));
+
+        memcpy(static_cast<uint8_t*>(block.mapped) + aligned, data, static_cast<size_t>(size));
+        outOffset = aligned;
+        return true;
+    }
+    return false;
+}
+
+SlabBuffer::Block* SlabBuffer::AddBlockLocked(VkDeviceSize minimumSize)
+{
+    VkDeviceSize size = std::max(BLOCK_SIZE, minimumSize);
+    if (capacity.load() + size > limit) return nullptr;
+
+    uint64_t available = Platform::OS::GetAvailablePhysicalMemoryBytes(); // 0 = unknown.
+    if (available != 0 && available < size + RAM_HEADROOM_BYTES) return nullptr;
+
+    auto block = std::make_unique<Block>();
+    block->buffer = CreateBuffer(size, usage, true /* isUMA: host-visible, sequential write */);
+    if (block->buffer.buffer == VK_NULL_HANDLE || block->buffer.allocation == nullptr) return nullptr;
+
+    vmaMapMemory(vmaAllocator, block->buffer.allocation, &block->mapped);
+    block->capacity = size;
+    block->freeRanges[0] = size;
+    capacity += size;
+    blockCount++;
+    blocks.push_back(std::move(block));
+    return blocks.back().get();
+}
+
+bool SlabBuffer::Allocate(const void* data, VkDeviceSize size, VkDeviceSize alignment, VkBuffer& outBuffer, VkDeviceSize& outOffset)
+{
     std::lock_guard<std::mutex> lock(mutex);
     if (size == 0) {
+        outBuffer = VK_NULL_HANDLE;
         outOffset = 0;
         return true;
     }
 
     ReclaimPendingLocked();
 
-    // First fit. Division-based rounding: alignment (e.g.
-    // sizeof(PackedVertex) == 12) is not always a power of two, so the
-    // classic `& ~(alignment - 1)` bitmask trick doesn't round correctly.
-    for (auto it = freeRanges.begin(); it != freeRanges.end(); ++it) {
-        VkDeviceSize start = it->first;
-        VkDeviceSize end = start + it->second;
-        VkDeviceSize aligned = alignment > 0 ? ((start + alignment - 1) / alignment) * alignment : start;
-        if (aligned + size > end) continue;
-
-        freeRanges.erase(it);
-        // Alignment padding before, and the remainder after, stay free.
-        InsertFreeLocked(start, aligned - start);
-        InsertFreeLocked(aligned + size, end - (aligned + size));
-
-        memcpy(static_cast<uint8_t*>(mapped) + aligned, data, static_cast<size_t>(size));
-        used += size;
-        outOffset = aligned;
-        return true;
+    VkDeviceSize offset = 0;
+    Block* target = nullptr;
+    for (auto& block : blocks) {
+        if (AllocateFromBlockLocked(*block, data, size, alignment, offset)) {
+            target = block.get();
+            break;
+        }
     }
 
-    Log::Error("SlabBuffer out of space (capacity " + std::to_string(capacity)
-              + " bytes, " + std::to_string(used.load()) + " in use, requested " + std::to_string(size)
-              + " bytes). Consider increasing Graphics.SlabSize.");
-    return false;
+    if (target == nullptr) {
+        // Room for the request even after worst-case alignment padding.
+        Block* grown = AddBlockLocked(size + alignment);
+        if (grown != nullptr && AllocateFromBlockLocked(*grown, data, size, alignment, offset)) target = grown;
+    }
+
+    if (target == nullptr) {
+        suppressedFailures++;
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastFailureLog >= std::chrono::seconds(2)) {
+            Log::Error("SlabBuffer can't grow (" + std::to_string(capacity.load() / (1024 * 1024)) + " MB committed of a "
+                + std::to_string(limit / (1024 * 1024)) + " MB limit, " + std::to_string(used.load() / (1024 * 1024))
+                + " MB in use, requested " + std::to_string(size) + " bytes; " + std::to_string(suppressedFailures)
+                + " failed since the last report) - those sections will retry. Raise Graphics.SlabSize or free RAM.");
+            lastFailureLog = now;
+            suppressedFailures = 0;
+        }
+        return false;
+    }
+
+    used += size;
+    outBuffer = target->buffer.buffer;
+    outOffset = offset;
+    return true;
 }
 
-void SlabBuffer::Free(VkDeviceSize offset, VkDeviceSize size) {
-    if (size == 0) return;
+void SlabBuffer::Free(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size)
+{
+    if (size == 0 || buffer == VK_NULL_HANDLE) return;
     std::lock_guard<std::mutex> lock(mutex);
-    if (buffer.buffer == VK_NULL_HANDLE) return;
 
-    pendingFrees.push_back({ offset, size, renderFrameCounter.load() });
+    pendingFrees.push_back({ buffer, offset, size, renderFrameCounter.load() });
     used -= size;
+}
+
+bool SlabBuffer::Owns(VkBuffer buffer) const
+{
+    if (buffer == VK_NULL_HANDLE) return false;
+    std::lock_guard<std::mutex> lock(mutex);
+    for (const auto& block : blocks) {
+        if (block->buffer.buffer == buffer) return true;
+    }
+    return false;
 }
 
 } // namespace Volcano

@@ -1,15 +1,24 @@
 #include "NetworkClient.hpp"
 #include "VarInt.hpp"
+#include "SlotSkipper.hpp"
 #include "PacketIds.hpp"
+#include "NetworkStats.hpp"
+#include "../renderer/entity/models/EntityMotion.hpp"
+#include <thread>
 #include "TextComponent.hpp"
 #include "models/ChatEvent.hpp"
+#include "models/PacketEvent.hpp"
 #include "../Logger.hpp"
 #include "../ModLoader.hpp"
+#include "../RideController.hpp"
+#include "../audio/EntitySounds.hpp"
+#include "../interaction/CombatSounds.hpp"
 #include "../renderer/terrain/ChunkParser.hpp"
 #include "../renderer/terrain/models/BlockRegistry.hpp"
 #include "../renderer/gui/models/Chat.hpp"
 #include "../renderer/entity/models/Entity.hpp"
 #include "../renderer/entity/models/EntityRegistry.hpp"
+#include "../renderer/particle/ParticleSystem.hpp"
 #include <glm/gtc/constants.hpp>
 #include <openssl/evp.h>
 #include <algorithm>
@@ -25,6 +34,24 @@
 namespace Volcano {
 
 namespace {
+
+// Tells mods a chat message arrived (CHAT_RECEIVED): sender and message flattened to plain text.
+void FireChatReceived(GlobalState* state, const ChatEvent& event)
+{
+    if (state->modLoader == nullptr || !state->modLoader->HasHandlers(EventType::CHAT_RECEIVED)) return;
+
+    std::string text;
+    if (!event.sender.empty())
+    {
+        text += "<";
+        for (const ChatSegment& segment : event.sender) text += segment.text;
+        text += "> ";
+    }
+    for (const ChatSegment& segment : event.message) text += segment.text;
+
+    VC_EventData data{ sizeof(VC_EventData), text.c_str(), 0, 0, 0, 0 };
+    state->modLoader->Fire(EventType::CHAT_RECEIVED, &data);
+}
 
 // Matches Java's UUID.nameUUIDFromBytes("OfflinePlayer:<name>"), which is
 // what vanilla uses to derive an offline-mode account's UUID: MD5 of the
@@ -52,7 +79,7 @@ std::array<uint8_t, 16> OfflineUuidFromUsername(const std::string& username)
 // Minecraft packs yaw/pitch as a signed byte spanning a full 360 degrees
 // (256 steps per turn). entity.vert/entity_textured.vert's shared yaw
 // rotation matrix computes world forward as (sin(yaw), 0, cos(yaw)) for a
-// mesh's local +Z — the mirror image of Minecraft's own convention
+// mesh's local +Z - the mirror image of Minecraft's own convention
 // (forward = (-sin(yaw), 0, cos(yaw)), verified against
 // Entity.calculateViewVector in resources/minecraft-code). Every shape's
 // mesh (QuadrupedModel, PigModel, CowModel, and EntityJsonModel's humanoid
@@ -67,7 +94,34 @@ float AngleByteToRadians(int8_t angleByte)
     return static_cast<float>(-angleByte) * (glm::pi<float>() / 128.0f);
 }
 
-// Minecraft's LpVec3 — the compact velocity encoding Spawn Entity and Set
+// Puts an entity where the server says it is. A simulated entity (items,
+// arrows, ...) keeps its own flight and fades any real difference out as a
+// correction, rather than snapping to the position the server sent a few
+// ticks ago.
+void SetServerPosition(Entity& entity, const glm::vec3& serverPosition, std::chrono::steady_clock::time_point now)
+{
+    entity.serverPosition = serverPosition;
+    if (!entity.simulated) {
+        entity.previousPosition = entity.position;
+        entity.position = serverPosition;
+        entity.lastUpdateTime = now;
+        return;
+    }
+
+    if (glm::length(serverPosition - entity.position) < 0.6f) return; // The simulation is close enough.
+    entity.correction = entity.InterpolatedPosition(now) - serverPosition;
+    entity.correctionTime = now;
+    entity.previousPosition = entity.position = serverPosition;
+    entity.interpSeconds = 1.0f / 20.0f;
+    entity.lastUpdateTime = now;
+}
+
+void MoveServerPosition(Entity& entity, const glm::vec3& delta, std::chrono::steady_clock::time_point now)
+{
+    SetServerPosition(entity, (entity.simulated ? entity.serverPosition : entity.position) + delta, now);
+}
+
+// Minecraft's LpVec3 - the compact velocity encoding Spawn Entity and Set
 // Entity Motion use. Decoded exactly as net.minecraft.network.LpVec3.read
 // does (resources/26.2.zip): a single 0 byte means zero; otherwise a 6-byte
 // little-endian-ish pack of three 15-bit components plus a 2-bit scale, and
@@ -94,11 +148,11 @@ glm::vec3 ReadLpVec3(PacketReader& reader)
                      static_cast<float>(unpack(packed >> 33) * s));
 }
 
-// Attribute ids as Update Attributes sends them — the attribute registry in
+// Attribute ids as Update Attributes sends them - the attribute registry in
 // id order (minecraft-data's attributes.json). NOT protocol.json's
 // entity_update_attributes key mapper: that list is stale and lacks
 // mining_efficiency/movement_efficiency/oxygen_bonus/sneaking_speed, which
-// shifted every id after 19 — movement_speed's id then read
+// shifted every id after 19 - movement_speed's id then read
 // mining_efficiency (base 0), zeroing ground acceleration. The names are the
 // same keys PlayerAttributes is read with elsewhere ("generic.attack_speed", ...).
 constexpr std::array<const char*, 35> ATTRIBUTE_NAMES = {
@@ -121,6 +175,17 @@ float FixedDeltaToBlocks(int16_t delta)
     return static_cast<float>(delta) / 4096.0f;
 }
 
+// x, y, z as three f64. Read as separate statements: the order a call's arguments are evaluated in is
+// unspecified, and this compiler (MSVC conventions) does the last first, which once swapped x and z and sent every
+// synced mob thousands of blocks away. Never read more than once inside one call's arguments.
+glm::vec3 ReadVec3(PacketReader& reader)
+{
+    float x = static_cast<float>(reader.ReadDouble());
+    float y = static_cast<float>(reader.ReadDouble());
+    float z = static_cast<float>(reader.ReadDouble());
+    return glm::vec3(x, y, z);
+}
+
 // Debug trace for entity position bugs. Turn on with "Debug.EntityTrace": true
 // in settings.json; each line is one entity update with the raw packet bytes,
 // the parsed numbers, the entity's position before/after, and the local
@@ -131,11 +196,49 @@ bool EntityTraceEnabled(GlobalState* state)
     return enabled;
 }
 
+// Debug.EntityTraceNear: the same trace, for entities within NEAR_TRACE_BLOCKS of the player only - the ones you
+// can see vanish - so it stays readable on a busy server.
+constexpr float NEAR_TRACE_BLOCKS = 8.0f;
+
+bool EntityTraceNearEnabled(GlobalState* state)
+{
+    static const bool enabled = std::get<bool>(state->config->Get("Debug.EntityTraceNear", false));
+    return enabled;
+}
+
+// Drops every riding link that names `id`, before that entity is erased.
+// Caller holds entitiesMutex.
+void UnlinkRider(GlobalState* state, uint32_t id)
+{
+    if (state->ridingEntityId.load() == static_cast<int32_t>(id)) state->ridingEntityId.store(-1);
+
+    Entity* entity = state->FindEntity(id);
+    if (entity == nullptr) return;
+
+    for (uint32_t passengerId : entity->passengers)
+    {
+        if (Entity* passenger = state->FindEntity(passengerId)) passenger->vehicleId = -1;
+    }
+    if (entity->vehicleId >= 0)
+    {
+        if (Entity* vehicle = state->FindEntity(static_cast<uint32_t>(entity->vehicleId)))
+        {
+            std::erase(vehicle->passengers, id);
+        }
+    }
+}
+
 void TraceEntity(GlobalState* state, const char* label, int32_t packetId,
                  const std::vector<uint8_t>& payload, uint32_t entityId,
                  const std::string& parsed, glm::vec3 before, glm::vec3 after)
 {
-    if (!EntityTraceEnabled(state)) return;
+    if (!EntityTraceEnabled(state))
+    {
+        if (!EntityTraceNearEnabled(state) || !state->player) return;
+        // Near either end of the move, so a jump away from the player is logged too.
+        glm::vec3 p = state->player->GetPosition();
+        if (glm::distance(p, before) > NEAR_TRACE_BLOCKS && glm::distance(p, after) > NEAR_TRACE_BLOCKS) return;
+    }
 
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(3) << "[ENTDBG] " << label << " id=0x" << std::hex << packetId
@@ -168,16 +271,12 @@ std::string FormatUuid(const std::array<uint8_t, 16>& uuid)
 // whatever comes after it in the packet.
 struct ParsedSlot {
     ItemStack item;
-    // False once this Slot carried any added/removed data component — this
-    // client only tracks id+count (see ItemStack's own comment), and the
-    // post-1.20.5 component encoding has no generic length prefix around a
-    // component's payload, so there's no way to skip an unrecognized one
-    // without a decoder for its exact shape (110+ component types as of
-    // this client's pinned minecraft-data version — see protocol.json's
-    // SlotComponentType mapper). item.itemId/item.count above are still
-    // correct either way, since they're read before any component bytes;
-    // this only means a caller reading more than one Slot (an array) must
-    // stop after this one rather than trying to find the next entry.
+    // False only if SlotSkipper couldn't skip this Slot's data components
+    // (protocol.json missing, or an unknown/malformed component). The
+    // post-1.20.5 encoding has no length prefix around a component payload,
+    // so the reader's position is then untrusted and a caller reading more
+    // than one Slot must stop after this one. item.itemId/count are correct
+    // either way.
     bool complete = true;
 };
 
@@ -186,21 +285,28 @@ ParsedSlot ReadItemStack(PacketReader& reader)
     ParsedSlot result;
 
     int32_t count = reader.ReadVarInt();
-    if (count == 0) return result; // Empty slot — no further bytes for this Slot at all.
+    if (count == 0) return result; // Empty slot - no further bytes for this Slot at all.
 
     result.item.itemId = reader.ReadVarInt();
     result.item.count = static_cast<uint8_t>(std::clamp(count, 0, 255));
 
     int32_t addedComponentCount = reader.ReadVarInt();
     int32_t removedComponentCount = reader.ReadVarInt();
-    result.complete = (addedComponentCount == 0 && removedComponentCount == 0);
+    if (addedComponentCount == 0 && removedComponentCount == 0) return result;
+
+    SlotSkipper& skipper = SlotSkipper::Instance();
+    SlotComponentValues values;
+    result.complete = skipper.SkipComponents(reader, addedComponentCount, removedComponentCount, values);
+    result.item.damage = values.damage;
+    result.item.maxDamage = values.maxDamage;
     return result;
 }
 
 // The Set Entity Data fields tracked on a PlayerEntity, when present in
-// one packet — see ReadPlayerEntityData.
+// one packet - see ReadPlayerEntityData.
 struct PlayerDataUpdate {
     std::optional<uint8_t> sharedFlags; // Index 0 (Entity.DATA_SHARED_FLAGS_ID).
+    std::optional<int32_t> pose;        // Index 6 (Entity.DATA_POSE), Pose ordinal.
     std::optional<float> health;        // Index 9 (LivingEntity.DATA_HEALTH_ID).
     std::optional<int32_t> itemId;      // Index 8, item stack (ItemEntity.DATA_ITEM).
 };
@@ -210,12 +316,12 @@ struct PlayerDataUpdate {
 // define order in vanilla's Entity/LivingEntity (resources/26.2.zip):
 // Entity 0-7, then LivingEntity 8-14 starting with its flags and health.
 // Every value type is skipped by its protocol.json encoding; a type with no
-// fixed shape to skip (particles, profiles, ...) ends the walk early —
+// fixed shape to skip (particles, profiles, ...) ends the walk early -
 // entries arrive in index order and the ones read here come first, so that
 // only ever loses fields this doesn't track.
 PlayerDataUpdate ReadPlayerEntityData(PacketReader& reader)
 {
-    constexpr uint8_t SHARED_FLAGS_INDEX = 0, ITEM_INDEX = 8, HEALTH_INDEX = 9, END_OF_DATA = 0xFF;
+    constexpr uint8_t SHARED_FLAGS_INDEX = 0, POSE_INDEX = 6, ITEM_INDEX = 8, HEALTH_INDEX = 9, END_OF_DATA = 0xFF;
     PlayerDataUpdate update;
 
     for (;;) {
@@ -234,7 +340,13 @@ PlayerDataUpdate ReadPlayerEntityData(PacketReader& reader)
             if (index == HEALTH_INDEX) update.health = value;
             break;
         }
-        case 1: case 12: case 14: case 15: case 19: case 20: case 42: // varint-encoded (int, direction, block state(s), optvarint, pose, humanoid_arm)
+        case 20: // pose
+        {
+            int32_t value = reader.ReadVarInt();
+            if (index == POSE_INDEX) update.pose = value;
+            break;
+        }
+        case 1: case 12: case 14: case 15: case 19: case 42: // varint-encoded (int, direction, block state(s), optvarint, humanoid_arm)
         case 21: case 22: case 23: case 24: case 25: case 26: case 27: case 28: case 29: case 30: case 31: case 32: // registry variants
         case 35: case 36: case 37: case 38: // sniffer/armadillo/copper golem states
             reader.ReadVarInt();
@@ -259,7 +371,7 @@ PlayerDataUpdate ReadPlayerEntityData(PacketReader& reader)
         case 39: reader.Skip(12); break; // vector3: 3x f32
         case 40: reader.Skip(16); break; // quaternion: 4x f32
         default:
-            return update; // particle(s), global pos, painting variant, profile — see above.
+            return update; // particle(s), global pos, painting variant, profile - see above.
         }
     }
     return update;
@@ -292,7 +404,7 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
                   + "' (offline UUID " + FormatUuid(uuid) + "). Waiting for response...");
 
         // Set Compression (0x03) can arrive before Login Success once the
-        // server has compression enabled (the common case) — handle it and
+        // server has compression enabled (the common case) - handle it and
         // keep reading until we hit an actual Login Success/Disconnect.
         for (;;) {
             std::vector<uint8_t> payload;
@@ -312,8 +424,9 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
                 std::string serverUsername = reader.ReadString();
                 Log::Info("Login Success: " + serverUsername
                           + " (" + FormatUuid(serverUuid) + ")");
+                loginUsername = serverUsername;
 
-                // Login Acknowledged (Login state, serverbound, empty body) —
+                // Login Acknowledged (Login state, serverbound, empty body) -
                 // required since the Configuration state was introduced: the
                 // server stays in Login state, and any Configuration packet
                 // we send is misinterpreted (or the connection is dropped
@@ -335,7 +448,7 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
                 std::ostringstream oss;
                 oss << "[NET] Unexpected packet ID 0x" << std::hex << packetId << std::dec
                     << " while waiting for Login Success (likely an Encryption "
-                    << "Request packet — not handled yet).";
+                    << "Request packet - not handled yet).";
                 Log::Error(oss.str());
                 lastError = "Server requires online-mode authentication (not supported yet).";
             }
@@ -350,6 +463,11 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
 
 void NetworkClient::RunSession(GlobalState* state, std::stop_token stopToken)
 {
+    {
+        std::lock_guard<std::mutex> lock(state->localUsernameMutex);
+        state->localUsername = loginUsername;
+    }
+
     try {
         if (state->modLoader) state->modLoader->Fire(EventType::ENTER_CONFIG_STATE);
         if (!RunConfiguration(state)) return;
@@ -363,7 +481,7 @@ void NetworkClient::RunSession(GlobalState* state, std::stop_token stopToken)
 
 bool NetworkClient::RunConfiguration(GlobalState* state)
 {
-    // Client Information — locale/view-distance/etc, the server uses this
+    // Client Information - locale/view-distance/etc, the server uses this
     // (along with the player's position, sent once Play starts) to decide
     // what to stream. See PacketIds.hpp for why some field additions in
     // newer protocol versions may not be represented here yet.
@@ -379,7 +497,7 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
     clientInfo.WriteVarInt(1);   // main hand: right
     clientInfo.WriteBool(false); // enable text filtering
     clientInfo.WriteBool(true);  // allow server listings
-    clientInfo.WriteVarInt(0);   // particle status: all
+    clientInfo.WriteVarInt(static_cast<int32_t>(std::min<uint32_t>(std::get<uint32_t>(state->config->Get("Graphics.Particles", uint32_t{0})), 2))); // particle status: all, decreased, minimal
     {
         std::ostringstream diagBytes;
         diagBytes << "[DIAG] Client Information bytes: ";
@@ -390,13 +508,13 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
         connection.SendPacket(ConfigC2S::ClientInformation, clientInfo.Data());
         Log::Debug("[DIAG] Client Information sent.");
 
-        // Every real client sends this right after Client Information —
+        // Every real client sends this right after Client Information -
         // some servers' anti-bot plugins use its absence as a bot signal
         // and silently hide the connection from the tab list/`/list` (still
         // fully joined and receiving world state) rather than kicking it,
         // which looks exactly like a server-side mystery until you notice
         // the missing brand. Identifies honestly as "volcano-client" rather
-        // than spoofing "vanilla" — a server admin who sees "vanilla" will
+        // than spoofing "vanilla" - a server admin who sees "vanilla" will
         // reasonably expect actually-vanilla client behavior (signed chat,
         // full inventory/interaction support, ...), which this client
         // doesn't provide yet.
@@ -410,7 +528,7 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
     }
 
     // Each packet below updates GlobalState::connectionDetail so the loading
-    // screen can say what Configuration is up to — most of these steps take
+    // screen can say what Configuration is up to - most of these steps take
     // milliseconds, but a big modded server's registry/tag sync can visibly
     // take seconds.
     state->SetConnectionPhase(ConnectionPhase::Configuring, "Sending client information");
@@ -455,7 +573,7 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
 
         if (packetId == ConfigS2C::KnownPacks) {
             state->SetConnectionDetail("Negotiating known packs");
-            // Same array schema in both directions — echo the payload back
+            // Same array schema in both directions - echo the payload back
             // verbatim rather than parsing/re-encoding it.
             connection.SendPacket(ConfigC2S::KnownPacks, payload);
             continue;
@@ -470,8 +588,18 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
             continue;
         }
 
+        if (packetId == ConfigS2C::KeepAlive) {
+            // Same echo as the Play-state handler; vanilla's common listener
+            // answers it in both states.
+            int64_t id = reader.ReadLong();
+            PacketWriter response;
+            response.WriteLong(id);
+            connection.SendPacket(ConfigC2S::KeepAlive, response.Data());
+            continue;
+        }
+
         if (packetId == ConfigS2C::Ping) {
-            // Fixed 4-byte int, NOT a VarInt — unlike almost every other
+            // Fixed 4-byte int, NOT a VarInt - unlike almost every other
             // numeric protocol field. Writing/reading it as a VarInt here
             // produced a malformed Pong body the server's Netty decoder
             // couldn't parse, which the server reports back as
@@ -486,7 +614,7 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
 
         if (packetId == ConfigS2C::Disconnect) {
             // reason is `anonymousNbt` per this client's own bundled
-            // protocol.json, not a plain string — ReadString() here used to
+            // protocol.json, not a plain string - ReadString() here used to
             // misparse the NBT tag bytes as a length-prefixed string,
             // producing garbage (or throwing) instead of the real reason.
             std::string reason = PlainText(ReadTextComponent(reader));
@@ -496,7 +624,7 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
         }
 
         // Registry Data, Update Tags, Feature Flags, resource pack packets,
-        // plugin messages, etc. — nothing here we need to act on, and
+        // plugin messages, etc. - nothing here we need to act on, and
         // Connection::ReadPacket already framed the whole payload so it's
         // safe to just move on to the next packet.
     }
@@ -506,7 +634,7 @@ void NetworkClient::SendPlayerPosition(glm::vec3 position, float yaw, float pitc
 {
     // Every outgoing position funnels through here, so this is the one place
     // that can catch a non-finite value regardless of which caller produced
-    // it — see the "Invalid move player packet received" server kick this
+    // it - see the "Invalid move player packet received" server kick this
     // was added to chase down; a vanilla server disconnects the instant
     // x/y/z stops being finite, but gives no hint which of this client's own
     // writers put it there.
@@ -523,10 +651,10 @@ void NetworkClient::SendPlayerPosition(glm::vec3 position, float yaw, float pitc
     writer.WriteDouble(static_cast<double>(position.z));
     writer.WriteFloat(yaw);
     writer.WriteFloat(pitch);
-    // MovementFlags is a u8 bitflag — bit 0 onGround, bit 1
+    // MovementFlags is a u8 bitflag - bit 0 onGround, bit 1
     // hasHorizontalCollision (protocol.json's MovementFlags type). This call
     // is only ever the one-shot post-teleport echo (see RunPlayLoop's
-    // SynchronizePlayerPosition handler) — never grounded and never
+    // SynchronizePlayerPosition handler) - never grounded and never
     // horizontally colliding the instant after a teleport, same as vanilla.
     uint8_t flags = onGround ? 0x01 : 0x00;
     writer.WriteBytes(&flags, 1);
@@ -538,34 +666,69 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
     // Bounds how long WaitForReadable() below can block with nothing to
     // read, so this loop can drive TickLoop::Tick() on its own steady
     // cadence even when the server goes quiet between packets (idle time
-    // between Keep Alives can be many seconds) — see the tick-loop plan's
+    // between Keep Alives can be many seconds) - see the tick-loop plan's
     // "blocker" section.
     constexpr auto kReadPollInterval = std::chrono::milliseconds(15);
 
+    // Logs once per stall when this loop sits in one phase for over 3 s, so a
+    // hang names the packet handler (or wait) it is stuck in. Locks held by
+    // other threads show up here as a long "handling a packet".
+    std::jthread watchdog([](std::stop_token token) {
+        int64_t reportedTicks = 0;
+        while (!token.stop_requested()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            int64_t since = networkStats.loopPhaseTicks.load(std::memory_order_relaxed);
+            int32_t phase = networkStats.loopPhase.load(std::memory_order_relaxed);
+            if (phase == 0 || since == reportedTicks) continue;
+            double ageMs = NetworkStats::AgeMs(since);
+            if (ageMs < 3000.0) continue;
+            reportedTicks = since;
+            char buffer[160];
+            std::snprintf(buffer, sizeof(buffer), "[NET] Network thread stalled for %.0f ms while %s (packet id 0x%x)",
+                ageMs, NetworkStats::LoopPhaseName(phase), static_cast<unsigned>(networkStats.loopPacketId.load()));
+            Log::Error(buffer);
+        }
+    });
+
+    // Packet listeners (PacketEvents) only see the play state.
+    struct PlayTapScope {
+        PlayTapScope() { PacketEvents::SetPlayActive(true); }
+        ~PlayTapScope() { PacketEvents::SetPlayActive(false); }
+    } playTapScope;
+
     while (!stopToken.stop_requested() && !state->shouldClose) {
+        networkStats.SetLoopPhase(1);
         // TickLoop::Tick() (and with it, sending PlayC2S::PlayerLoaded and
         // the per-tick position/rotation/sprint/input report) used to happen
-        // right here, once per RunPlayLoop iteration — moved to its own
+        // right here, once per RunPlayLoop iteration - moved to its own
         // TickThread, driven by a steady wall-clock timer instead of this
         // loop's own pacing. See TickThread's class comment for why: this
         // loop's ReadPacket() call below blocks synchronously on however
         // long a packet takes to fully arrive (routinely several hundred ms
-        // for a large one on a slow link), which used to freeze ticking —
-        // and therefore the position report's cadence — right along with it.
+        // for a large one on a slow link), which used to freeze ticking -
+        // and therefore the position report's cadence - right along with it.
 
-        // Drain anything other threads queued (chat, commands, respawn —
+        // Drain anything other threads queued (chat, commands, respawn -
         // see SendChatMessage). Must happen on this thread and outside
         // WaitForReadable below, since that call cancels socket operations
-        // and a write racing it can be left half-written — see
+        // and a write racing it can be left half-written - see
         // Connection::SendPacket's own comment.
         connection.FlushOutbound();
 
+        networkStats.SetLoopPhase(2);
         if (!connection.WaitForReadable(kReadPollInterval)) {
-            continue; // Nothing arrived within the poll window — loop back and tick again.
+            continue; // Nothing arrived within the poll window - loop back and tick again.
         }
 
         std::vector<uint8_t> payload;
+        networkStats.SetLoopPhase(3);
         int32_t packetId = connection.ReadPacket(payload);
+        networkStats.SetLoopPhase(4, packetId);
+
+        // Clientbound tap: listeners may edit the packet or drop it unhandled.
+        PacketEvent packetEvent{ PacketEvent::Direction::CLIENTBOUND, packetId, payload };
+        if (!PacketEvents::Dispatch(packetEvent)) continue;
+
         PacketReader reader(payload.data(), payload.size());
 
         if (packetId == PlayS2C::LoginPlay) {
@@ -588,11 +751,11 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                     state->currentDimension = dimensionName;
                 }
                 reader.ReadLong();   // worldState.hashedSeed
-                uint8_t gameMode = reader.ReadByte(); // worldState.gamemode — see GlobalState::localGameMode.
+                uint8_t gameMode = reader.ReadByte(); // worldState.gamemode - see GlobalState::localGameMode.
                 state->localGameMode.store(gameMode, std::memory_order_relaxed);
                 // Rest of SpawnInfo (previousGamemode, isDebug, isFlat, death,
                 // portalCooldown, seaLevel) and enforcesSecureChat aren't
-                // needed — nothing else in this packet is read.
+                // needed - nothing else in this packet is read.
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Login Play (gamemode keeps its previous value): ") + e.what());
             }
@@ -636,7 +799,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
         if (packetId == PlayS2C::Respawn) {
             try {
-                reader.ReadVarInt(); // dimension id — unused, the name below is enough for the log line.
+                reader.ReadVarInt(); // dimension id - unused, the name below is enough for the log line.
                 std::string dimensionName = reader.ReadString();
                 {
                     std::lock_guard<std::mutex> lock(state->currentDimensionMutex);
@@ -647,28 +810,40 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 Log::Error(std::string("[NET] Failed to parse Respawn (resetting world state anyway): ") + e.what());
             }
 
-            // Sent on every dimension change, not just death — the old
+            // Sent on every dimension change, not just death - the old
             // dimension's chunks/entities have to go regardless of whether
             // this parsed cleanly, or they'd keep rendering forever
             // alongside whatever streams in for the new one ("ghost chunk
             // geometry"). The rest of the packet (gamemode, death location,
             // ...) isn't read; a fresh Player Position packet always follows
             // and re-arms spawnPosition/worldReady the same way the initial
-            // join does — see MeshingThread's own comment on that dance.
+            // join does - see MeshingThread's own comment on that dance.
             state->ResetWorldState();
 
             // A respawn is a fresh player entity server-side: not sprinting,
             // no keys held. TickLoop resets its own side the same way once
-            // the new spawn position lands (SyncToPlayerPosition) — that
+            // the new spawn position lands (SyncToPlayerPosition) - that
             // naturally makes TickThread's next report a stop_sprinting/
             // cleared-input diff against whatever it last told the server.
             continue;
         }
 
         if (packetId == PlayS2C::PlayerCombatKill) {
-            reader.ReadVarInt(); // playerId — always the receiving player themselves.
+            reader.ReadVarInt(); // playerId - always the receiving player themselves.
             std::string message = PlainText(ReadTextComponent(reader));
             state->ReportDeath(message);
+            continue;
+        }
+
+        if (packetId == PlayS2C::SetExperience) {
+            float progress = reader.ReadFloat();
+            int32_t level = reader.ReadVarInt();
+            reader.ReadVarInt(); // total experience - unused by the HUD.
+            {
+                std::lock_guard<std::mutex> lock(state->experienceMutex);
+                state->experienceProgress = progress;
+                state->experienceLevel = level;
+            }
             continue;
         }
 
@@ -678,7 +853,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             float saturation = reader.ReadFloat();
 
             // Stored for GUIController::RenderPlayerStatusBars' HUD display
-            // — same manual-mutex-next-to-data convention as entities/
+            // - same manual-mutex-next-to-data convention as entities/
             // entitiesMutex (see GlobalState's own comment on health/food/
             // saturation/healthMutex).
             {
@@ -689,7 +864,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             }
 
             // Catches joining a server while already dead from a previous
-            // session — PlayerCombatKill above only fires at the actual
+            // session - PlayerCombatKill above only fires at the actual
             // moment of death, never on a later rejoin, so without this the
             // death screen would just never appear (stuck with no chunks
             // loading and chat disabled, both the server's own normal
@@ -760,7 +935,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                     if (!slot.complete) {
                         appliedAll = false;
                         Log::Info("Set Container Content: slot " + std::to_string(i)
-                            + " carries item data components this client doesn't decode yet — "
+                            + " carries item data components this client doesn't decode yet - "
                             + std::to_string(itemCount - i - 1) + " remaining slot(s) in this packet "
                             + "not applied; a later Set Container Slot update will still catch up "
                             + "individual changes.");
@@ -805,10 +980,10 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             try {
                 int32_t windowId = reader.ReadVarInt();
                 int32_t stateId = reader.ReadVarInt();
-                int32_t slotIndex = reader.ReadShort(); // i16 per protocol.json's packet_set_slot — NOT a varint, unlike every index/count field around it.
+                int32_t slotIndex = reader.ReadShort(); // i16 per protocol.json's packet_set_slot - NOT a varint, unlike every index/count field around it.
                 // Last field in this packet, so ParsedSlot::complete doesn't
                 // matter here the way it does for Set Container Content's
-                // array — nothing reads past it either way.
+                // array - nothing reads past it either way.
                 ParsedSlot slot = ReadItemStack(reader);
 
                 std::lock_guard<std::mutex> lock(state->inventory.mutex);
@@ -829,6 +1004,28 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
+        if (packetId == PlayS2C::SetPlayerInventory) {
+            try {
+                int32_t inventoryIndex = reader.ReadVarInt();
+                ParsedSlot slot = ReadItemStack(reader);
+
+                // Inventory numbering to the player window's protocol slots.
+                int32_t windowSlot = -1;
+                if (inventoryIndex >= 0 && inventoryIndex <= 8) windowSlot = 36 + inventoryIndex;
+                else if (inventoryIndex >= 9 && inventoryIndex <= 35) windowSlot = inventoryIndex;
+                else if (inventoryIndex >= 36 && inventoryIndex <= 39) windowSlot = 44 - inventoryIndex; // boots 36 -> 8 ... helmet 39 -> 5.
+                else if (inventoryIndex == 40) windowSlot = 45;
+
+                if (windowSlot >= 0) {
+                    std::lock_guard<std::mutex> lock(state->inventory.mutex);
+                    state->inventory.SetSlot(windowSlot, slot.item);
+                }
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Set Player Inventory: ") + e.what());
+            }
+            continue;
+        }
+
         if (packetId == PlayS2C::SetHeldItem) {
             try {
                 int32_t slot = reader.ReadVarInt();
@@ -842,16 +1039,24 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
+        // A tick's worth of packets arrives bundled; each boundary counts as a
+        // server tick for GlobalState::serverTicks.
+        if (packetId == PlayS2C::BundleDelimiter) {
+            state->serverTicks.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+
         if (packetId == PlayS2C::UpdateTime) {
-            reader.ReadLong(); // age (world age, ticks since creation) — not needed for the sky-color gradient.
+            state->serverTicks.fetch_add(1, std::memory_order_relaxed); // Keeps counting on a server that bundles nothing.
+            reader.ReadLong(); // age (world age, ticks since creation) - not needed for the sky-color gradient.
             int32_t clockCount = reader.ReadVarInt();
             for (int32_t i = 0; i < clockCount; i++) {
                 int32_t clockId = reader.ReadVarInt();
                 int64_t totalTicks = reader.ReadVarLong();
-                reader.ReadFloat(); // partialTick, unused — this client re-samples dayTimeTicks fresh every frame rather than locally extrapolating between updates.
+                reader.ReadFloat(); // partialTick, unused - this client re-samples dayTimeTicks fresh every frame rather than locally extrapolating between updates.
                 reader.ReadFloat(); // rate, unused for the same reason.
 
-                // Clock id 0 is assumed to be the day/night cycle clock —
+                // Clock id 0 is assumed to be the day/night cycle clock -
                 // undocumented in protocol.json beyond the field names, so
                 // this is a best-effort guess like several other packets in
                 // this file (see e.g. PlayerChatMessage's own comment). If a
@@ -868,9 +1073,35 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
         if (packetId == PlayS2C::DamageEvent) {
             uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
-            std::lock_guard<std::mutex> lock(state->entitiesMutex);
-            auto it = state->entities.find(entityId);
-            if (it != state->entities.end()) it->second.lastHurtTime = std::chrono::steady_clock::now();
+
+            // Copy what the sound needs and play it outside the lock.
+            uint16_t type = 0;
+            glm::vec3 hurtPosition{0.0f};
+            bool found = false;
+            {
+                std::lock_guard<std::mutex> lock(state->entitiesMutex);
+                if (Entity* entity = state->FindEntity(entityId))
+                {
+                    entity->lastHurtTime = std::chrono::steady_clock::now();
+                    type = entity->type;
+                    hurtPosition = entity->position;
+                    found = true;
+                }
+            }
+
+            if (state->entitySounds == nullptr) continue;
+            if (static_cast<int32_t>(entityId) == state->localEntityId.load())
+            {
+                state->entitySounds->PlayHurt("player", 0.0f);
+            }
+            else if (found)
+            {
+                if (const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(type))
+                {
+                    float distance = state->player ? glm::distance(hurtPosition, state->player->GetPosition()) : 0.0f;
+                    state->entitySounds->PlayHurt(info->name, distance);
+                }
+            }
             continue;
         }
 
@@ -887,11 +1118,20 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
+        if (packetId == PlayS2C::Ping) {
+            PacketWriter pong;
+            pong.WriteInt(reader.ReadInt());
+            connection.SendPacket(PlayC2S::Pong, pong.Data());
+            continue;
+        }
+
         if (packetId == PlayS2C::KeepAlive) {
             int64_t id = reader.ReadLong();
+            networkStats.RecordKeepAliveIn(id);
             PacketWriter response;
             response.WriteLong(id);
             connection.SendPacket(PlayC2S::KeepAlive, response.Data());
+            networkStats.RecordKeepAliveOut();
             continue;
         }
 
@@ -904,7 +1144,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             // Trailing fields: velocity, rotation, and "relative" flags. A
             // flagged axis is an offset from where the client already is,
             // not an absolute position (vanilla: PositionMoveRotation::
-            // calculateAbsolute) — treating it as absolute teleports the
+            // calculateAbsolute) - treating it as absolute teleports the
             // player to the wrong place.
             double deltaX = 0.0, deltaY = 0.0, deltaZ = 0.0;
             float syncYaw = 0.0f, syncPitch = 0.0f;
@@ -936,16 +1176,16 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             // per-tick report keeps the server current after this first one.
             // onGround=false: right after a teleport, TickLoop hasn't run a
             // fixed step from the new position yet, so there's no real
-            // grounded state to report — same as vanilla's own behavior
+            // grounded state to report - same as vanilla's own behavior
             // immediately following a teleport confirmation.
             //
             // yaw/pitch come from the camera, not this packet's own trailing
-            // velocity/yaw/pitch/flags fields (left unread — see ParsedSlot's
+            // velocity/yaw/pitch/flags fields (left unread - see ParsedSlot's
             // sibling comment elsewhere on reading only what's needed): a
             // server-dictated facing on spawn is a real gap, but a
             // NetDiag-null state->player is guarded the same way TickThread
             // guards it, so this stays 0 there rather than crash. Negated
-            // the same way TickThread negates its own per-tick report — the
+            // the same way TickThread negates its own per-tick report - the
             // camera's yaw/pitch turn the opposite way from Minecraft's own
             // convention (see AngleByteToRadians).
             float yaw = state->player ? std::remainder(-state->player->camera.GetYaw(), 360.0f) : 0.0f;
@@ -1063,13 +1303,13 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 // [velocity: lpVec3][pitch: i8][yaw: i8][headYaw: i8]
                 // [objectData: varint], in that order per resources/maps/
                 // protocol.json. The velocity's width varies (1 byte when
-                // zero, 6+ otherwise) — ReadLpVec3 decodes it exactly, which
+                // zero, 6+ otherwise) - ReadLpVec3 decodes it exactly, which
                 // is what used to make every Spawn Entity packet fail to
                 // parse back when it was skipped as a fixed 6 bytes (49 out
                 // of 49 threw "Unexpected end of packet" in a 20s session,
                 // since the overwhelming majority of spawns carry no
                 // velocity at all and are short of a fixed 6-byte skip).
-                ReadLpVec3(reader); // velocity, unused — remote entities are driven by position updates.
+                glm::vec3 spawnVelocity = ReadLpVec3(reader); // Only dropped items simulate with it.
                 reader.ReadByte(); // pitch, unused.
                 int8_t yawByte = static_cast<int8_t>(reader.ReadByte());
                 reader.ReadByte(); // headYaw, unused.
@@ -1083,17 +1323,30 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 TraceEntity(state, "SPAWN", packetId, payload, entityId,
                     "type=" + std::to_string(entityType), glm::vec3(0.0f), entity.position);
                 entity.yaw = entity.previousYaw = AngleByteToRadians(yawByte);
+                entity.velocity = spawnVelocity;
                 entity.lastUpdateTime = std::chrono::steady_clock::now();
 
                 const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entityType);
                 if (info) {
                     entity.boundingBox = glm::vec2(info->width, info->height);
+                    if (MotionFor(info->name).simulated) {
+                        entity.simulated = true;
+                        entity.serverPosition = entity.position;
+                        entity.interpSeconds = 1.0f / 20.0f;
+                    }
                     if (info->name == "falling_block") entity.blockStateId = objectData;
                     else if (info->name == "tnt") entity.blockStateId = BlockRegistry::DefaultStateIdForName("tnt");
                 }
 
+                // Every arrow's spawn is its shot, ours or anyone else's.
+                if (info && state->combatSounds != nullptr
+                    && (info->name == "arrow" || info->name == "spectral_arrow")) {
+                    float distance = state->player ? glm::distance(entity.position, state->player->GetPosition()) : 0.0f;
+                    state->combatSounds->PlayArrowShot(distance);
+                }
+
                 // Other players (the dedicated Spawn Player packet is long
-                // gone — they arrive here too) get the full PlayerEntity,
+                // gone - they arrive here too) get the full PlayerEntity,
                 // with their name and game mode picked up from the tab list,
                 // which the server always fills in before spawning them.
                 if (info && info->entityKind == "player") {
@@ -1132,13 +1385,12 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 bool hasRotation = (packetId == PlayS2C::EntityMoveLook);
                 int8_t yawByte = hasRotation ? static_cast<int8_t>(reader.ReadByte()) : 0;
                 if (hasRotation) reader.ReadByte(); // pitch, unused.
-                reader.ReadBool(); // onGround, unused — no client-side physics for remote entities.
+                reader.ReadBool(); // onGround, unused - no client-side physics for remote entities.
 
                 std::lock_guard lock(state->entitiesMutex);
-                if (Entity* entity = state->FindEntity(entityId)) {
+                if (Entity* entity = state->FindEntity(entityId); entity != nullptr && !entity->locallyControlled) {
                     glm::vec3 before = entity->position;
-                    entity->previousPosition = entity->position;
-                    entity->position += delta;
+                    MoveServerPosition(*entity, delta, std::chrono::steady_clock::now());
                     TraceEntity(state, "MOVE", packetId, payload, entityId,
                         "rawShorts=" + std::to_string(rawX) + "," + std::to_string(rawY) + "," + std::to_string(rawZ)
                             + " delta=" + std::to_string(delta.x) + "," + std::to_string(delta.y) + "," + std::to_string(delta.z),
@@ -1163,7 +1415,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 reader.ReadBool(); // onGround, unused.
 
                 std::lock_guard lock(state->entitiesMutex);
-                if (Entity* entity = state->FindEntity(entityId)) {
+                if (Entity* entity = state->FindEntity(entityId); entity != nullptr && !entity->locallyControlled) {
                     entity->previousYaw = entity->yaw;
                     entity->yaw = AngleByteToRadians(yawByte);
                     entity->lastUpdateTime = std::chrono::steady_clock::now();
@@ -1174,31 +1426,120 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
-        if (packetId == PlayS2C::EntityTeleport) {
+        if (packetId == PlayS2C::SyncEntityPosition) {
             try {
                 uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
-                glm::vec3 newPosition(
-                    static_cast<float>(reader.ReadDouble()),
-                    static_cast<float>(reader.ReadDouble()),
-                    static_cast<float>(reader.ReadDouble()));
-                int8_t yawByte = static_cast<int8_t>(reader.ReadByte());
-                reader.ReadByte(); // pitch, unused.
-                reader.ReadBool(); // onGround, unused.
+                glm::vec3 newPosition = ReadVec3(reader);
+                glm::vec3 velocity = ReadVec3(reader);
+                float yawDegrees = reader.ReadFloat();
+                reader.ReadFloat(); // pitch, unused.
+                reader.ReadBool();  // onGround, unused.
 
                 std::lock_guard lock(state->entitiesMutex);
-                if (Entity* entity = state->FindEntity(entityId)) {
+                if (Entity* entity = state->FindEntity(entityId); entity != nullptr && !entity->locallyControlled) {
                     glm::vec3 before = entity->position;
-                    entity->previousPosition = entity->position;
-                    entity->position = newPosition;
-                    TraceEntity(state, "TELEPORT", packetId, payload, entityId,
+                    SetServerPosition(*entity, newPosition, std::chrono::steady_clock::now());
+                    entity->velocity = velocity;
+                    TraceEntity(state, "SYNC", packetId, payload, entityId,
                         "pos=" + std::to_string(newPosition.x) + "," + std::to_string(newPosition.y) + "," + std::to_string(newPosition.z),
                         before, entity->position);
                     entity->previousYaw = entity->yaw;
-                    entity->yaw = AngleByteToRadians(yawByte);
+                    entity->yaw = -glm::radians(yawDegrees); // Same turn direction as AngleByteToRadians.
                     entity->lastUpdateTime = std::chrono::steady_clock::now();
                 }
             } catch (const std::exception& e) {
-                Log::Error(std::string("[NET] Failed to parse Entity Position Sync: ") + e.what());
+                Log::Error(std::string("[NET] Failed to parse Sync Entity Position: ") + e.what());
+            }
+            continue;
+        }
+
+        // TELEPORT_ENTITY, as vanilla 26.x's ClientboundTeleportEntityPacket: position and velocity (f64), yaw and
+        // pitch (f32 degrees), then an int of which of those are relative to the entity's own (vanilla's Relative:
+        // bit 0-2 X/Y/Z, 3 yaw, 4 pitch, 5-7 velocity), then onGround. A relative coordinate taken as absolute puts
+        // the entity near the world origin.
+        if (packetId == PlayS2C::EntityTeleport) {
+            try {
+                uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
+                glm::vec3 position = ReadVec3(reader);
+                glm::vec3 velocity = ReadVec3(reader);
+                float yawDegrees = reader.ReadFloat();
+                reader.ReadFloat(); // pitch, unused.
+                uint32_t relative = static_cast<uint32_t>(reader.ReadInt());
+                reader.ReadBool(); // onGround, unused.
+
+                std::lock_guard lock(state->entitiesMutex);
+                if (Entity* entity = state->FindEntity(entityId); entity != nullptr && !entity->locallyControlled) {
+                    glm::vec3 before = entity->position;
+                    glm::vec3 base = entity->simulated ? entity->serverPosition : entity->position;
+                    glm::vec3 newPosition(
+                        (relative & 0x01u) ? base.x + position.x : position.x,
+                        (relative & 0x02u) ? base.y + position.y : position.y,
+                        (relative & 0x04u) ? base.z + position.z : position.z);
+                    SetServerPosition(*entity, newPosition, std::chrono::steady_clock::now());
+                    entity->velocity = glm::vec3(
+                        (relative & 0x20u) ? entity->velocity.x + velocity.x : velocity.x,
+                        (relative & 0x40u) ? entity->velocity.y + velocity.y : velocity.y,
+                        (relative & 0x80u) ? entity->velocity.z + velocity.z : velocity.z);
+                    TraceEntity(state, "TELEPORT", packetId, payload, entityId,
+                        "pos=" + std::to_string(position.x) + "," + std::to_string(position.y) + "," + std::to_string(position.z)
+                            + " relativeBits=" + std::to_string(relative),
+                        before, entity->position);
+                    float yaw = -glm::radians(yawDegrees); // Same turn direction as AngleByteToRadians.
+                    entity->previousYaw = entity->yaw;
+                    entity->yaw = (relative & 0x08u) ? entity->yaw + yaw : yaw;
+                    entity->lastUpdateTime = std::chrono::steady_clock::now();
+                }
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Teleport Entity: ") + e.what());
+            }
+            continue;
+        }
+
+        // The full rider list of a vehicle: replaces the previous one. The
+        // local player has no Entity, so being listed sets ridingEntityId.
+        if (packetId == PlayS2C::SetPassengers) {
+            try {
+                uint32_t vehicleId = static_cast<uint32_t>(reader.ReadVarInt());
+                int32_t count = reader.ReadVarInt();
+                std::vector<uint32_t> riders;
+                for (int32_t i = 0; i < count; i++) riders.push_back(static_cast<uint32_t>(reader.ReadVarInt()));
+
+                uint32_t localId = static_cast<uint32_t>(state->localEntityId.load());
+                std::lock_guard lock(state->entitiesMutex);
+                Entity* vehicle = state->FindEntity(vehicleId);
+                if (vehicle != nullptr) {
+                    for (uint32_t oldId : vehicle->passengers) {
+                        if (oldId == localId) continue;
+                        if (Entity* passenger = state->FindEntity(oldId)) passenger->vehicleId = -1;
+                    }
+                }
+                if (state->ridingEntityId.load() == static_cast<int32_t>(vehicleId)) state->ridingEntityId.store(-1);
+
+                for (uint32_t riderId : riders) {
+                    if (riderId == localId) {
+                        state->ridingEntityId.store(static_cast<int32_t>(vehicleId));
+                    } else if (Entity* passenger = state->FindEntity(riderId)) {
+                        passenger->vehicleId = static_cast<int32_t>(vehicleId);
+                    }
+                }
+                if (vehicle != nullptr) vehicle->passengers = std::move(riders);
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Set Passengers: ") + e.what());
+            }
+            continue;
+        }
+
+        // The server snapping the vehicle we steer; RideController applies it.
+        if (packetId == PlayS2C::VehicleMove) {
+            try {
+                glm::vec3 position = ReadVec3(reader);
+                float yawDegrees = reader.ReadFloat();
+                float pitchDegrees = reader.ReadFloat();
+                if (state->rideController != nullptr && state->ridingEntityId.load() >= 0) {
+                    state->rideController->ApplyServerMove(position, yawDegrees, pitchDegrees);
+                }
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Vehicle Move: ") + e.what());
             }
             continue;
         }
@@ -1209,6 +1550,10 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 std::lock_guard lock(state->entitiesMutex);
                 for (int32_t i = 0; i < count; i++) {
                     uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
+                    glm::vec3 lastPosition{0.0f};
+                    if (const Entity* entity = state->FindEntity(entityId)) lastPosition = entity->position;
+                    TraceEntity(state, "REMOVE", packetId, payload, entityId, "", lastPosition, lastPosition);
+                    UnlinkRider(state, entityId);
                     state->entities.erase(entityId);
                     state->playerEntities.erase(entityId);
                 }
@@ -1219,7 +1564,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         }
 
         // Knockback. For our own entity id this replaces our velocity
-        // outright — vanilla's handleSetEntityMotion does exactly that, and
+        // outright - vanilla's handleSetEntityMotion does exactly that, and
         // it's how every hit we take (and any other server-side push)
         // actually moves us. Applied through GlobalState::localMotion since
         // TickLoop owns velocity. Other entities are driven entirely by
@@ -1228,11 +1573,16 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             try {
                 int32_t entityId = reader.ReadVarInt();
                 glm::vec3 velocity = ReadLpVec3(reader);
-                TraceEntity(state, "MOTION", packetId, payload, static_cast<uint32_t>(entityId),
-                    "velocity=" + std::to_string(velocity.x) + "," + std::to_string(velocity.y) + "," + std::to_string(velocity.z),
-                    glm::vec3(0.0f), glm::vec3(0.0f));
                 if (entityId == state->localEntityId.load()) {
                     state->localMotion.Push({ LocalMotionEvent::Kind::SetVelocity, velocity });
+                } else {
+                    std::lock_guard lock(state->entitiesMutex);
+                    if (Entity* entity = state->FindEntity(static_cast<uint32_t>(entityId))) {
+                        entity->velocity = velocity;
+                        TraceEntity(state, "MOTION", packetId, payload, static_cast<uint32_t>(entityId),
+                            "velocity=" + std::to_string(velocity.x) + "," + std::to_string(velocity.y) + "," + std::to_string(velocity.z),
+                            entity->position, entity->position);
+                    }
                 }
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Set Entity Motion: ") + e.what());
@@ -1249,10 +1599,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 reader.ReadFloat(); // radius
                 reader.ReadInt(); // blockCount
                 if (reader.ReadBool()) {
-                    glm::vec3 knockback(
-                        static_cast<float>(reader.ReadDouble()),
-                        static_cast<float>(reader.ReadDouble()),
-                        static_cast<float>(reader.ReadDouble()));
+                    glm::vec3 knockback = ReadVec3(reader);
                     state->localMotion.Push({ LocalMotionEvent::Kind::AddVelocity, knockback });
                 }
             } catch (const std::exception& e) {
@@ -1261,7 +1608,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
-        // Both mean "this entity just took damage" — vanilla starts its
+        // Both mean "this entity just took damage" - vanilla starts its
         // 10-tick red hurt flash off either one. The rest of each packet
         // (damage source / hit direction) is only used for sounds and the
         // local camera tilt, neither of which exists here.
@@ -1308,7 +1655,21 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 if (Entity* entity = state->FindEntity(entityId)) {
                     auto now = std::chrono::steady_clock::now();
                     if (animation == SWING_MAIN_HAND || animation == SWING_OFF_HAND) entity->lastSwingTime = now;
-                    else if (animation == CRITICAL_HIT || animation == MAGIC_CRITICAL_HIT) entity->lastCritTime = now;
+                    else if (animation == CRITICAL_HIT || animation == MAGIC_CRITICAL_HIT)
+                    {
+                        entity->lastCritTime = now;
+                        if (state->particles != nullptr)
+                        {
+                            // A burst around the entity, as vanilla's tracking emitter makes over a few ticks.
+                            ParticleSpawn burst;
+                            burst.type = state->particles->TypeId(animation == MAGIC_CRITICAL_HIT ? "enchanted_hit" : "crit");
+                            burst.position = glm::dvec3(entity->position) + glm::dvec3(0.0, entity->boundingBox.y * 0.5f, 0.0);
+                            burst.spread = glm::vec3(entity->boundingBox.x * 0.4f, entity->boundingBox.y * 0.3f, entity->boundingBox.x * 0.4f);
+                            burst.speed = 0.35f;
+                            burst.count = 24;
+                            state->particles->Spawn(burst);
+                        }
+                    }
                 }
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Animate: ") + e.what());
@@ -1316,8 +1677,8 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
-        // Another player's held items and armor. Entries are read until one
-        // doesn't have the "more follow" bit (0x80) set on its slot byte —
+        // A player's or mob's held items and armor. Entries are read until one
+        // doesn't have the "more follow" bit (0x80) set on its slot byte -
         // or until a Slot carries data components, after which the rest of
         // the packet can't be located (see ParsedSlot::complete); whatever
         // was read up to that point still applies.
@@ -1334,9 +1695,9 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 }
 
                 std::lock_guard lock(state->entitiesMutex);
-                if (PlayerEntity* player = state->FindPlayerEntity(entityId)) {
+                if (Entity* wearer = state->FindEntity(entityId)) {
                     for (const auto& [slot, item] : changes) {
-                        if (slot < EQUIPMENT_SLOT_COUNT) player->equipment[slot] = item;
+                        if (slot < EQUIPMENT_SLOT_COUNT) wearer->equipment[slot] = item;
                     }
                 }
             } catch (const std::exception& e) {
@@ -1346,7 +1707,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         }
 
         // Only players' metadata is read (health, sneaking/sprinting/
-        // invisible flags) — nothing else tracked here has a use for it yet.
+        // invisible flags) - nothing else tracked here has a use for it yet.
         if (packetId == PlayS2C::SetEntityData) {
             try {
                 uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
@@ -1381,8 +1742,10 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                     if (update.sharedFlags) {
                         player->sneaking = (*update.sharedFlags & 0x02u) != 0;
                         player->sprinting = (*update.sharedFlags & 0x08u) != 0;
+                        player->swimming = (*update.sharedFlags & 0x10u) != 0;
                         player->invisible = (*update.sharedFlags & 0x20u) != 0;
                     }
+                    if (update.pose) player->pose = *update.pose;
                     if (update.health) {
                         player->health = *update.health;
                         // A player at 0 health is dying even if the Entity
@@ -1399,14 +1762,16 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
         // Our own attributes, fully resolved (base value plus modifiers) the
         // way vanilla's AttributeInstance.calculateValue does, into
-        // state->attributes — this is what makes the attack cooldown follow
+        // state->attributes - this is what makes the attack cooldown follow
         // the held weapon (generic.attack_speed), and reach, movement speed,
         // gravity, etc. follow the server. Other entities' attributes aren't
         // needed.
         if (packetId == PlayS2C::UpdateAttributes) {
             try {
                 int32_t entityId = reader.ReadVarInt();
-                if (entityId != state->localEntityId.load() || state->attributes == nullptr) continue;
+                // Other entities only keep what a mount rides on.
+                bool isLocal = entityId == state->localEntityId.load();
+                if (isLocal && state->attributes == nullptr) continue;
 
                 int32_t count = reader.ReadVarInt();
                 for (int32_t i = 0; i < count; i++) {
@@ -1419,7 +1784,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                         std::string modifierId = reader.ReadString();
                         double amount = reader.ReadDouble();
                         int8_t operation = static_cast<int8_t>(reader.ReadByte());
-                        // TickLoop applies sprint speed itself — counting the
+                        // TickLoop applies sprint speed itself - counting the
                         // server's own sprint modifier too would double it.
                         if (modifierId == "minecraft:sprinting") continue;
                         if (operation == 0) addValue += amount;
@@ -1430,10 +1795,69 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                     if (key < 0 || static_cast<size_t>(key) >= ATTRIBUTE_NAMES.size()) continue;
                     double value = base + addValue;
                     value = (value + value * multiplyBase) * multiplyTotal;
-                    state->attributes->SetDouble(ATTRIBUTE_NAMES[static_cast<size_t>(key)], value);
+                    if (isLocal) {
+                        state->attributes->SetDouble(ATTRIBUTE_NAMES[static_cast<size_t>(key)], value);
+                    } else {
+                        std::string_view name = ATTRIBUTE_NAMES[static_cast<size_t>(key)];
+                        std::lock_guard lock(state->entitiesMutex);
+                        if (Entity* entity = state->FindEntity(static_cast<uint32_t>(entityId))) {
+                            if (name == "generic.movement_speed") entity->movementSpeed = static_cast<float>(value);
+                            else if (name == "generic.jump_strength") entity->jumpStrength = static_cast<float>(value);
+                        }
+                    }
                 }
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Update Attributes: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::Commands) {
+            try {
+                std::shared_ptr<const CommandTree> tree = CommandTree::Read(reader);
+                Log::Info("[NET] Command tree: " + std::to_string(tree->Size()) + " nodes");
+                std::lock_guard<std::mutex> lock(state->commandsMutex);
+                state->commands = std::move(tree);
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Commands: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::WorldParticles) {
+            try {
+                reader.ReadBool(); // long distance: nothing here depends on it
+                ParticleSpawn spawn;
+                spawn.alwaysShow = reader.ReadBool();
+                double x = reader.ReadDouble();
+                double y = reader.ReadDouble();
+                double z = reader.ReadDouble();
+                spawn.position = glm::dvec3(x, y, z);
+                spawn.spread.x = reader.ReadFloat();
+                spawn.spread.y = reader.ReadFloat();
+                spawn.spread.z = reader.ReadFloat();
+                spawn.speed = reader.ReadFloat();
+                spawn.count = reader.ReadInt();
+                spawn.type = reader.ReadVarInt();
+                if (state->particles != nullptr) {
+                    // Only the types that carry a color or size need their data read: it is the last thing in the packet.
+                    const std::string& name = state->particles->TypeName(spawn.type);
+                    if (name == "dust") {
+                        spawn.color = static_cast<uint32_t>(reader.ReadInt());
+                        spawn.scale = std::clamp(reader.ReadFloat(), 0.01f, 4.0f);
+                    } else if (name == "dust_color_transition") {
+                        spawn.color = static_cast<uint32_t>(reader.ReadInt());
+                        reader.ReadInt(); // the color it fades to
+                        spawn.scale = std::clamp(reader.ReadFloat(), 0.01f, 4.0f);
+                    } else if (name == "entity_effect" || name == "tinted_leaves") {
+                        spawn.color = static_cast<uint32_t>(reader.ReadInt());
+                    } else if (name == "effect" || name == "instant_effect") {
+                        spawn.color = static_cast<uint32_t>(reader.ReadInt());
+                    }
+                    state->particles->Spawn(spawn);
+                }
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Level Particles: ") + e.what());
             }
             continue;
         }
@@ -1456,7 +1880,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                         name = reader.ReadString();
                         int32_t propCount = reader.ReadVarInt();
                         for (int32_t p = 0; p < propCount; p++) {
-                            reader.ReadString(); // property name — skin data, unused (no skin rendering yet)
+                            reader.ReadString(); // property name - skin data, unused (no skin rendering yet)
                             reader.ReadString(); // property value
                             if (reader.ReadBool()) reader.ReadString(); // signature, when present
                         }
@@ -1473,7 +1897,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                     if (actions & UPDATE_LISTED) reader.ReadVarInt();
                     if (actions & UPDATE_LATENCY) reader.ReadVarInt();
                     if (actions & UPDATE_DISPLAY_NAME) {
-                        if (reader.ReadBool()) ReadTextComponent(reader); // display name NBT, unused — plain name is enough for now
+                        if (reader.ReadBool()) ReadTextComponent(reader); // display name NBT, unused - plain name is enough for now
                     }
                     if (actions & UPDATE_LIST_ORDER) reader.ReadVarInt();
                     if (actions & UPDATE_HAT) reader.ReadBool();
@@ -1486,7 +1910,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
                     // Keep an already-spawned PlayerEntity in step too
                     // (normally the tab-list entry comes first and Spawn
-                    // Entity copies it — but a game mode change, e.g. into
+                    // Entity copies it - but a game mode change, e.g. into
                     // spectator, arrives later).
                     if (name.has_value() || gameMode.has_value()) {
                         std::lock_guard<std::mutex> lock(state->entitiesMutex);
@@ -1526,6 +1950,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 bool overlay = reader.ReadBool();
                 if (!overlay) { // action bar messages aren't shown in the scrollback (no HUD for them yet)
                     GUI::Chat::AddMessage(event);
+                FireChatReceived(state, event);
                 }
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse System Chat Message: ") + e.what());
@@ -1534,7 +1959,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         }
 
         if (packetId == PlayS2C::PlayerChatMessage) {
-            // Logged unconditionally, before parsing even starts — the open
+            // Logged unconditionally, before parsing even starts - the open
             // question is whether the server sends this packet back to the
             // sender at all, not just whether this client parses it right.
             // If this line never appears, the server isn't broadcasting the
@@ -1543,7 +1968,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             // up, the bug is in parsing/display below.
             Log::Info("[NET] Received PlayerChatMessage, " + std::to_string(payload.size()) + " bytes");
 
-            // Best-effort — see the UNVERIFIED note on PlayerChatMessage in
+            // Best-effort - see the UNVERIFIED note on PlayerChatMessage in
             // PacketIds.hpp. Anything read wrong here is contained to a
             // wrong-looking chat line or the catch below; it can't desync
             // the connection, since Connection::ReadPacket already framed
@@ -1575,13 +2000,14 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                     reader.Skip(static_cast<size_t>(longCount) * 8);
                 }
 
-                reader.ReadVarInt(); // chat type registry id, unused — no per-type decoration formatting yet
+                reader.ReadVarInt(); // chat type registry id, unused - no per-type decoration formatting yet
                 ChatEvent event;
                 event.sender = ReadTextComponent(reader);
                 if (reader.ReadBool()) ReadTextComponent(reader); // target name, unused (whisper/team target)
                 event.message = std::move(message);
 
                 GUI::Chat::AddMessage(event);
+                FireChatReceived(state, event);
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Player Chat Message: ") + e.what());
             }
@@ -1590,7 +2016,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
         if (packetId == PlayS2C::Disconnect) {
             // Same anonymousNbt reason field as the Configuration-state
-            // Disconnect above — see that handler's comment. ReadString()
+            // Disconnect above - see that handler's comment. ReadString()
             // here meant a kick's real reason was never actually visible.
             std::string reason = PlainText(ReadTextComponent(reader));
             Log::Error("Server disconnected: " + reason);
@@ -1599,11 +2025,11 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         }
 
         {
-            // Logged once per distinct id, not once per occurrence — a busy
+            // Logged once per distinct id, not once per occurrence - a busy
             // populated world sends routine high-frequency packets (entity
             // metadata, sound, particles, ...) this client doesn't handle
             // yet, and logging every single one was thousands of lines
-            // (each one a real syscall — see Logger::Info's own comment)
+            // (each one a real syscall - see Logger::Info's own comment)
             // competing with this same loop's own chunk-packet reads.
             static std::unordered_set<int32_t> loggedIds;
             if (loggedIds.insert(packetId).second) {
@@ -1619,7 +2045,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 void SendChatMessage(GlobalState* state, const std::string& message)
 {
     // The loaded copy keeps the connection alive for the rest of this
-    // function even if the session ends mid-call — see
+    // function even if the session ends mid-call - see
     // GlobalState::activeConnection's own comment.
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
@@ -1632,16 +2058,16 @@ void SendChatMessage(GlobalState* state, const std::string& message)
         writer.WriteString(message);
         writer.WriteLong(std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
-        writer.WriteLong(0); // salt — 0 since this message is unsigned.
+        writer.WriteLong(0); // salt - 0 since this message is unsigned.
         writer.WriteBool(false); // signature present? No (see PacketIds.hpp's own comment).
         writer.WriteVarInt(0); // offset
-        std::array<uint8_t, 3> acknowledged{}; // All-zero 20-bit "last seen" bitset — nothing acknowledged.
+        std::array<uint8_t, 3> acknowledged{}; // All-zero 20-bit "last seen" bitset - nothing acknowledged.
         writer.WriteBytes(acknowledged.data(), acknowledged.size());
-        writer.WriteBytes(reinterpret_cast<const uint8_t*>("\x00"), 1); // checksum — see PacketIds.hpp's own comment.
+        writer.WriteBytes(reinterpret_cast<const uint8_t*>("\x00"), 1); // checksum - see PacketIds.hpp's own comment.
 
         connection->QueuePacket(PlayC2S::ChatMessage, writer.Data());
         // Neither this nor SendChatCommand below logged anything on a
-        // successful queue — "no chat logs at all" was consistent with both
+        // successful queue - "no chat logs at all" was consistent with both
         // "never called" and "sent fine, just no visible server response",
         // completely undiagnosable from the log alone. This line exists to
         // separate those two cases.
@@ -1661,7 +2087,7 @@ void SendChatCommand(GlobalState* state, const std::string& command)
 
     try {
         PacketWriter writer;
-        writer.WriteString(command); // No leading "/" — the packet field is just the command text.
+        writer.WriteString(command); // No leading "/" - the packet field is just the command text.
         connection->QueuePacket(PlayC2S::ChatCommand, writer.Data());
         Log::Info("[NET] Queued chat command: /" + command);
     } catch (const std::exception& e) {
@@ -1706,7 +2132,7 @@ void SendAttack(GlobalState* state, uint32_t targetEntityId)
 void SendSwing(GlobalState* state, int32_t hand)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
-    if (connection == nullptr) return; // Nothing to animate for anyone without a session — not worth a log line per click.
+    if (connection == nullptr) return; // Nothing to animate for anyone without a session - not worth a log line per click.
 
     try {
         PacketWriter writer;
@@ -1780,6 +2206,28 @@ void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, i
     }
 }
 
+void SendInventoryAction(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+                         uint8_t button, int32_t mode, const ItemStack& carriedItem)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) return;
+
+    try {
+        PacketWriter writer;
+        writer.WriteVarInt(windowId);
+        writer.WriteVarInt(stateId);
+        writer.WriteShort(static_cast<int16_t>(slot));
+        uint8_t mouseButton = button;
+        writer.WriteBytes(&mouseButton, 1);
+        writer.WriteVarInt(mode);
+        writer.WriteVarInt(0); // Changed slots: none claimed - the server works out the result and resyncs what differs.
+        WriteOptionalHashedSlot(writer, carriedItem);
+        connection->QueuePacket(PlayC2S::WindowClick, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send inventory action: ") + e.what());
+    }
+}
+
 void SendInventoryClose(GlobalState* state, int32_t windowId)
 {
     if (windowId == 0) return;
@@ -1808,9 +2256,9 @@ void SendInteractEntity(GlobalState* state, uint32_t entityId, Hand hand, bool s
         PacketWriter writer;
         writer.WriteVarInt(static_cast<int32_t>(entityId));
         writer.WriteVarInt(static_cast<int32_t>(hand));
-        // location (lpVec3) — see PacketIds.hpp::UseEntity's own comment on
+        // location (lpVec3) - see PacketIds.hpp::UseEntity's own comment on
         // why this is always the entity's own origin for now.
-        uint8_t zeroLpVec3 = 0; // lpVec3 encodes (0,0,0) as one zero byte — see SpawnEntity's velocity parse.
+        uint8_t zeroLpVec3 = 0; // lpVec3 encodes (0,0,0) as one zero byte - see SpawnEntity's velocity parse.
         writer.WriteBytes(&zeroLpVec3, 1);
         writer.WriteBool(sneaking);
         connection->QueuePacket(PlayC2S::UseEntity, writer.Data());
@@ -1876,8 +2324,8 @@ void SendBlockPlace(GlobalState* state, Hand hand, glm::ivec3 position, glm::ive
         writer.WriteFloat(cursor.x);
         writer.WriteFloat(cursor.y);
         writer.WriteFloat(cursor.z);
-        writer.WriteBool(false); // insideBlock — the player's own head/feet occupying the target cell; not tracked yet.
-        writer.WriteBool(false); // worldBorderHit — this client doesn't track the world border yet.
+        writer.WriteBool(false); // insideBlock - the player's own head/feet occupying the target cell; not tracked yet.
+        writer.WriteBool(false); // worldBorderHit - this client doesn't track the world border yet.
         writer.WriteVarInt(state->interactionSequence.fetch_add(1, std::memory_order_relaxed) + 1);
         connection->QueuePacket(PlayC2S::BlockPlace, writer.Data());
     } catch (const std::exception& e) {

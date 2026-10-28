@@ -3,10 +3,12 @@
 #define VOLCANO_SOUND_REGISTRY_H
 
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include "../Logger.hpp"
+#include "../resources/ResourceManager.hpp"
 #include "AudioManager.hpp"
 
 namespace Volcano {
@@ -15,31 +17,49 @@ class SoundRegistry {
 public:
     explicit SoundRegistry(std::string soundDir) : soundDir(std::move(soundDir)) {}
 
-    // Returns the number of sounds found; a missing directory is not fatal.
+    // Indexes the resource-pack sounds (logical paths) and returns how many
+    // were found. Safe to call again after a resource reload: pack sounds are
+    // re-indexed and reloaded on next use, mod Register() entries are kept.
     size_t IndexSounds()
     {
-        namespace fs = std::filesystem;
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        std::unordered_map<std::string, std::string> modFiles;
+        for (const auto& [name, path] : files)
+        {
+            if (logicalNames.count(name) == 0) modFiles[name] = path;
+        }
         files.clear();
+        logicalNames.clear();
+        loaded.clear(); // Load() replaces the old clip when it runs again.
 
-        std::error_code error;
-        if (!fs::is_directory(soundDir, error))
+        const std::string prefix = soundDir + "/";
+        for (const std::string& logical : ResourceManager::Instance().List(soundDir, ".ogg", true))
         {
-            Log::Error("Sounds directory does not exist: " + soundDir);
-            return 0;
+            if (!logical.starts_with(prefix)) continue;
+            std::string relative = logical.substr(prefix.size(), logical.size() - prefix.size() - 4);
+            std::string name = "minecraft:" + relative;
+            files[name] = logical;
+            logicalNames.insert(name);
         }
 
-        for (const auto& entry : fs::recursive_directory_iterator(soundDir, error))
-        {
-            if (!entry.is_regular_file() || entry.path().extension() != ".ogg") continue;
-            fs::path relative = fs::relative(entry.path(), soundDir).replace_extension();
-            files["minecraft:" + relative.generic_string()] = entry.path().string();
-        }
+        for (const auto& [name, path] : modFiles) files[name] = path;
 
+        if (files.empty()) Log::Error("No sounds found under " + soundDir);
         Log::Info("Indexed " + std::to_string(files.size()) + " sounds.");
         return files.size();
     }
 
     bool Has(const std::string& name) const { return files.find(name) != files.end(); }
+
+    // Adds (or replaces) a sound under `name`, e.g. "mymod:ui/click" for an
+    // .ogg file, so Play() can load it on first use. Replacing a name that was
+    // already loaded takes effect after a restart.
+    void Register(const std::string& name, const std::string& path)
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        files[name] = path;
+        logicalNames.erase(name);
+    }
 
     // Finds a sound under `prefix` (e.g. "minecraft:music/") by bare file
     // name, so callers needn't know which subfolder it lives in.
@@ -55,6 +75,7 @@ public:
 
     bool Load(AudioManager* audioManager, const std::string& name)
     {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
         if (loaded.count(name) != 0) return true;
 
         auto it = files.find(name);
@@ -63,7 +84,16 @@ public:
             Log::Error("Unknown sound: " + name);
             return false;
         }
-        if (audioManager->LoadSound(name, it->second) == nullptr) return false;
+        if (logicalNames.count(name) != 0)
+        {
+            auto bytes = ResourceManager::Instance().ReadBytes(it->second);
+            if (!bytes || audioManager->LoadSoundFromMemory(name, *bytes, it->second) == nullptr)
+            {
+                Log::Error("Failed to load sound: " + it->second);
+                return false;
+            }
+        }
+        else if (audioManager->LoadSound(name, it->second) == nullptr) return false;
 
         loaded.insert(name);
         return true;
@@ -73,12 +103,17 @@ public:
     bool Play(AudioManager* audioManager, const std::string& name, float volume = 1.0f,
               float pitch = 1.0f, bool loop = false)
     {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
         return Load(audioManager, name) && audioManager->PlaySound(name, volume, pitch, loop);
     }
 
 private:
+    // Footsteps (tick thread), block sounds (main thread) and music share this.
+    std::recursive_mutex mutex;
     std::string soundDir;
     std::unordered_map<std::string, std::string> files;
+    // Names in files whose value is a ResourceManager logical path, not a disk path.
+    std::unordered_set<std::string> logicalNames;
     std::unordered_set<std::string> loaded;
 };
 

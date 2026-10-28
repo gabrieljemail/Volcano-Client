@@ -9,8 +9,8 @@ namespace Volcano::PigModel {
 
 // Six-box static mesh (head, body, 4 legs), proportions converted from real
 // vanilla PigModel.java/QuadrupedModel.java (legSize=6, real pig hitbox
-// 0.9x0.9) — not the generic QuadrupedModel.hpp shape. Same -0.5..0.5
-// normalized/EntityRegistry-rescaled convention as QuadrupedModel — see its
+// 0.9x0.9) - not the generic QuadrupedModel.hpp shape. Same -0.5..0.5
+// normalized/EntityRegistry-rescaled convention as QuadrupedModel - see its
 // own comment. Z negated relative to vanilla's raw model-space coordinates
 // (vanilla's head/front legs sit at -Z; this engine's forward is +Z).
 inline void BuildMesh(std::vector<EntityMeshVertex>& vertices, std::vector<uint32_t>& indices)
