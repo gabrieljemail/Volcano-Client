@@ -37,6 +37,10 @@ public:
     // items like chests and beds, which have no JSON elements).
     static const ItemModel* ForItem(const std::string& itemName, const TextureManager& textures);
 
+    // Drops every cached model (they bake texture layer indices). Call after a
+    // resource reload, and only once nothing holds a returned pointer.
+    static void ClearCache();
+
     ItemModelType GetType() const { return type; }
     const std::vector<ItemModelVertex>& GetVertices() const { return vertices; }
     const std::vector<uint32_t>& GetIndices() const { return indices; }
@@ -48,7 +52,7 @@ public:
     // The model's display transform for `context` ("gui", "ground",
     // "firstperson_righthand", "thirdperson_righthand", "fixed", ...) as a
     // matrix: translate * rotate(X, Y, Z) * scale, then recentred so the
-    // model's middle sits at the origin — same order as vanilla's
+    // model's middle sits at the origin - same order as vanilla's
     // ItemTransform.apply. Identity-ish if the model has no entry for it.
     glm::mat4 DisplayMatrix(const std::string& context) const;
 

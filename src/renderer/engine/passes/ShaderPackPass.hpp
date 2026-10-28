@@ -10,14 +10,14 @@ namespace Volcano::Engine::Passes {
 
 // The optional external-shader slot: a fullscreen pass that only exists
 // when the active shader pack ships "overlay.vert.spv" + "overlay.frag.spv"
-// (see ShaderLibrary). There's no built-in version — without a pack, or
+// (see ShaderLibrary). There's no built-in version - without a pack, or
 // with a pack that doesn't provide both files, Create() builds nothing and
 // Record() is a no-op, so the slot costs nothing when unused.
 //
 // Drawn after the world/selection passes and before the GUI, as one
 // 3-vertex draw with no vertex buffer (the vertex shader derives a
 // fullscreen triangle from gl_VertexIndex), alpha-blended over the frame
-// with no depth test — tints, vignettes, fog-colored gradients and the
+// with no depth test - tints, vignettes, fog-colored gradients and the
 // like. It can't sample the frame itself: the whole frame is a single
 // subpass, so there's no copy of the color target to read from yet.
 //

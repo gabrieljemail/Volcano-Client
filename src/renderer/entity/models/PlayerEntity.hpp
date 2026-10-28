@@ -19,30 +19,15 @@ enum class GameMode : uint8_t {
     Spectator = 3,
 };
 
-// Slot indices of PlayerEntity::equipment — vanilla's EquipmentSlot
-// ordinals, which is exactly what PlayS2C::SetEquipment sends per entry,
-// so a packet's slot byte indexes this array directly.
-enum class EquipmentSlot : uint8_t {
-    MainHand = 0,
-    OffHand = 1,
-    Feet = 2,
-    Legs = 3,
-    Chest = 4,
-    Head = 5,
-    Body = 6,   // Horse/wolf armor — never set for a player, kept so the indices line up.
-    Saddle = 7, // Same.
-};
-constexpr size_t EQUIPMENT_SLOT_COUNT = 8;
-
 // A remote player (anyone in the world other than this client's own
-// Player — see src/Player.hpp for that). Inherits Entity's common fields
+// Player - see src/Player.hpp for that). Inherits Entity's common fields
 // (id, position, yaw, placeholder box/color, hurt flash) and adds
 // everything the server tells us about another player specifically:
 // identity from Spawn Entity + Player Info Update, gear from Set Equipment,
 // and health/pose flags from Set Entity Data.
 //
 // Stored in GlobalState::playerEntities rather than GlobalState::entities
-// (which holds plain Entity values — a PlayerEntity inserted there would
+// (which holds plain Entity values - a PlayerEntity inserted there would
 // be sliced down to its Entity part and lose all of this). Both maps share
 // entitiesMutex; GlobalState::FindEntity/ForEachEntity walk the two
 // together for code that only needs the common Entity fields.
@@ -54,21 +39,18 @@ struct PlayerEntity : public Entity {
 
     GameMode gameMode = GameMode::Survival;
 
-    // Held items and worn armor, indexed by EquipmentSlot. Only id/count are
-    // tracked — see ItemStack's own comment on data components.
-    std::array<ItemStack, EQUIPMENT_SLOT_COUNT> equipment{};
-
     // Set Entity Data fields. health starts at vanilla's max so a player
     // whose metadata hasn't arrived yet doesn't read as dying.
     float health = 20.0f;
     bool sneaking = false;  // Shared flags bit 0x02 (crouching).
     bool sprinting = false; // Shared flags bit 0x08.
+    bool swimming = false;  // Shared flags bit 0x10.
     bool invisible = false; // Shared flags bit 0x20.
+    int32_t pose = 0;       // Vanilla Pose ordinal: 0 standing, 3 swimming, 5 crouching.
 
-    const ItemStack& GetEquipment(EquipmentSlot slot) const
-    {
-        return equipment[static_cast<size_t>(slot)];
-    }
+    // Swim pose per the shared flag or the pose field, whichever arrives.
+    bool IsSwimming() const { return swimming || pose == 3; }
+    bool IsCrouching() const { return sneaking || pose == 5; }
 
     // Vanilla refuses to attack a spectator at all (Player.cannotAttack), and
     // the crosshair raycast skips them for the same reason.

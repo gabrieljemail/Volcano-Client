@@ -54,7 +54,7 @@ nlohmann::json ToJson(const ConfigValue& value)
 // Tries to read node as whichever ConfigValue alternative fallback holds,
 // writing the result into out. Returns false if node holds some other JSON
 // type (or a value that doesn't fit, e.g. a negative number into uint32_t)
-// — the key is then treated as unset.
+// - the key is then treated as unset.
 bool ExtractMatching(const nlohmann::json& node, const ConfigValue& fallback, ConfigValue& out)
 {
     return std::visit([&](const auto& fallbackValue) {
@@ -129,7 +129,7 @@ ConfigValue Config::Get(const std::string& key, const ConfigValue& fallback)
     ConfigValue value;
     if (node != nullptr && ExtractMatching(*node, fallback, value)) return value;
 
-    // Unset or invalid — fall back to the caller's default, and persist it
+    // Unset or invalid - fall back to the caller's default, and persist it
     // so settings.json (and every later Get() for this key) reflects it.
     Assign(data, key, ToJson(fallback));
     Save();
@@ -139,6 +139,13 @@ ConfigValue Config::Get(const std::string& key, const ConfigValue& fallback)
 void Config::Set(const std::string& key, const ConfigValue& value)
 {
     Assign(data, key, ToJson(value));
+    Save();
+    version++;
+}
+
+void Config::SetStringArray(const std::string& key, const std::vector<std::string>& values)
+{
+    Assign(data, key, nlohmann::json(values));
     Save();
     version++;
 }

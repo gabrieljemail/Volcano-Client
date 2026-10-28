@@ -24,8 +24,8 @@ static SlabBuffer indexSlab;
 static bool slabsInitialized = false;
 
 // Scales this mesher's base slab size by how many chunk columns
-// Graphics.RenderDistance actually loads — (2*RD+1)^2, the same square-view
-// accounting vanilla's own simulation distance uses — rather than a single
+// Graphics.RenderDistance actually loads - (2*RD+1)^2, the same square-view
+// accounting vanilla's own simulation distance uses - rather than a single
 // fixed budget that's only right for whatever distance it happened to be
 // tuned at. Every factor lives in settings.json (Graphics.SlabSize.*) rather
 // than being hardcoded, since the right numbers depend entirely on the
@@ -33,17 +33,17 @@ static bool slabsInitialized = false;
 // host-visible heap SlabBuffer maps persistently (CreateBuffer's isUMA
 // flag), which on an integrated/UMA GPU is real system RAM, and on a
 // discrete GPU without resizable BAR is often capped in the low hundreds of
-// MB regardless of total VRAM — scaling too aggressively risks that
+// MB regardless of total VRAM - scaling too aggressively risks that
 // allocation failing outright (SlabBuffer::Init now throws a readable error
 // instead of crashing on that, but a smaller increase that stays reliable
 // beats a bigger one that doesn't). If it's still failing, lower
 // baseSizeMBKey and/or maxScalePercent in settings.json.
 //
-// baseSizeMBKey: the base size in MB (floor — never allocates less than
+// baseSizeMBKey: the base size in MB (floor - never allocates less than
 // this regardless of render distance). ReferenceRenderDistance: the render
 // distance that base size is considered "right" for; scale is 1.0 there.
 // MaxScalePercent: hard cap on how far render distance can scale the base
-// size up (percent, not a fraction — ConfigValue has no float type, same
+// size up (percent, not a fraction - ConfigValue has no float type, same
 // convention as InteractionManagerConfig's alpha settings).
 static uint64_t SlabSizeForRenderDistance(const std::string& baseSizeMBKey, uint32_t defaultBaseSizeMB) {
     Config* config = Config::Active();
@@ -72,7 +72,6 @@ static void EnsureSlabsInitialized() {
 
     uint64_t slabSize = SlabSizeForRenderDistance("Graphics.SlabSize.CubicMB",
         static_cast<uint32_t>(ChunkMesher::DEFAULT_SLAB_SIZE / (1024ull * 1024ull)));
-    slabSize = SlabBuffer::AffordableSize(slabSize, 0.7, 2); // 2 slabs, 70% of the slab budget
     vertexSlab.Init(slabSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     indexSlab.Init(slabSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     slabsInitialized = true;
@@ -89,12 +88,12 @@ void ChunkMesher::Shutdown() {
 bool ChunkMesher::ReleaseMesh(const Mesh& mesh) {
     if (!slabsInitialized) return false;
     bool owned = false;
-    if (mesh.vertexBytes > 0 && mesh.vertexBuffer == vertexSlab.GetBuffer()) {
-        vertexSlab.Free(mesh.vertexOffset, mesh.vertexBytes);
+    if (mesh.vertexBytes > 0 && vertexSlab.Owns(mesh.vertexBuffer)) {
+        vertexSlab.Free(mesh.vertexBuffer, mesh.vertexOffset, mesh.vertexBytes);
         owned = true;
     }
-    if (mesh.indexBytes > 0 && mesh.indexBuffer == indexSlab.GetBuffer()) {
-        indexSlab.Free(mesh.indexOffset, mesh.indexBytes);
+    if (mesh.indexBytes > 0 && indexSlab.Owns(mesh.indexBuffer)) {
+        indexSlab.Free(mesh.indexBuffer, mesh.indexOffset, mesh.indexBytes);
         owned = true;
     }
     return owned;
@@ -103,7 +102,9 @@ bool ChunkMesher::ReleaseMesh(const Mesh& mesh) {
 SlabStats ChunkMesher::GetSlabStats() {
     return SlabStats{
         vertexSlab.GetUsed() + indexSlab.GetUsed(),
-        vertexSlab.GetCapacity() + indexSlab.GetCapacity()
+        vertexSlab.GetCapacity() + indexSlab.GetCapacity(),
+        vertexSlab.GetLimit() + indexSlab.GetLimit(),
+        vertexSlab.GetBlockCount() + indexSlab.GetBlockCount()
     };
 }
 
@@ -113,9 +114,9 @@ SlabStats ChunkMesher::GetSlabStats() {
 // 0..CHUNK_SIZE_Z-1 horizontal range (the greedy sweep below deliberately
 // samples one step past each edge to test exposure there) by falling back
 // to World for anything horizontal that crosses into a neighboring chunk.
-// Vertical range never needs this — Chunk::getBlock's own bounds check
+// Vertical range never needs this - Chunk::getBlock's own bounds check
 // already returns Air above/below the world height correctly, no neighbor
-// chunk involved — so only lx/lz are tested here. The in-bounds case is a
+// chunk involved - so only lx/lz are tested here. The in-bounds case is a
 // plain array index (chunk.getBlock), same cost as before; only the two
 // edge planes per horizontal axis pay for a World lookup (chunk-map lookup
 // + shared_lock), not every sample.
@@ -131,7 +132,7 @@ static Block GetBlockAcrossChunks(const Chunk& chunk, const World& world, int lx
 
 // Same cross-chunk fallback as GetBlockAcrossChunks, for the light sample at
 // the solid block contributing a face. Returns both channels from one lookup
-// — see LightSample's own comment.
+// - see LightSample's own comment.
 static LightSample GetLightAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
     if (lx >= 0 && lx < CHUNK_SIZE_X && lz >= 0 && lz < CHUNK_SIZE_Z) {
         return chunk.getLightSample(lx, ly, lz);
@@ -146,26 +147,81 @@ static LightSample GetLightAcrossChunks(const Chunk& chunk, const World& world, 
 // block type is exposed at this cell, and which side of the sweep plane it
 // sits on (+1 = solid block is on the negative side of the boundary and its
 // face points in the positive axis direction, -1 = the opposite). A `normal`
-// of 0 means no face is exposed here (both sides agree — solid/solid or
-// air/air) and the cell is skipped. `skyLight`/`blockLight` are the real
-// per-block light at the solid block contributing this face, kept apart
-// (see LightSample's own comment) — both are part of the mask comparison so
-// the greedy sweep never merges two faces with a different light level on
-// either channel into one quad (light isn't interpolated across a merged
-// quad, so quads simply stop growing at a light boundary instead).
+// of 0 means no face is exposed here (both sides agree - solid/solid or
+// air/air) and the cell is skipped.
+//
+// The cell's four corners each carry their own AO and light (indexed
+// [cornerU][cornerV], i.e. the cell's own u/v corner, not the quad's). They
+// are part of the comparison, so the sweep only merges cells whose corners all
+// agree: shading is interpolated across a quad, and a merged quad would
+// otherwise stretch its outer corners over cells it doesn't describe.
 struct MaskCell {
     uint16_t type = 0;
     int8_t normal = 0;
-    uint8_t skyLight = 0;
-    uint8_t blockLight = 0;
+    uint8_t ao[2][2] = {};
+    uint8_t skyLight[2][2] = {};
+    uint8_t blockLight[2][2] = {};
 
     bool IsEmpty() const { return normal == 0; }
     bool operator==(const MaskCell& other) const {
         return type == other.type && normal == other.normal
-            && skyLight == other.skyLight && blockLight == other.blockLight;
+            && std::memcmp(ao, other.ao, sizeof(ao)) == 0
+            && std::memcmp(skyLight, other.skyLight, sizeof(skyLight)) == 0
+            && std::memcmp(blockLight, other.blockLight, sizeof(blockLight)) == 0;
     }
     bool operator!=(const MaskCell& other) const { return !(*this == other); }
 };
+
+// Fills `cell`'s per-corner AO and light for the face whose air-side block is
+// at (pu, pv, pn) along the sweep's u/v/axis. Reads the 3x3 neighbourhood in
+// the air-side layer once. AO is the usual 0-3 (both sides solid = 3, else
+// sides plus the corner block); smooth light averages the open blocks around
+// the corner, and falls back to the face's own light when smoothing is off.
+static void ComputeCornerShading(const Chunk& chunk, const World& world, int u, int v, int axis,
+        int pu, int pv, int pn, bool smoothLighting, MaskCell& cell) {
+    bool solid[3][3];
+    LightSample light[3][3];
+    for (int dv = -1; dv <= 1; dv++) {
+        for (int du = -1; du <= 1; du++) {
+            int pos[3];
+            pos[u] = pu + du;
+            pos[v] = pv + dv;
+            pos[axis] = pn;
+            solid[du + 1][dv + 1] = GetBlockAcrossChunks(chunk, world, pos[0], pos[1], pos[2]).isOpaque();
+            light[du + 1][dv + 1] = GetLightAcrossChunks(chunk, world, pos[0], pos[1], pos[2]);
+        }
+    }
+
+    for (int cu = 0; cu < 2; cu++) {
+        for (int cv = 0; cv < 2; cv++) {
+            int du = cu ? 1 : -1;
+            int dv = cv ? 1 : -1;
+            bool sideU = solid[1 + du][1];
+            bool sideV = solid[1][1 + dv];
+            bool corner = solid[1 + du][1 + dv];
+            cell.ao[cu][cv] = (sideU && sideV) ? 3 : static_cast<uint8_t>(sideU + sideV + corner);
+
+            if (!smoothLighting) {
+                cell.skyLight[cu][cv] = light[1][1].sky;
+                cell.blockLight[cu][cv] = light[1][1].block;
+                continue;
+            }
+
+            // The face's own block always counts; a side block counts when open; the
+            // diagonal counts when open and at least one side is (light can't leak
+            // around a closed corner).
+            int count = 1;
+            int sky = light[1][1].sky;
+            int block = light[1][1].block;
+            auto add = [&](const LightSample& sample) { sky += sample.sky; block += sample.block; count++; };
+            if (!sideU) add(light[1 + du][1]);
+            if (!sideV) add(light[1][1 + dv]);
+            if (!corner && !(sideU && sideV)) add(light[1 + du][1 + dv]);
+            cell.skyLight[cu][cv] = static_cast<uint8_t>((sky + count / 2) / count);
+            cell.blockLight[cu][cv] = static_cast<uint8_t>((block + count / 2) / count);
+        }
+    }
+}
 
 // Maps a sweep axis (0=X, 1=Y, 2=Z) and the sign of the exposed face's normal
 // to the same face indices GetFaceTexture()/the lighting table below expect.
@@ -179,8 +235,22 @@ static int FaceIndexFor(int axis, int normal) {
 
 struct FaceTexture {
     uint16_t layer;
-    bool biomeTinted;
+    uint8_t biomeTint; // BiomeColors.hpp's BiomeTint.
+    uint8_t shininess; // 0 matte .. 7 mirror-like, for terrain.frag's specular.
 };
+
+// How shiny a block looks, guessed from its texture name (the client has no
+// per-block material table, same trick as BlockSounds).
+static uint8_t ShininessFor(const std::string& texture) {
+    auto has = [&](const char* part) { return texture.find(part) != std::string::npos; };
+    if (has("glass") || has("ice")) return 7;
+    if (has("iron_block") || has("gold_block") || has("diamond_block") || has("emerald_block")
+        || has("netherite_block") || has("lapis_block") || has("amethyst_block")) return 6;
+    if (has("obsidian")) return 5;
+    if (has("copper_block") || has("cut_copper") || has("polished") || has("quartz") || has("smooth")) return 3;
+    if (has("snow")) return 2;
+    return 0;
+}
 
 // Maps a block's visual id (and, for blocks whose faces differ, which face
 // is being meshed) to the resource-pack texture name via BlockRegistry
@@ -192,7 +262,7 @@ struct FaceTexture {
 // as the layer index).
 static FaceTexture GetFaceTexture(uint16_t visualId, int face, const TextureManager& textureManager) {
     const std::string& name = BlockRegistry::GetFaceTextureName(visualId, face);
-    return { textureManager.GetLayerIndex(name), IsBiomeTinted(name) };
+    return { textureManager.GetLayerIndex(name), GetTerrainTint(name), ShininessFor(name) };
 }
 
 // Sweeps every boundary plane perpendicular to `axis` (0=X, 1=Y, 2=Z), and for
@@ -202,14 +272,14 @@ static FaceTexture GetFaceTexture(uint16_t visualId, int face, const TextureMana
 // is swept in.
 //
 // [yMin, yMax) restricts the sweep to one 16-tall section (see
-// MeshChunkSection) instead of the whole 384-tall column — X/Z are never
+// MeshChunkSection) instead of the whole 384-tall column - X/Z are never
 // restricted (a section is only ever sliced vertically). For axis 1 (Y is
 // the sweep-plane axis itself) this simply narrows the plane-sweep range;
 // for axis 0/2 (Y is one of the mask's u/v dimensions instead) the mask's
 // extent and the sample loop along that dimension both shrink to
 // [yMin, yMax) rather than the full chunk height.
 static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, int yMin, int yMax,
-        const TextureManager& textureManager,
+        const TextureManager& textureManager, bool smoothLighting,
         std::vector<PackedVertex>& vertices, std::vector<uint32_t>& indices) {
     const int dims[3] = { CHUNK_SIZE_X, CHUNK_SIZE_Y, CHUNK_SIZE_Z };
     int rangeStart[3] = { 0, yMin, 0 };
@@ -221,7 +291,7 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, int
     if (axis == 0) { u = 2; v = 1; }
     else { u = (axis + 1) % 3; v = (axis + 2) % 3; }
 
-    // Mask-local extent along u/v — full chunk width for a horizontal axis,
+    // Mask-local extent along u/v - full chunk width for a horizontal axis,
     // narrowed to the section height for Y (see rangeStart/rangeEnd above).
     int maskW = rangeEnd[u] - rangeStart[u];
     int maskH = rangeEnd[v] - rangeStart[v];
@@ -240,14 +310,23 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, int
                 bool aOpaque = a.isOpaque();
                 bool bOpaque = b.isOpaque();
 
-                if (aOpaque == bOpaque) {
+                // The sweep also visits the planes on this section's/chunk's
+                // own outer boundary, where one of the two blocks is outside
+                // [rangeStart, rangeEnd). The neighbor owns that block's face
+                // and emits it in its own sweep, so skip it here - otherwise
+                // every boundary face is drawn twice.
+                bool aOutside = x[axis] < rangeStart[axis];
+                bool bOutside = x[axis] + 1 >= rangeEnd[axis];
+
+                if (aOpaque == bOpaque || (aOpaque && aOutside) || (bOpaque && bOutside)) {
                     mask[n] = {};
-                } else if (aOpaque) {
-                    LightSample light = GetLightAcrossChunks(chunk, world, x[0] + q[0], x[1] + q[1], x[2] + q[2]);
-                    mask[n] = { a.visualId, 1, light.sky, light.block };
                 } else {
-                    LightSample light = GetLightAcrossChunks(chunk, world, x[0], x[1], x[2]);
-                    mask[n] = { b.visualId, -1, light.sky, light.block };
+                    // Air-side block of the face: b when a is the solid one, else a.
+                    int pn = aOpaque ? x[axis] + 1 : x[axis];
+                    mask[n] = {};
+                    mask[n].type = aOpaque ? a.visualId : b.visualId;
+                    mask[n].normal = aOpaque ? 1 : -1;
+                    ComputeCornerShading(chunk, world, u, v, axis, x[u], x[v], pn, smoothLighting, mask[n]);
                 }
             }
         }
@@ -297,30 +376,38 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, int
 
                     int texV = (v == 1) ? (h - vOff) : vOff;
 
-                    // Compute AO for this vertex.
-                    uint8_t ao = ChunkMesher::ComputeVertexAO(chunk, world, u, v, axis,
-                            corners[c][0], corners[c][1],
-                            x[u], x[v], x[axis] + (cell.normal > 0 ? 0 : -1)
-                    );
+                    // Each corner takes its shading from the cell sitting in that corner of the quad.
+                    int cellI = corners[c][0] ? i + w - 1 : i;
+                    int cellJ = corners[c][1] ? j + h - 1 : j;
+                    const MaskCell& corner = mask[cellI + cellJ * maskW];
+                    int cu = corners[c][0], cv = corners[c][1];
 
                     vertices.push_back(PackedVertex::Pack(
                         glm::uvec3(localPos[0], localPos[1], localPos[2]),
                         static_cast<uint8_t>(faceIndex), // normalIndex, 0-5 fits in 3 bits.
-                        ao,
+                        corner.ao[cu][cv],
                         static_cast<uint8_t>(uOff), static_cast<uint8_t>(texV),
                         faceTexture.layer,
-                        cell.blockLight,
-                        cell.skyLight,
-                        faceTexture.biomeTinted
+                        corner.blockLight[cu][cv],
+                        corner.skyLight[cu][cv],
+                        faceTexture.biomeTint,
+                        faceTexture.shininess
                     ));
                 }
 
-                indices.push_back(baseIndex + 0);
-                indices.push_back(baseIndex + 1);
-                indices.push_back(baseIndex + 2);
-                indices.push_back(baseIndex + 2);
-                indices.push_back(baseIndex + 3);
-                indices.push_back(baseIndex + 0);
+                // Split along the diagonal joining the less occluded pair of
+                // corners, so the AO gradient doesn't cut across a dark pair.
+                int darkA = vertices[baseIndex + 0].word0 >> 24 & 0x3u;
+                int darkB = vertices[baseIndex + 1].word0 >> 24 & 0x3u;
+                int darkC = vertices[baseIndex + 2].word0 >> 24 & 0x3u;
+                int darkD = vertices[baseIndex + 3].word0 >> 24 & 0x3u;
+                if (darkA + darkC <= darkB + darkD) {
+                    indices.insert(indices.end(), { baseIndex, baseIndex + 1, baseIndex + 2,
+                        baseIndex + 2, baseIndex + 3, baseIndex });
+                } else {
+                    indices.insert(indices.end(), { baseIndex + 1, baseIndex + 2, baseIndex + 3,
+                        baseIndex + 3, baseIndex, baseIndex + 1 });
+                }
 
                 for (int hh = 0; hh < h; hh++) {
                     for (int ww = 0; ww < w; ww++) {
@@ -335,59 +422,16 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, int
     }
 }
 
-// A helper function to compute vertex light when meshing chunks for smooth lighting.
-
-// A helper function to compute vertex AO when meshing chunks for smooth lighting.
-uint8_t ChunkMesher::ComputeVertexAO(const Chunk& chunk, const World& world,
-    int u, int v, int n,                // Face plane xes.
-    int cornerU, int cornerV,           // Corner (0-3).
-    int baseU, int baseV, int baseN     // Face position.
-) {
-    // Map directon of each vertex from the origin.
-    int offsetU = cornerU ? 1 : -1;
-    int offsetV = cornerV ? 1 : -1;
-
-    // Check three neighbors in the same plane.
-    int pos[3];
-    pos[u] = baseU;
-    pos[v] = baseV;
-    pos[n] = baseN;
-
-    int occlusions = 0;
-
-    // Check U neighbor.
-    int checkU[3] = {pos[0], pos[1], pos[2]};
-    checkU[u] = baseU + offsetU;
-    Block bU = GetBlockAcrossChunks(chunk, world, checkU[0], checkU[1], checkU[2]);
-    if (bU.isOpaque()) occlusions++;
-
-    // Check V neighbor.
-    int checkV[3] = {pos[0], pos[1], pos[2]};
-    checkV[v] = baseV + offsetV;
-    Block bV = GetBlockAcrossChunks(chunk, world, checkV[0], checkV[1], checkV[2]);
-    if (bV.isOpaque()) occlusions++;
-
-    // Check diagonally, but only if both axial neighbors exist.
-    if (occlusions == 2)
-    {
-        int checkD[3] = {pos[0], pos[1], pos[2]};
-        checkD[u] = baseU + offsetU;
-        checkD[v] = baseV + offsetV;
-        Block bD = GetBlockAcrossChunks(chunk, world, checkD[0], checkD[1], checkD[2]);
-        if (bD.isOpaque()) occlusions++;
-    }
-
-    return static_cast<uint8_t>(occlusions);
-}
-
 Mesh ChunkMesher::MeshChunkSection(const Chunk& chunk, const World& world, const TextureManager& textureManager, int sectionY) {
     std::vector<PackedVertex> vertices;
     std::vector<uint32_t> indices;
 
     int yMin = sectionY * SECTION_SIZE_Y;
     int yMax = yMin + SECTION_SIZE_Y;
+    Config* config = Config::Active();
+    bool smoothLighting = config ? std::get<bool>(config->Get("Graphics.SmoothLighting", true)) : true;
     for (int axis = 0; axis < 3; axis++) {
-        GreedyMeshAxis(chunk, world, axis, yMin, yMax, textureManager, vertices, indices);
+        GreedyMeshAxis(chunk, world, axis, yMin, yMax, textureManager, smoothLighting, vertices, indices);
     }
 
     Mesh mesh{};
@@ -406,36 +450,27 @@ Mesh ChunkMesher::MeshChunkSection(const Chunk& chunk, const World& world, const
         // the smaller alignment let vertex sub-buffers start at offsets that were
         // a multiple of 4 but not 8, shifting every subsequent vertex fetch by
         // 4 bytes and corrupting the word0/word1 pairing read by the GPU.
-        if (vertexSlab.Allocate(vertices.data(), vertexBufferSize, sizeof(PackedVertex), vertexOffset)) {
-            mesh.vertexBuffer = vertexSlab.GetBuffer();
+        bool vertexOk = vertexSlab.Allocate(vertices.data(), vertexBufferSize, sizeof(PackedVertex), mesh.vertexBuffer, vertexOffset);
+        if (vertexOk) {
             mesh.vertexOffset = vertexOffset;
             mesh.vertexBytes = vertexBufferSize;
-        } else {
-            // Slab genuinely full (replaced meshes are handed back via
-            // ReleaseMesh, so this means live geometry outgrew the slab —
-            // raise Graphics.SlabSize.CubicMB). Logged rather than silently
-            // dropped so a section that stops updating is diagnosable.
-            Log::Error("[MESH] cube vertex slab full (chunk " + std::to_string(chunk.getX()) + ","
-                + std::to_string(chunk.getZ()) + ", section " + std::to_string(sectionY) + ") — section not updated.");
-            mesh.vertexCount = 0;
         }
 
         VkDeviceSize indexBufferSize = sizeof(uint32_t) * indices.size();
         VkDeviceSize indexOffset = 0;
-        if (indexSlab.Allocate(indices.data(), indexBufferSize, sizeof(uint32_t), indexOffset)) {
-            mesh.indexBuffer = indexSlab.GetBuffer();
+        bool indexOk = indexSlab.Allocate(indices.data(), indexBufferSize, sizeof(uint32_t), mesh.indexBuffer, indexOffset);
+        if (indexOk) {
             mesh.indexOffset = indexOffset;
             mesh.indexBytes = indexBufferSize;
-        } else {
-            Log::Error("[MESH] cube index slab full (chunk " + std::to_string(chunk.getX()) + ","
-                + std::to_string(chunk.getZ()) + ", section " + std::to_string(sectionY) + ") — section not updated.");
-            mesh.indexCount = 0;
         }
 
-        // Half a mesh is useless — give back whichever half did fit.
-        if (mesh.vertexCount == 0 || mesh.indexCount == 0) {
+        // Half a mesh is useless - give back whichever half did fit, and flag
+        // the failure (SlabBuffer already logged it) so the caller keeps the
+        // section's old mesh and retries instead of treating it as empty.
+        if (!vertexOk || !indexOk) {
             ReleaseMesh(mesh);
             mesh = Mesh{};
+            mesh.allocationFailed = true;
         }
     }
 

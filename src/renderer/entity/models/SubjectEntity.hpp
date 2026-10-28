@@ -6,7 +6,7 @@
 
 namespace Volcano {
 
-// A server-controlled living entity: mobs, animals, villagers — anything
+// A server-controlled living entity: mobs, animals, villagers - anything
 // with its own health/AI that isn't a player (see PlayerEntity.hpp) or an
 // inanimate object (see ObjectEntity.hpp). Inherits Entity's common fields
 // and adds the ones every living thing has regardless of species, which the
@@ -17,7 +17,7 @@ struct SubjectEntity : public Entity {
     float health = 1.0f;
     float maxHealth = 1.0f;
 
-    // Baby variants of most mobs render smaller and move differently —
+    // Baby variants of most mobs render smaller and move differently -
     // kept as a flag rather than folded into a size scalar since it's what
     // the protocol actually sends (a metadata bit), not a derived value.
     bool baby = false;

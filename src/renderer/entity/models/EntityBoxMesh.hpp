@@ -10,11 +10,11 @@
 namespace Volcano {
 
 // Shared vertex format for every untextured procedural entity mesh (the
-// placeholder cube, QuadrupedModel, GolemModel) — flat-normal, no UV, tinted
+// placeholder cube, QuadrupedModel, GolemModel) - flat-normal, no UV, tinted
 // per-instance by EntityRenderer's GPUEntityInstance color/hurt fields
 // instead of sampling a texture. Must stay layout-compatible with
 // EntityRenderer.cpp's own EntityVertex alias (same two vec3 fields, same
-// order) — that's the type actually bound to the pipeline's vertex input
+// order) - that's the type actually bound to the pipeline's vertex input
 // state.
 struct EntityMeshVertex
 {
@@ -23,12 +23,12 @@ struct EntityMeshVertex
 };
 
 // Appends one axis-aligned box (given its center and full size) to
-// vertices/indices — 4 unique vertices per face (24 total) so each face
+// vertices/indices - 4 unique vertices per face (24 total) so each face
 // keeps its own flat normal. Generalizes what used to be
 // EntityRenderer::BuildCubeMesh's single hard-coded unit box; every
 // procedural entity mesh should build its boxes through this rather than
 // re-deriving the winding by hand. Winding: per face, u x v == normal,
-// corners taken in (-u,-v)->(+u,-v)->(+u,+v)->(-u,+v) order — CCW seen from
+// corners taken in (-u,-v)->(+u,-v)->(+u,+v)->(-u,+v) order - CCW seen from
 // outside, required for VulkanInit's entity rasterizer state
 // (VK_FRONT_FACE_COUNTER_CLOCKWISE + VK_CULL_MODE_BACK_BIT) to cull the
 // right faces instead of turning the box inside-out.

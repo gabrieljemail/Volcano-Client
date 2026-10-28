@@ -1,0 +1,10 @@
+{
+    "_comment": "Vanilla ChestModel (resources/minecraft-code/net/minecraft/client/model/object/chest/ChestModel.java) re-authored for EntityJsonModel: x and z are block-centred (vanilla - 8), y is 24 - world height in pixels (so the loader's Y flip lands the base at the block floor), front/lock on +z (rotated to the facing by ChestRenderer).",
+    "textureWidth": 64,
+    "textureHeight": 64,
+    "boxes": [
+        { "name": "bottom", "origin": [-7.0, 14.0, -7.0], "size": [14.0, 10.0, 14.0], "uv": [0.0, 19.0] },
+        { "name": "lid",    "origin": [-7.0, 10.0, -7.0], "size": [14.0, 5.0, 14.0],  "uv": [0.0, 0.0] },
+        { "name": "lock",   "origin": [-1.0, 13.0, 7.0],  "size": [2.0, 4.0, 1.0],   "uv": [0.0, 0.0] }
+    ]
+}

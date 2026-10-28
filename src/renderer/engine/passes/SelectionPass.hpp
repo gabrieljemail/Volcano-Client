@@ -7,7 +7,7 @@
 
 namespace Volcano::Engine::Passes {
 
-// Block selection outline/fill — after opaque/entity/non-cubic so it
+// Block selection outline/fill - after opaque/entity/non-cubic so it
 // blends against whatever's actually there (including translucent surfaces
 // like glass), and depth-tests against a wall correctly hiding it. Adapter
 // around SelectionRenderer, same shape as EntityPass. Shaders: selection.*.

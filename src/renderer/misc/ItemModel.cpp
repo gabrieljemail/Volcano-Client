@@ -9,13 +9,15 @@
 #include <nlohmann/json.hpp>
 #include "../TextureManager.hpp"
 #include "../../Logger.hpp"
+#include "../../resources/ImageLoad.hpp"
 
 namespace Volcano {
 
 namespace {
 
-constexpr const char* ITEM_DEFINITION_ROOT = "resources/minecraft/assets/minecraft/items/";
-constexpr const char* TEXTURE_ROOT = "resources/minecraft/assets/minecraft/textures/";
+// Logical ResourceManager paths.
+constexpr const char* ITEM_DEFINITION_ROOT = "assets/minecraft/items/";
+constexpr const char* TEXTURE_ROOT = "assets/minecraft/textures/";
 constexpr float EXTRUDE_THICKNESS = 1.0f / 16.0f;
 constexpr int SPRITE_SIZE = 16;
 
@@ -54,13 +56,12 @@ std::string ModelIdFromDefinition(const nlohmann::json& node, int depth = 0)
 
 std::string FindModelId(const std::string& itemName)
 {
-    std::ifstream file(std::string(ITEM_DEFINITION_ROOT) + itemName + ".json");
-    if (file.is_open())
+    auto bytes = ResourceManager::Instance().ReadBytes(std::string(ITEM_DEFINITION_ROOT) + itemName + ".json");
+    if (bytes)
     {
         try
         {
-            nlohmann::json j;
-            file >> j;
+            nlohmann::json j = nlohmann::json::parse(bytes->begin(), bytes->end());
             if (j.contains("model"))
             {
                 std::string id = ModelIdFromDefinition(j["model"]);
@@ -155,7 +156,7 @@ public:
 
 private:
     // Front/back plus one side quad per exposed edge pixel, so the sprite
-    // has thickness — vanilla's look for flat items.
+    // has thickness - vanilla's look for flat items.
     static void BuildExtruded(const ModelLoader::Model& model, const TextureManager& textures, ItemModel& item)
     {
         const float z0 = 0.5f - EXTRUDE_THICKNESS * 0.5f;
@@ -181,12 +182,12 @@ private:
                 { glm::vec2(0, 1), glm::vec2(1, 1), glm::vec2(1, 0), glm::vec2(0, 0) }, glm::vec3(0, 0, 1), layerValue);
             AddQuad(item.vertices, item.indices,
                 { glm::vec3(1, 0, back), glm::vec3(0, 0, back), glm::vec3(0, 1, back), glm::vec3(1, 1, back) },
-                { glm::vec2(0, 1), glm::vec2(1, 1), glm::vec2(1, 0), glm::vec2(0, 0) }, glm::vec3(0, 0, -1), layerValue);
+                { glm::vec2(1, 1), glm::vec2(0, 1), glm::vec2(0, 0), glm::vec2(1, 0) }, glm::vec3(0, 0, -1), layerValue);
 
             // Opaque pixels, for the side walls.
             std::string file = std::string(TEXTURE_ROOT) + path + ".png";
-            int width = 0, height = 0, channels = 0;
-            uint8_t* pixels = stbi_load(file.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+            int width = 0, height = 0;
+            uint8_t* pixels = LoadImageRGBA(file, width, height);
             if (pixels == nullptr) continue;
 
             auto opaque = [&](int x, int y)
@@ -293,9 +294,24 @@ private:
     }
 };
 
-const ItemModel* ItemModel::ForItem(const std::string& itemName, const TextureManager& textures)
+namespace {
+
+std::unordered_map<std::string, std::unique_ptr<ItemModel>>& ModelCache()
 {
     static std::unordered_map<std::string, std::unique_ptr<ItemModel>> cache;
+    return cache;
+}
+
+} // namespace
+
+void ItemModel::ClearCache()
+{
+    ModelCache().clear();
+}
+
+const ItemModel* ItemModel::ForItem(const std::string& itemName, const TextureManager& textures)
+{
+    auto& cache = ModelCache();
     if (auto it = cache.find(itemName); it != cache.end()) return it->second.get();
 
     std::unique_ptr<ItemModel> model = ItemModelBuilder::Build(itemName, textures);

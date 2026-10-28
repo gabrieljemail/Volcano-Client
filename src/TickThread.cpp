@@ -2,6 +2,7 @@
 #include "CrashReporter.hpp"
 #include "Logger.hpp"
 #include "TickLoop.hpp"
+#include "RideController.hpp"
 #include "network/Connection.hpp"
 #include "network/PacketIds.hpp"
 #include "network/VarInt.hpp"
@@ -14,7 +15,7 @@ namespace {
 
 // Vanilla's own threshold for "did the player actually move this tick"
 // (LocalPlayer::sendPosition: Mth.lengthSquared(dx, dy, dz) >
-// Mth.square(2.0E-4)) — anything smaller isn't worth a packet.
+// Mth.square(2.0E-4)) - anything smaller isn't worth a packet.
 constexpr double kMoveThresholdSquared = 2.0e-4 * 2.0e-4;
 
 // ...and its forced-resend counter: 20 ticks (1 second) without a move still
@@ -44,8 +45,8 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
     constexpr auto kTickInterval = std::chrono::milliseconds(50); // 1/20s, matching TickLoop::FIXED_DT.
 
     // Edge-triggered off worldReady exactly like the block this replaced in
-    // NetworkClient::RunPlayLoop — re-arms on every Respawn/dimension change
-    // too (worldReady resets — see GlobalState::ResetWorldState), the same
+    // NetworkClient::RunPlayLoop - re-arms on every Respawn/dimension change
+    // too (worldReady resets - see GlobalState::ResetWorldState), the same
     // as a real client re-declaring itself loaded into the new world.
     bool playerLoadedSent = false;
 
@@ -62,7 +63,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
     bool lastHorizontalCollision = false;
 
     // What the server was last told about sprinting and held movement keys
-    // — only sent when these change, like vanilla's LocalPlayer.
+    // - only sent when these change, like vanilla's LocalPlayer.
     // sendIsSprintingIfNeeded/sendInput. The server's sprint flag is what
     // turns a full-strength hit into a knockback hit (see
     // InteractionManager::ClassifyAttack), so this has to stay current for
@@ -76,28 +77,28 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
     {
         nextTick += kTickInterval;
 
-        // No TickLoop::Tick() call here — RenderThread drives the physics
+        // No TickLoop::Tick() call here - RenderThread drives the physics
         // now; this loop just samples and reports it.
         bool worldReady = state->worldReady.load();
 
         // Loaded via activeConnection rather than a member of this class:
         // the connection is owned by whichever NetworkClient is running this
         // session and can be replaced (reconnect) or vanish (disconnect) at
-        // any time — see GlobalState::activeConnection's own comment for why
+        // any time - see GlobalState::activeConnection's own comment for why
         // a shared_ptr load is what keeps it alive for exactly this long and
         // no longer.
         std::shared_ptr<Connection> connection = state->activeConnection.load();
         if (connection)
         {
             // worldReady gates the MOVEMENT packet only, never the tick
-            // marker below it — the real client draws the same line
+            // marker below it - the real client draws the same line
             // (Minecraft::tick sends ClientTickEnd whenever a connection
             // exists and it isn't paused, while LocalPlayer::tick gates its
             // movement packets behind hasClientLoaded()). Skipping the
             // marker while loading would leave NetworkClient's own
             // post-teleport echo sitting in an unclosed tick, and the first
             // movement packet sent after that would be the second
-            // position-bearing packet in it — the exact disconnect this
+            // position-bearing packet in it - the exact disconnect this
             // whole arrangement exists to avoid.
             if (!worldReady)
             {
@@ -125,7 +126,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
 
                 // The camera's yaw/pitch turn the opposite way from
                 // Minecraft's own convention (see NetworkClient.cpp's
-                // AngleByteToRadians — the same reason incoming entity yaw
+                // AngleByteToRadians - the same reason incoming entity yaw
                 // bytes get negated on the way in), so both are negated on
                 // the way out too. Yaw is wrapped to -180..180 since the
                 // camera's own value accumulates without bound.
@@ -151,7 +152,11 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
 
                 uint8_t flags = MovementFlags(onGround, horizontalCollision);
 
-                if (moved || rotated)
+                // Riding: RideController sends this tick's rotation-only move and
+                // vehicle_move itself, so the position-bearing packets are skipped.
+                bool riding = state->rideController != nullptr && state->rideController->QueueTickPackets(*connection);
+
+                if (!riding && (moved || rotated))
                 {
                     PacketWriter writer;
                     if (moved)
@@ -172,7 +177,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
                         : PlayC2S::SetPlayerRotation;
                     connection->QueuePacket(packetId, writer.Data());
                 }
-                else if (onGround != lastOnGround || horizontalCollision != lastHorizontalCollision)
+                else if (!riding && (onGround != lastOnGround || horizontalCollision != lastHorizontalCollision))
                 {
                     // Vanilla's StatusOnly: nothing moved or turned, but the
                     // flags themselves changed and the server tracks those.
@@ -183,7 +188,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
                 // else: send no movement packet at all this tick, exactly as
                 // a real standing-still client does.
 
-                if (moved)
+                if (moved && !riding)
                 {
                     lastSentPosition = position;
                     positionReminder = 0;
@@ -198,7 +203,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
 
                 // Sprint/input state, queued (not written directly, like the
                 // movement packet above) so it stays ordered after any
-                // Attack packet the render thread already queued this tick —
+                // Attack packet the render thread already queued this tick -
                 // a sprint hit has to reach the server before the
                 // stop_sprinting it causes, or the server sees a plain hit.
                 TickLoop::MovementSnapshot movement = state->tickLoop->GetMovementSnapshot();
@@ -209,7 +214,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
                     PacketWriter writer;
                     writer.WriteVarInt(localEntityId);
                     writer.WriteVarInt(movement.sprinting ? START_SPRINTING : STOP_SPRINTING);
-                    writer.WriteVarInt(0); // jumpBoost — horse jumps only.
+                    writer.WriteVarInt(0); // jumpBoost - horse jumps only.
                     connection->QueuePacket(PlayC2S::PlayerCommand, writer.Data());
                     reportedSprinting = movement.sprinting;
                 }
@@ -224,7 +229,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
                 }
             }
 
-            // Always last, and always sent — see PlayC2S::ClientTickEnd.
+            // Always last, and always sent - see PlayC2S::ClientTickEnd.
             // This is what closes the client tick whatever movement packet
             // was queued above (if any) belongs to; without it the server
             // keeps attributing every movement packet to one unbounded tick

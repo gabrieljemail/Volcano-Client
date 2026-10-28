@@ -17,7 +17,7 @@ namespace Volcano {
 //
 // That needs real per-item behavior data (is this a block item, is it edible,
 // does it have a useOn-block effect, ...) that ItemRegistry doesn't parse
-// yet — see SecondaryTriggerStart's own comment on the simplification this
+// yet - see SecondaryTriggerStart's own comment on the simplification this
 // is standing in for. Until then, InteractionManager keeps making that call
 // itself (whichever of targetedEntityId/targetedBlock/neither is set),
 // dispatching straight to InteractEntityEvent/PlaceBlockEvent/UseItemEvent.
@@ -34,7 +34,7 @@ struct ItemUseEvent {
     void Dispatch(GlobalState* /*state*/) const
     {
         // TODO: once ItemRegistry carries per-item behavior data, resolve it
-        // here instead of in InteractionManager — see the class comment.
+        // here instead of in InteractionManager - see the class comment.
     }
 };
 

@@ -2,19 +2,20 @@
 #ifndef VOLCANO_ENGINE_PASSES_NON_CUBIC_PASS_H
 #define VOLCANO_ENGINE_PASSES_NON_CUBIC_PASS_H
 
+#include "ChunkDrawBatch.hpp"
 #include "ChunkMeshPass.hpp"
 
 namespace Volcano::Engine::Passes {
 
 // Transparent full cubes (glass, slime, ice, ...), partial-volume shapes
 // (slabs, carpets, ...) and cross-shaped plants (grass, flowers, ...) from
-// GlobalState::nonCubicRenderList — see NonCubicMesher and VulkanInit's
+// GlobalState::nonCubicRenderList - see NonCubicMesher and VulkanInit's
 // nonCubicPipeline. Alpha-blended with depth writes ON (see that
 // pipeline's own comment for why this is really a cutout pass), drawn
 // after opaque terrain and entities, chunks sorted back-to-front.
 //
 // Also owns the genuinely translucent pass (currently water only, from
-// GlobalState::translucentRenderList — see VulkanInit's translucentPipeline)
+// GlobalState::translucentRenderList - see VulkanInit's translucentPipeline)
 // drawn right after the cutout pass above with depth WRITE off, so it's
 // grouped here rather than as its own RenderPass since it shares every
 // other detail (shaders, vertex format, pipelineLayout) with the cutout pass.
@@ -30,6 +31,14 @@ public:
     void Create(const ShaderLibrary& shaders) override;
     void Record(FrameContext& frame) override;
     void Destroy() override;
+
+private:
+    // Graphics.IndirectDraw path (one per list) - see ChunkDrawBatch. Only
+    // created when the indirect pipelines exist.
+    ChunkDrawBatch cutoutBatch;
+    ChunkDrawBatch translucentBatch;
+    VisibleCache cutoutCache;
+    VisibleCache translucentCache;
 };
 
 } // namespace Volcano::Engine::Passes

@@ -2,6 +2,7 @@
 #ifndef VOLCANO_MESHING_THREAD_H
 #define VOLCANO_MESHING_THREAD_H
 
+#include <atomic>
 #include <thread>
 #include "../../GlobalState.hpp"
 #include "../TextureManager.hpp"
@@ -16,7 +17,7 @@ void ReleaseMeshSlabs(const Mesh& mesh);
 // on its own thread, decoupled from the network thread (which only parses
 // bytes into plain Chunks) and from the main/render threads. Greedy meshing
 // a full 16x384x16 chunk is real CPU work; running it inline on the main
-// thread — as it used to, in VolcanoClient.cpp's DrainNetworkInbox — meant a
+// thread - as it used to, in VolcanoClient.cpp's DrainNetworkInbox - meant a
 // burst of incoming chunks held networkInbox.mutex for a while, stalling the
 // network thread's own packet loop (Keep Alive replies included) right when
 // the most world data is streaming in.
@@ -29,7 +30,7 @@ void ReleaseMeshSlabs(const Mesh& mesh);
 // the same way it is against RenderThread.
 //
 // Must be fully stopped (Stop(), which joins) before VulkanInit::Cleanup()
-// runs — it calls ChunkMesher::Shutdown(), which destroys the slab buffers
+// runs - it calls ChunkMesher::Shutdown(), which destroys the slab buffers
 // this thread writes into.
 class MeshingThread {
 public:
@@ -40,7 +41,16 @@ public:
     void RequestStop();
     void Stop();
 
+    // Blocks until the worker is idle between jobs (no section mid-mesh) and
+    // keeps it there until Resume(). Render thread only; calls don't nest.
+    // Returns immediately if the thread isn't running.
+    void Pause();
+    void Resume();
+
 private:
+    std::atomic<bool> pauseRequested{false};
+    std::atomic<bool> paused{false};
+
     GlobalState* state;
     const TextureManager* textureManager;
     std::jthread worker;

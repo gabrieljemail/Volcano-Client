@@ -3,6 +3,7 @@
 #define VOLCANO_PLATFORM_OS_H
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,12 @@ public:
     static std::vector<std::string> GetFallbackFontPaths();
     static bool IsDebuggerAttached();
 
+    // Raises this process's scheduling priority one step above normal
+    // (Windows: ABOVE_NORMAL_PRIORITY_CLASS; Linux: nice -5, which needs
+    // privileges and is skipped otherwise), so background apps compete less
+    // with the render thread on low-core machines. Returns whether it took effect.
+    static bool SetAboveNormalPriority();
+
     // Sleeps with sub-millisecond precision (std::this_thread::sleep_for
     // rounds up to Windows' 15.6 ms scheduler tick, capping FPS at ~64).
     static void PreciseSleep(int64_t microseconds);
@@ -44,8 +51,22 @@ public:
     // Starts a process that outlives this one. Returns false on failure.
     static bool LaunchDetached(const std::string& executable, const std::vector<std::string>& args);
 
+    // Windows GUI builds start without a console. When launched from a terminal this joins it, so logs still print
+    // there; with output already redirected, or a double click, it does nothing. A no-op elsewhere. Call first.
+    static void AttachParentConsole();
+
     // Blocking error dialog. Falls back to stderr where no dialog is available.
     static void ShowErrorDialog(const std::string& title, const std::string& message);
+
+    // Downloads `url` (https) into `body`, following redirects and checking the server's certificate against the system's
+    // trust store. `progress(received, total)` runs as data arrives (total is 0 when unknown). Blocking, thread safe.
+    // Returns false with a reason in `error`.
+    static bool HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string& error,
+        const std::function<void(uint64_t received, uint64_t total)>& progress = nullptr);
+
+    // Blocking yes/no prompt. Returns true for the agree answer. `agreeLabel` names it in the text where the dialog
+    // can't relabel its buttons; without a dialog it asks on the terminal.
+    static bool ShowConsentDialog(const std::string& title, const std::string& message, const std::string& agreeLabel);
 
     // Buffered raw mouse input (Windows: GetRawInputBuffer, one batched read
     // per frame instead of one message per mouse report). Returns false where

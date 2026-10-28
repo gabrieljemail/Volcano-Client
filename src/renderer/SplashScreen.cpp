@@ -65,7 +65,7 @@ VkShaderModule CreateShaderModuleFromFile(const std::string& path)
 }
 
 // Standalone allocation, never registered in VulkanInit's shared
-// `allocatedBuffers` list — everything this file creates is torn down by
+// `allocatedBuffers` list - everything this file creates is torn down by
 // hand in Hide(), same reasoning EntityRenderer's own CreateOwnedBuffer
 // gives for doing the same.
 bool CreateOwnedBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA, AllocatedBuffer& out)
@@ -123,7 +123,7 @@ void DrawFrame(float progress)
     // Black, matching the sampler's border color, so everything outside the
     // fitted logo is a seamless background.
     std::array<VkClearValue, 2> clearValues{};
-    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clearValues[0].color = {{0.2f, 0.2f, 0.2f, 1.0f}};
     clearValues[1].depthStencil = {1.0f, 0};
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
@@ -161,7 +161,7 @@ void DrawFrame(float progress)
     // with the window.
     uint32_t border = std::max(2u, swapchainExtent.height / 270u);
     uint32_t barWidth = swapchainExtent.width / 2;
-    uint32_t barHeight = std::max(border * 6, swapchainExtent.height / 40);
+    uint32_t barHeight = std::max(border * 8, swapchainExtent.height / 40);
     int32_t barX = static_cast<int32_t>((swapchainExtent.width - barWidth) / 2);
     int32_t barY = static_cast<int32_t>(swapchainExtent.height * 0.88f);
 
@@ -396,7 +396,7 @@ void Show()
 
         VkPipelineShaderStageCreateInfo stages[] = { vertStage, fragStage };
 
-        // No vertex buffer — see splash.vert's own comment.
+        // No vertex buffer - see splash.vert's own comment.
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 
@@ -426,7 +426,7 @@ void Show()
         multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
         // This draws into the same render pass/subpass as the terrain pass,
-        // which has a depth attachment — the pipeline still needs a valid
+        // which has a depth attachment - the pipeline still needs a valid
         // (if inert) depth-stencil state to be compatible with it.
         VkPipelineDepthStencilStateCreateInfo depthStencil{};
         depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;

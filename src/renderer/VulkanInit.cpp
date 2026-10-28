@@ -32,10 +32,10 @@ static GlobalState* g_globalState = nullptr;
 static WindowMode g_windowMode = WindowMode::Windowed;
 static int g_windowedX = 0, g_windowedY = 0;
 // Actual values are read from config and set once the window is created, in
-// Init() — see the glfwGetWindowSize() call there.
+// Init() - see the glfwGetWindowSize() call there.
 static int g_windowedWidth = 0, g_windowedHeight = 0;
 
-// Graphics.VSync/BufferCount from settings.json — read via g_globalState,
+// Graphics.VSync/BufferCount from settings.json - read via g_globalState,
 // which Init() sets before either of these can be called.
 static VkPresentModeKHR DesiredPresentMode()
 {
@@ -69,11 +69,11 @@ static void FramebufferSizeCallback(GLFWwindow* /*win*/, int width, int height)
 }
 
 #ifdef _WIN32
-// Set once the render thread has presented at least one frame — see
+// Set once the render thread has presented at least one frame - see
 // NotifyFramePresented(). GLFW_FOCUSED can already read true immediately
 // after glfwCreateWindow() even though Windows hasn't actually shown/
 // composited the window yet, so a focus-gained event (or an eager check at
-// InputHandler construction — since removed) can fire before the window is
+// InputHandler construction - since removed) can fire before the window is
 // really up. Locking the cursor at that point clips it to a window the
 // desktop hasn't painted, which looks like a visible cursor trapped in a
 // "ghost" window until the user clicks it. Withholding the lock until a
@@ -83,7 +83,7 @@ static bool g_firstFramePresented = false;
 static void WindowFocusCallback(GLFWwindow* win, int focused)
 {
     // Only fires inside glfwPollEvents(), which only the main thread calls
-    // (VolcanoClient.cpp's message loop) — direct glfwSetInputMode calls
+    // (VolcanoClient.cpp's message loop) - direct glfwSetInputMode calls
     // here are fine. Also mirrors focus into GlobalState so render-thread
     // code (NotifyFramePresented) can check it without calling GLFW itself.
     if (g_globalState) g_globalState->windowFocused.store(focused != 0);
@@ -91,7 +91,7 @@ static void WindowFocusCallback(GLFWwindow* win, int focused)
     if (focused)
     {
         // Don't steal the cursor back from ImGui while a Screen (connect
-        // screen, pause menu, etc.) is open — GUIController itself owns
+        // screen, pause menu, etc.) is open - GUIController itself owns
         // cursor mode in that case (see OpenScreen/CloseScreen).
         if (g_firstFramePresented && !GUIController::IsScreenOpen())
         {
@@ -113,10 +113,10 @@ void NotifyFramePresented()
 
     // The window may already have (real) focus by the time this first
     // frame lands, in which case no further WindowFocusCallback will ever
-    // fire to lock the cursor — so apply the same check here once, now
+    // fire to lock the cursor - so apply the same check here once, now
     // that the window is genuinely on screen. Runs on the render thread
     // (DrawFrame calls this), so it can't call glfwGetWindowAttrib/
-    // glfwSetInputMode itself — see GlobalState::pendingCursorMode.
+    // glfwSetInputMode itself - see GlobalState::pendingCursorMode.
     if (g_globalState && g_globalState->windowFocused.load() && !GUIController::IsScreenOpen())
     {
         g_globalState->pendingCursorMode.store(GLFW_CURSOR_DISABLED);
@@ -147,6 +147,68 @@ VkShaderModule CreateShaderModule(const std::vector<char>& code, const std::stri
         throw std::runtime_error("[ERROR] Failed to create shader module: " + debugName);
     }
     return shaderModule;
+}
+
+// Builds the indirect-draw twin of a chunk pipeline: `base` with its vertex
+// shader swapped for `indirectVert` and a second, per-instance vertex binding
+// (location `instanceLocation`, one vec4 per section: xyz origin, w fade -
+// see ChunkDrawBatch). Shares base's layout, so the push constant range is
+// simply unused. Returns VK_NULL_HANDLE (and the caller keeps the per-section
+// path) when indirect draw isn't available, or when a shader pack replaces
+// `plainVert` - the pack's vertex shader has to keep running.
+static VkPipeline CreateIndirectPipeline(const Volcano::Engine::ShaderLibrary& shaders,
+    const char* plainVert, const char* indirectVert, const VkGraphicsPipelineCreateInfo& base,
+    const VkVertexInputBindingDescription& vertexBinding,
+    const VkVertexInputAttributeDescription* attributes, uint32_t attributeCount, uint32_t instanceLocation)
+{
+    if (!indirectDrawSupported) return VK_NULL_HANDLE;
+    if (shaders.PackProvides(plainVert))
+    {
+        Volcano::Log::Info(std::string("Shader pack replaces ") + plainVert + " - indirect chunk drawing disabled for it.");
+        return VK_NULL_HANDLE;
+    }
+
+    VkShaderModule vertModule = VK_NULL_HANDLE;
+    try
+    {
+        vertModule = CreateShaderModule(shaders, indirectVert);
+    }
+    catch (const std::exception& e)
+    {
+        Volcano::Log::Error(std::string("[ERROR] ") + indirectVert + " failed to load (" + e.what() + ") - using per-section draws.");
+        return VK_NULL_HANDLE;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = { base.pStages[0], base.pStages[1] };
+    stages[0].module = vertModule;
+
+    VkVertexInputBindingDescription bindings[2] = {
+        vertexBinding,
+        { 1, sizeof(glm::vec4), VK_VERTEX_INPUT_RATE_INSTANCE }
+    };
+    std::vector<VkVertexInputAttributeDescription> attribs(attributes, attributes + attributeCount);
+    attribs.push_back({ instanceLocation, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0 });
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 2;
+    vertexInput.pVertexBindingDescriptions = bindings;
+    vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribs.size());
+    vertexInput.pVertexAttributeDescriptions = attribs.data();
+
+    VkGraphicsPipelineCreateInfo info = base;
+    info.pStages = stages;
+    info.pVertexInputState = &vertexInput;
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkResult result = vkCreateGraphicsPipelines(GetDevice(), VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
+    vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
+    if (result != VK_SUCCESS)
+    {
+        Volcano::Log::Error(std::string("[ERROR] Indirect pipeline for ") + indirectVert + " failed - using per-section draws.");
+        return VK_NULL_HANDLE;
+    }
+    return pipeline;
 }
 
 void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
@@ -227,12 +289,12 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     rasterizer.lineWidth = 1.0f;
     // Backface culling is back ON: the asymmetry described below turned out
     // to be ChunkMesher's X axis using swapped u/v (for upright wall
-    // textures), which flips that axis's winding handedness — fixed there
+    // textures), which flips that axis's winding handedness - fixed there
     // (see GreedyMeshAxis's handednessFlipped). All faces are now CCW from
     // outside in world space. If terrain renders inside-out, flip frontFace
-    // below between COUNTER_CLOCKWISE and CLOCKWISE — it's uniform now.
+    // below between COUNTER_CLOCKWISE and CLOCKWISE - it's uniform now.
     //
-    // Historical note — previously: no backface culling for terrain. This
+    // Historical note - previously: no backface culling for terrain. This
     // used to be VK_CULL_MODE_BACK_BIT
     // with VK_FRONT_FACE_CLOCKWISE, on the theory that ChunkMesher's greedy
     // quads are consistently wound CCW-from-outside in world space (see
@@ -240,16 +302,16 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     // projection flip (needed to land the image right-side-up) inverts that
     // to CW in framebuffer space uniformly for every face. In practice that
     // held for wall faces (X/Z-swept) but NOT for floor/ceiling faces
-    // (Y-swept) — after correcting for the wall case, floors still rendered
+    // (Y-swept) - after correcting for the wall case, floors still rendered
     // inside-out (visible from below, culled from above, letting you see
-    // through solid ground to bedrock) — a per-axis asymmetry the theory
+    // through solid ground to bedrock) - a per-axis asymmetry the theory
     // above says shouldn't exist, and repeated attempts to hand-derive the
     // actual rule didn't resolve it. Rather than continue guessing, terrain
     // just draws both sides now: every face renders regardless of view
     // angle, so whichever winding is nearer the camera wins the depth test
     // and looks correct either way. This also means a player wedged inside
     // a solid block sees that block's own surface (like any other wall)
-    // instead of every face flipping to show the far side of the world —
+    // instead of every face flipping to show the far side of the world -
     // no more "wallhack" view from getting stuck. Costs roughly double the
     // fragment work versus perfectly-tuned culling; not worth chasing
     // further on an already-60fps-capped integrated GPU.
@@ -300,7 +362,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     VkDescriptorSetLayout setLayouts[] = { cameraSetLayout, textureSetLayout };
     pipelineLayoutInfo.pSetLayouts = setLayouts;
 
-    // Shader modules are only needed until the pipelines below exist —
+    // Shader modules are only needed until the pipelines below exist -
     // release them on every exit path, since a shader pack's replacement
     // failing pipeline creation is an expected (recoverable) outcome now.
     auto destroyModules = [&]()
@@ -314,7 +376,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
         throw std::runtime_error("[ERROR] Failed to create pipeline layout.");
     }
 
-    cout << "[INFO] Compiling shaders..." << endl;
+    cout << "Compiling shaders..." << endl;
 
     // 10. CREATE GRAPHICS PIPELINE
     VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -340,13 +402,13 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
         throw std::runtime_error("Failed to create graphics pipeline!");
     }
 
-    // Wireframe variant of the same pipeline (F3, see RenderThread) — a
+    // Wireframe variant of the same pipeline (F3+Z, see RenderThread) - a
     // debug tool for seeing where mesh geometry actually is versus what the
     // fill-mode result implies, e.g. telling "this face is missing
     // entirely" apart from "this face exists but lost the depth/winding
     // test" (which polygon fill alone can't distinguish). Shares every
-    // other piece of state with the pipeline above — only polygonMode
-    // differs — so it's built from the exact same CreateInfo, not a
+    // other piece of state with the pipeline above - only polygonMode
+    // differs - so it's built from the exact same CreateInfo, not a
     // parallel hand-copied one that could quietly drift out of sync.
     VkPipelineRasterizationStateCreateInfo wireframeRasterizer = rasterizer;
     wireframeRasterizer.polygonMode = VK_POLYGON_MODE_LINE;
@@ -362,6 +424,64 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
         throw std::runtime_error("Failed to create wireframe graphics pipeline!");
     }
 
+    // Indirect-draw twins (see CreateIndirectPipeline). A failure there just
+    // leaves the handle null and the pass keeps the per-section path.
+    graphicsIndirectPipeline = CreateIndirectPipeline(shaders, "terrain.vert", "terrain_indirect.vert", pipelineInfo,
+        bindingDescription, attributeDescriptions.data(), static_cast<uint32_t>(attributeDescriptions.size()), 1);
+    wireframeIndirectPipeline = CreateIndirectPipeline(shaders, "terrain.vert", "terrain_indirect.vert", wireframePipelineInfo,
+        bindingDescription, attributeDescriptions.data(), static_cast<uint32_t>(attributeDescriptions.size()), 1);
+
+    // Shadow-receiving twins: the same state with terrain_shadow.* (the
+    // SHADOWS build of terrain.vert/.frag), one more descriptor set and its
+    // own layout. Skipped when a shader pack replaces the terrain shaders (it
+    // wouldn't receive shadows), and a failure only leaves them null.
+    shadowedPipeline = VK_NULL_HANDLE;
+    shadowedIndirectPipeline = VK_NULL_HANDLE;
+    if (!shaders.PackProvides("terrain.vert") && !shaders.PackProvides("terrain.frag"))
+    {
+        VkShaderModule shadowVert = VK_NULL_HANDLE, shadowFrag = VK_NULL_HANDLE;
+        try
+        {
+            shadowVert = CreateShaderModule(shaders, "terrain_shadow.vert");
+            shadowFrag = CreateShaderModule(shaders, "terrain_shadow.frag");
+
+            VkDescriptorSetLayout shadowedSetLayouts[] = { cameraSetLayout, textureSetLayout, shadowSetLayout };
+            VkPipelineLayoutCreateInfo shadowedLayoutInfo = pipelineLayoutInfo;
+            shadowedLayoutInfo.setLayoutCount = 3;
+            shadowedLayoutInfo.pSetLayouts = shadowedSetLayouts;
+            if (vkCreatePipelineLayout(dev, &shadowedLayoutInfo, nullptr, &shadowedPipelineLayout) != VK_SUCCESS)
+            {
+                throw std::runtime_error("shadowed pipeline layout");
+            }
+
+            VkPipelineShaderStageCreateInfo shadowedStages[2] = { shaderStages[0], shaderStages[1] };
+            shadowedStages[0].module = shadowVert;
+            shadowedStages[1].module = shadowFrag;
+            VkGraphicsPipelineCreateInfo shadowedInfo = pipelineInfo;
+            shadowedInfo.pStages = shadowedStages;
+            shadowedInfo.layout = shadowedPipelineLayout;
+            if (vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &shadowedInfo, nullptr, &shadowedPipeline) != VK_SUCCESS)
+            {
+                shadowedPipeline = VK_NULL_HANDLE;
+                throw std::runtime_error("shadowed pipeline");
+            }
+
+            shadowedIndirectPipeline = CreateIndirectPipeline(shaders, "terrain.vert", "terrain_shadow_indirect.vert", shadowedInfo,
+                bindingDescription, attributeDescriptions.data(), static_cast<uint32_t>(attributeDescriptions.size()), 1);
+        }
+        catch (const std::exception& e)
+        {
+            Volcano::Log::Error(std::string("[ERROR] Shadow-receiving terrain unavailable: ") + e.what());
+            if (shadowedPipelineLayout != VK_NULL_HANDLE && shadowedPipeline == VK_NULL_HANDLE)
+            {
+                vkDestroyPipelineLayout(dev, shadowedPipelineLayout, nullptr);
+                shadowedPipelineLayout = VK_NULL_HANDLE;
+            }
+        }
+        if (shadowFrag != VK_NULL_HANDLE) vkDestroyShaderModule(dev, shadowFrag, nullptr);
+        if (shadowVert != VK_NULL_HANDLE) vkDestroyShaderModule(dev, shadowVert, nullptr);
+    }
+
     // 11. CLEANUP TEMPORARY SHADER MODULES
     destroyModules();
 
@@ -373,15 +493,25 @@ void DestroyGraphicsPipeline()
     VkDevice dev = GetDevice();
     if (graphicsPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, graphicsPipeline, nullptr);
     if (wireframePipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, wireframePipeline, nullptr);
+    if (graphicsIndirectPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, graphicsIndirectPipeline, nullptr);
+    if (wireframeIndirectPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, wireframeIndirectPipeline, nullptr);
+    if (shadowedPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, shadowedPipeline, nullptr);
+    if (shadowedIndirectPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, shadowedIndirectPipeline, nullptr);
+    if (shadowedPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, shadowedPipelineLayout, nullptr);
+    shadowedPipeline = VK_NULL_HANDLE;
+    shadowedIndirectPipeline = VK_NULL_HANDLE;
+    shadowedPipelineLayout = VK_NULL_HANDLE;
     if (pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, pipelineLayout, nullptr);
     graphicsPipeline = VK_NULL_HANDLE;
     wireframePipeline = VK_NULL_HANDLE;
+    graphicsIndirectPipeline = VK_NULL_HANDLE;
+    wireframeIndirectPipeline = VK_NULL_HANDLE;
     pipelineLayout = VK_NULL_HANDLE;
 }
 
 // Second pass for everything that isn't a fully opaque cube: transparent
 // full cubes (glass, slime, ice, ...), partial-volume boxes (slabs,
-// carpets, ...), and cross-shaped plants (grass, flowers, ...) — see
+// carpets, ...), and cross-shaped plants (grass, flowers, ...) - see
 // NonCubicMesher. Reuses the terrain pass's pipelineLayout (identical push
 // constant + descriptor set layout signature: camera UBO + texture array),
 // so only a new VkPipeline with different fixed-function state is needed:
@@ -397,7 +527,7 @@ void DestroyGraphicsPipeline()
 // stairs, slabs, carpets and snow layers are fully OPAQUE solids that just
 // happen not to fill their voxel, and misc.frag discards every texel below
 // 1% alpha, so this is really a cutout pass, not a translucent one. With
-// writes off, nothing here could occlude anything else here — so a slab's
+// writes off, nothing here could occlude anything else here - so a slab's
 // own far-side and underside faces (drawn, since culling is off) painted
 // straight over its near faces whenever they happened to be emitted later,
 // which is what read as stairs and slabs being "inside-out", having
@@ -409,11 +539,53 @@ void DestroyGraphicsPipeline()
 // The trade-off is genuinely translucent texels (0 < alpha < 1, e.g.
 // stained glass) now write depth too and so can occlude translucent
 // geometry behind them. Fixing that properly needs a third pass that draws
-// truly translucent surfaces after this one with writes off — strictly
+// truly translucent surfaces after this one with writes off - strictly
 // better than every opaque partial shape in the world being drawn
 // inside-out. That third pass now exists (CreateTranslucentPipeline, right
 // below this function) for water, the first thing that actually needed it;
 // stained glass still goes through this cutout pass unchanged.
+// Shadow-receiving twins of one misc pipeline (cutout or translucent): `base`
+// with misc_shadow.* and the shadowed layout terrain already built. Left null
+// when that layout is missing, a shader pack replaces the misc shaders, or a
+// shader fails to build.
+static void CreateShadowedMiscPipelines(const Volcano::Engine::ShaderLibrary& shaders, const VkGraphicsPipelineCreateInfo& base,
+    const VkVertexInputBindingDescription& binding, const VkVertexInputAttributeDescription* attributes,
+    uint32_t attributeCount, VkPipeline& direct, VkPipeline& indirect)
+{
+    direct = VK_NULL_HANDLE;
+    indirect = VK_NULL_HANDLE;
+    if (shadowedPipelineLayout == VK_NULL_HANDLE) return;
+    if (shaders.PackProvides("misc.vert") || shaders.PackProvides("misc.frag")) return;
+
+    VkDevice dev = GetDevice();
+    VkShaderModule vert = VK_NULL_HANDLE, frag = VK_NULL_HANDLE;
+    try
+    {
+        vert = CreateShaderModule(shaders, "misc_shadow.vert");
+        frag = CreateShaderModule(shaders, "misc_shadow.frag");
+
+        VkPipelineShaderStageCreateInfo stages[2] = { base.pStages[0], base.pStages[1] };
+        stages[0].module = vert;
+        stages[1].module = frag;
+        VkGraphicsPipelineCreateInfo info = base;
+        info.pStages = stages;
+        info.layout = shadowedPipelineLayout;
+        if (vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &info, nullptr, &direct) != VK_SUCCESS)
+        {
+            direct = VK_NULL_HANDLE;
+            throw std::runtime_error("shadowed misc pipeline");
+        }
+        indirect = CreateIndirectPipeline(shaders, "misc.vert", "misc_shadow_indirect.vert", info,
+            binding, attributes, attributeCount, 3);
+    }
+    catch (const std::exception& e)
+    {
+        Volcano::Log::Error(std::string("[ERROR] Shadow-receiving non-cubic blocks unavailable: ") + e.what());
+    }
+    if (frag != VK_NULL_HANDLE) vkDestroyShaderModule(dev, frag, nullptr);
+    if (vert != VK_NULL_HANDLE) vkDestroyShaderModule(dev, vert, nullptr);
+}
+
 void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
 {
     VkDevice dev = GetDevice();
@@ -528,12 +700,16 @@ void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicStateInfo;
-    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline — see this function's own comment.
+    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline - see this function's own comment.
     pipelineInfo.renderPass = renderPass;
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
     VkResult pipelineResult = vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &nonCubicPipeline);
+    nonCubicIndirectPipeline = CreateIndirectPipeline(shaders, "misc.vert", "misc_indirect.vert", pipelineInfo,
+        bindingDescription, attributeDescriptions.data(), static_cast<uint32_t>(attributeDescriptions.size()), 3);
+    CreateShadowedMiscPipelines(shaders, pipelineInfo, bindingDescription, attributeDescriptions.data(),
+        static_cast<uint32_t>(attributeDescriptions.size()), nonCubicShadowedPipeline, nonCubicShadowedIndirectPipeline);
 
     vkDestroyShaderModule(dev, fragShaderModule, nullptr);
     vkDestroyShaderModule(dev, vertShaderModule, nullptr);
@@ -543,10 +719,10 @@ void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
         throw std::runtime_error("Failed to create non-cubic graphics pipeline!");
     }
 
-    Volcano::Log::Info("[INFO] Non-cubic graphics pipeline successfully initialized.");
+    Volcano::Log::Info("Non-cubic graphics pipeline successfully initialized.");
 }
 
-// Third pass, for geometry that's genuinely translucent rather than cutout —
+// Third pass, for geometry that's genuinely translucent rather than cutout -
 // currently just water (NonCubicMesher's Liquid shape). Identical to
 // CreateNonCubicPipeline in every way (same shaders, same MiscVertex layout,
 // same pipelineLayout, same alpha blend factors, no backface culling) except
@@ -554,11 +730,11 @@ void CreateNonCubicPipeline(const Volcano::Engine::ShaderLibrary& shaders)
 // through one water surface at another, or at stained glass once that also
 // moves to this pass) need to actually blend, not have the nearer one win
 // the depth test outright the way the cutout pass's writes-on approach needs
-// for stairs/slabs — see CreateNonCubicPipeline's own comment for why THAT
+// for stairs/slabs - see CreateNonCubicPipeline's own comment for why THAT
 // pass writes depth. Depth TEST stays on, so this still draws correctly
 // behind opaque terrain/entities/cutout geometry; NonCubicPass::Record draws
 // this pass right after the cutout pass (and sorts its meshes back-to-front
-// by chunk) so translucency reads right at least at chunk granularity — see
+// by chunk) so translucency reads right at least at chunk granularity - see
 // its own comment for the per-chunk-only caveat that leaves.
 void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders)
 {
@@ -638,7 +814,7 @@ void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_FALSE; // The one difference from nonCubicPipeline — see this function's own comment.
+    depthStencil.depthWriteEnable = VK_FALSE; // The one difference from nonCubicPipeline - see this function's own comment.
     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
@@ -674,12 +850,16 @@ void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders)
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicStateInfo;
-    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline — see CreateNonCubicPipeline's own comment.
+    pipelineInfo.layout = pipelineLayout; // Shared with the opaque terrain pipeline - see CreateNonCubicPipeline's own comment.
     pipelineInfo.renderPass = renderPass;
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
     VkResult translucentPipelineResult = vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &translucentPipeline);
+    translucentIndirectPipeline = CreateIndirectPipeline(shaders, "misc.vert", "misc_indirect.vert", pipelineInfo,
+        bindingDescription, attributeDescriptions.data(), static_cast<uint32_t>(attributeDescriptions.size()), 3);
+    CreateShadowedMiscPipelines(shaders, pipelineInfo, bindingDescription, attributeDescriptions.data(),
+        static_cast<uint32_t>(attributeDescriptions.size()), translucentShadowedPipeline, translucentShadowedIndirectPipeline);
 
     vkDestroyShaderModule(dev, fragShaderModule, nullptr);
     vkDestroyShaderModule(dev, vertShaderModule, nullptr);
@@ -689,19 +869,31 @@ void CreateTranslucentPipeline(const Volcano::Engine::ShaderLibrary& shaders)
         throw std::runtime_error("Failed to create translucent graphics pipeline!");
     }
 
-    Volcano::Log::Info("[INFO] Translucent graphics pipeline successfully initialized.");
+    Volcano::Log::Info("Translucent graphics pipeline successfully initialized.");
 }
 
 void DestroyNonCubicPipeline()
 {
     if (nonCubicPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), nonCubicPipeline, nullptr);
+    if (nonCubicIndirectPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), nonCubicIndirectPipeline, nullptr);
+    if (nonCubicShadowedPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), nonCubicShadowedPipeline, nullptr);
+    if (nonCubicShadowedIndirectPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), nonCubicShadowedIndirectPipeline, nullptr);
+    nonCubicShadowedPipeline = VK_NULL_HANDLE;
+    nonCubicShadowedIndirectPipeline = VK_NULL_HANDLE;
     nonCubicPipeline = VK_NULL_HANDLE;
+    nonCubicIndirectPipeline = VK_NULL_HANDLE;
 }
 
 void DestroyTranslucentPipeline()
 {
     if (translucentPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), translucentPipeline, nullptr);
+    if (translucentIndirectPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), translucentIndirectPipeline, nullptr);
+    if (translucentShadowedPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), translucentShadowedPipeline, nullptr);
+    if (translucentShadowedIndirectPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), translucentShadowedIndirectPipeline, nullptr);
+    translucentShadowedPipeline = VK_NULL_HANDLE;
+    translucentShadowedIndirectPipeline = VK_NULL_HANDLE;
     translucentPipeline = VK_NULL_HANDLE;
+    translucentIndirectPipeline = VK_NULL_HANDLE;
 }
 
 // Create a buffer with VMA. The caller owns it and must vmaDestroyBuffer it.
@@ -740,7 +932,7 @@ static void CreateDepthResources()
     depthImageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     depthImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     // SAMPLED, on top of the attachment bit every frame's render pass needs,
-    // so HiZBuildPass can texelFetch it after the render pass ends — see
+    // so HiZBuildPass can texelFetch it after the render pass ends - see
     // CreateHiZResources' own comment.
     depthImageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     depthImageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -775,14 +967,14 @@ static void CreateDepthResources()
 // specific mip, not the whole chain), the descriptor set layouts the
 // compute shaders bind against, and the actual descriptor sets (allocated
 // and pointed at those views here, since neither depends on which pipeline
-// eventually uses them — mirrors textureSetLayout/textureSet being created
+// eventually uses them - mirrors textureSetLayout/textureSet being created
 // here while graphicsPipeline itself is TerrainPass-owned). See
 // VulkanInit.hpp's own comment on the pyramid's mip 0 / max-reduction
 // convention.
 void CreateHiZResources()
 {
     hizExtent = swapchainExtent;
-    // floor(log2(max dimension)) + 1 — the classic full mip chain count,
+    // floor(log2(max dimension)) + 1 - the classic full mip chain count,
     // capped so an unusually large window doesn't walk all the way down to
     // 1x1 (nothing meaningful to cull against at that point, and it's more
     // mips than any of this frame's chunk AABBs would ever need to query).
@@ -812,7 +1004,7 @@ void CreateHiZResources()
     }
 
     // One-shot UNDEFINED -> GENERAL for every mip, maintained as a
-    // permanent invariant from here on — HiZBuildPass::Record only ever
+    // permanent invariant from here on - HiZBuildPass::Record only ever
     // issues memory barriers against this image, never layout transitions,
     // since GENERAL already supports both imageLoad/imageStore and being a
     // vkCmdCopyImageToBuffer source (the diagnostic readback).
@@ -882,7 +1074,7 @@ void CreateHiZResources()
         throw std::runtime_error("[ERROR] Failed to create Hi-Z downsample descriptor set layout!");
     }
 
-    // hizDownsampleSets[i] reads mip i, writes mip i+1 — one set per
+    // hizDownsampleSets[i] reads mip i, writes mip i+1 - one set per
     // mip-to-mip transition, plus one more for the depth-to-mip-0 copy.
     uint32_t downsampleCount = hizMipLevels > 0 ? hizMipLevels - 1 : 0;
     VkDescriptorPoolSize poolSizes[2]{};
@@ -968,7 +1160,7 @@ void CreateHiZResources()
     }
 
     // The CPU readback buffers live in HiZBuildPass (per frame slot), not
-    // here — they're a fixed size regardless of resolution.
+    // here - they're a fixed size regardless of resolution.
 }
 
 void DestroyHiZResources()
@@ -1005,7 +1197,7 @@ void DestroyHiZResources()
     hizMipLevels = 0;
 }
 
-// Shader-dependent Hi-Z compute pipelines — see CreateHiZResources' own
+// Shader-dependent Hi-Z compute pipelines - see CreateHiZResources' own
 // comment on the split between this and that. Neither shader takes push
 // constants: both derive their working size from imageSize() on the bound
 // images directly, so there's nothing per-dispatch to push.
@@ -1147,7 +1339,7 @@ void Init(GlobalState* state)
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE); // Show system window decorations.
 
-    // config must be ready before the window is created — the very next
+    // config must be ready before the window is created - the very next
     // line reads Window.Width/Height from it.
     g_globalState = state;
 
@@ -1177,10 +1369,10 @@ void Init(GlobalState* state)
 
     // Window.Mode is NOT applied here: switching the display mode this early
     // (before the splash screen) meant the focus churn around startup could
-    // auto-iconify the fullscreen window — GLFW then restores the desktop
+    // auto-iconify the fullscreen window - GLFW then restores the desktop
     // mode and leaves the window at the old fullscreen size in the corner.
     // RenderThread's first PollInputs applies it instead (see
-    // ApplyWindowSettings — g_appliedConfigVersion starts unset).
+    // ApplyWindowSettings - g_appliedConfigVersion starts unset).
 
     #ifdef _WIN32
         // Windows-only fallback: on some setups (seen on Intel Gen9 HD 530,
@@ -1197,7 +1389,7 @@ void Init(GlobalState* state)
     // imported through Vulkan::Vulkan/vulkan-1.lib, an ordinary PE import
     // table entry) makes vk-bootstrap skip its own internal
     // LoadLibrary("vulkan-1.dll") + a cascade of GetProcAddress-by-name
-    // calls to bootstrap itself — harmless and universal for any Vulkan
+    // calls to bootstrap itself - harmless and universal for any Vulkan
     // app, but that exact runtime "load a system DLL, then walk its
     // exports by string name" pattern is also what a reflective DLL
     // loader/injector does, and it's what got this unsigned, no-reputation
@@ -1206,12 +1398,12 @@ void Init(GlobalState* state)
     // 1.1 floor rather than whatever vkEnumerateInstanceVersion reports.
     // That call returns the Vulkan LOADER's own compiled ceiling, which is
     // not a guarantee that every installed ICD (GPU driver) actually
-    // implements it — requesting it via require_api_version() made
+    // implements it - requesting it via require_api_version() made
     // vk-bootstrap's PhysicalDeviceSelector reject any physical device
     // whose real VkPhysicalDeviceProperties::apiVersion fell short,
     // producing "no_suitable_device" on this machine. The debug overlay's
     // reported Vulkan version doesn't come from this requested value
-    // anyway — see physicalDevice.properties.apiVersion below, which is
+    // anyway - see physicalDevice.properties.apiVersion below, which is
     // the selected device's own true supported version, independent of
     // what we request here.
     vkb::InstanceBuilder instanceBuilder(vkGetInstanceProcAddr);
@@ -1247,7 +1439,7 @@ void Init(GlobalState* state)
 
     // Get a device.
     // fillModeNonSolid is required for the wireframe debug pipeline
-    // (VK_POLYGON_MODE_LINE) — see CreateGraphicsPipeline. Virtually every
+    // (VK_POLYGON_MODE_LINE) - see CreateGraphicsPipeline. Virtually every
     // desktop/integrated GPU supports it; requiring it here just makes a
     // device that somehow doesn't fail selection with a clear error instead
     // of failing wireframe pipeline creation later with a validation error.
@@ -1262,7 +1454,7 @@ void Init(GlobalState* state)
     // Graphics.PreferredDevice (settings.json): when non-empty, pick the
     // device whose name contains it (case-insensitively, so "nvidia" is
     // enough for "NVIDIA GeForce RTX 4070") instead of whatever
-    // vk-bootstrap's own ranking puts first — the usual reason to set it
+    // vk-bootstrap's own ranking puts first - the usual reason to set it
     // being a laptop where the default pick is the integrated GPU. Empty
     // (the default this Get() writes on first run) keeps that ranking.
     //
@@ -1283,7 +1475,7 @@ void Init(GlobalState* state)
 
         // select_devices() applies the same surface/feature requirements as
         // select() below, so anything it returns is already a device this
-        // client can actually run on — the name match only reorders them.
+        // client can actually run on - the name match only reorders them.
         auto candidates = physDeviceSelector.select_devices();
         if (candidates)
         {
@@ -1296,7 +1488,7 @@ void Init(GlobalState* state)
                 if (!matched && lowered(candidate.name).find(needle) != std::string::npos)
                 {
                     physDeviceSelector.set_name(candidate.name);
-                    cout << "[INFO] Graphics.PreferredDevice \"" << preferredDevice
+                    cout << "Graphics.PreferredDevice \"" << preferredDevice
                          << "\" matched Vulkan device: " << candidate.name << endl;
                     matched = true;
                 }
@@ -1305,13 +1497,13 @@ void Init(GlobalState* state)
             {
                 cerr << "[WARN] Graphics.PreferredDevice \"" << preferredDevice
                      << "\" matched no suitable Vulkan device (available: " << available
-                     << ") — falling back to the default device." << endl;
+                     << ") - falling back to the default device." << endl;
             }
         }
         else
         {
             cerr << "[WARN] Could not enumerate Vulkan devices to honor Graphics.PreferredDevice: "
-                 << candidates.error().message() << " — falling back to the default device." << endl;
+                 << candidates.error().message() << " - falling back to the default device." << endl;
         }
     }
 
@@ -1326,13 +1518,22 @@ void Init(GlobalState* state)
     }
     physicalDevice = physDeviceSelectorReturn.value();
     FullscreenExclusive::ConfigureDevice(physicalDevice);
-    cout << "[INFO] Found Vulkan GPU: " << physicalDevice.name << endl;
-    cout << "[INFO] Vulkan API version: " << physicalDevice.properties.apiVersion << endl;
+    cout << "Found Vulkan GPU: " << physicalDevice.name << endl;
+    cout << "Vulkan API version: " << physicalDevice.properties.apiVersion << endl;
     g_globalState->systemInfo.DetectGPU(physicalDevice.properties.deviceName,
         physicalDevice.properties.vendorID, physicalDevice.properties.apiVersion);
 
     // Get the logical device.
     vkb::DeviceBuilder deviceBuilder{physicalDevice};
+    // Chunk sections draw with one multi-draw indirect call per list when
+    // both features exist (Graphics.IndirectDraw); otherwise the per-section
+    // path is used, so these are optional.
+    VkPhysicalDeviceFeatures indirectFeatures{};
+    indirectFeatures.multiDrawIndirect = VK_TRUE;
+    indirectFeatures.drawIndirectFirstInstance = VK_TRUE;
+    indirectDrawSupported = physicalDevice.enable_features_if_present(indirectFeatures);
+    cout << "Multi-draw indirect: " << (indirectDrawSupported ? "supported" : "not supported") << endl;
+
     auto deviceBuilderReturn = deviceBuilder.build();
 
     if (!deviceBuilderReturn)
@@ -1343,7 +1544,7 @@ void Init(GlobalState* state)
         return;
     }
     device = deviceBuilderReturn.value();
-    cout << "[INFO] Vulkan device initialized." << endl;
+    cout << "Vulkan device initialized." << endl;
 
     // Set up the VMA allocator.
     VmaAllocatorCreateInfo allocInfo{};
@@ -1369,9 +1570,10 @@ void Init(GlobalState* state)
     swapchain = swapchainBuilderReturn.value();
     FullscreenExclusive::Acquire(device.device, swapchain.swapchain);
     // Records what vk-bootstrap actually granted, not just what
-    // DesiredPresentMode() asked for — see GlobalState::presentMode's own
+    // DesiredPresentMode() asked for - see GlobalState::presentMode's own
     // comment for why those can differ.
     g_globalState->presentMode = static_cast<uint8_t>(swapchain.present_mode);
+    Log::Info(std::string("[GFX] Present mode " + std::to_string(static_cast<int>(swapchain.present_mode)) + " (requested " + std::to_string(static_cast<int>(DesiredPresentMode())) + "; 0 = immediate, 1 = mailbox, 2 = FIFO)"));
 
     // Get the queues from vkb::Device.
     graphicsQueue = device.get_queue(vkb::QueueType::graphics).value();
@@ -1402,7 +1604,7 @@ void Init(GlobalState* state)
     depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
     depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     // STORE, not DONT_CARE: HiZBuildPass samples this after the render pass
-    // ends to build the Hi-Z pyramid — DONT_CARE let the driver discard it
+    // ends to build the Hi-Z pyramid - DONT_CARE let the driver discard it
     // (read back as a constant 0).
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -1450,6 +1652,34 @@ void Init(GlobalState* state)
         throw std::runtime_error("[ERROR] Failed to create render pass.");
     }
 
+    // The overlay pass: the same attachments, but keeping the finished frame
+    // (and its depth) instead of clearing it. Compatible with renderPass, so
+    // the same framebuffers and pipelines work with both.
+    {
+        VkAttachmentDescription overlayAttachments[] = { colorAttachment, depthAttachment };
+        overlayAttachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        overlayAttachments[0].initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        overlayAttachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        overlayAttachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDependency overlayDependency{};
+        overlayDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        overlayDependency.dstSubpass = 0;
+        overlayDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        overlayDependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        overlayDependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        overlayDependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+            | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        VkRenderPassCreateInfo overlayInfo = renderPassInfo;
+        overlayInfo.pAttachments = overlayAttachments;
+        overlayInfo.pDependencies = &overlayDependency;
+        if (vkCreateRenderPass(device.device, &overlayInfo, nullptr, &overlayRenderPass) != VK_SUCCESS)
+        {
+            throw std::runtime_error("[ERROR] Failed to create overlay render pass.");
+        }
+    }
+
     // Create framebuffers.
     CreateFramebuffers();
 
@@ -1477,6 +1707,17 @@ void Init(GlobalState* state)
     layoutInfo.pBindings = &textureBinding;
     vkCreateDescriptorSetLayout(GetDevice(), &layoutInfo, nullptr, &textureSetLayout);
 
+    VkDescriptorSetLayoutBinding shadowBinding{};
+    shadowBinding.binding = 0;
+    shadowBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    shadowBinding.descriptorCount = 1;
+    shadowBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo shadowLayoutInfo{};
+    shadowLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    shadowLayoutInfo.bindingCount = 1;
+    shadowLayoutInfo.pBindings = &shadowBinding;
+    vkCreateDescriptorSetLayout(GetDevice(), &shadowLayoutInfo, nullptr, &shadowSetLayout);
+
     VkDescriptorPoolSize poolSize{};
     poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSize.descriptorCount = 3;
@@ -1485,11 +1726,11 @@ void Init(GlobalState* state)
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     VkDescriptorPoolSize poolSizes[] = {
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 }
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 }
     };
     poolInfo.poolSizeCount = 2;
     poolInfo.pPoolSizes = poolSizes;
-    poolInfo.maxSets = 4; // 3 camera sets + 1 texture set
+    poolInfo.maxSets = 5; // 3 camera sets + 1 texture set + 1 shadow set
     vkCreateDescriptorPool(GetDevice(), &poolInfo, nullptr, &descriptorPool);
 
     for (int i = 0; i < 3; i++)
@@ -1527,8 +1768,13 @@ void Init(GlobalState* state)
     textureAllocInfo.pSetLayouts = &textureSetLayout;
     vkAllocateDescriptorSets(GetDevice(), &textureAllocInfo, &textureSet);
 
+    // The shadow set is written by VulkanRenderEngine::SetShadowMap once a map exists.
+    VkDescriptorSetAllocateInfo shadowAllocInfo = textureAllocInfo;
+    shadowAllocInfo.pSetLayouts = &shadowSetLayout;
+    vkAllocateDescriptorSets(GetDevice(), &shadowAllocInfo, &shadowSet);
+
     // Pipelines (terrain, non-cubic, translucent, entities, selection, ...)
-    // are no longer built here — each belongs to a RenderPass the engine
+    // are no longer built here - each belongs to a RenderPass the engine
     // creates right after this returns (see VulkanRenderEngine::Init), so a
     // shader reload can rebuild them without touching the device/swapchain
     // set up here.
@@ -1536,7 +1782,7 @@ void Init(GlobalState* state)
     // Create command pool and command buffers. Must happen before
     // EntityRenderer::Init() (EntityPass::Create): its UploadCubeMesh() uses
     // BeginOneShotCommands()/EndOneShotCommands(), which allocate from the
-    // global `commandPool` — with no error checking on either the pool or
+    // global `commandPool` - with no error checking on either the pool or
     // the command-buffer allocation, running it against a not-yet-created
     // (VK_NULL_HANDLE) pool crashed outright instead of throwing, which is
     // why it showed no error log at all before the process just exited.
@@ -1559,13 +1805,13 @@ void Init(GlobalState* state)
         throw std::runtime_error("Failed to allocate command buffers!");
     }
 
-    // Must come after commandPool exists — CreateHiZResources() uses
+    // Must come after commandPool exists - CreateHiZResources() uses
     // BeginOneShotCommands()/EndOneShotCommands() for its one-shot layout
     // transition, which allocate from `commandPool` (see the comment on
     // command pool creation above for what running this against a
     // not-yet-created pool actually does: crashes outright, no error log).
     // RecreateSwapchain() calls this same function right after
-    // CreateDepthResources() instead — commandPool already exists there,
+    // CreateDepthResources() instead - commandPool already exists there,
     // since Init() has always run once before any resize.
     CreateHiZResources();
 
@@ -1603,7 +1849,7 @@ void Init(GlobalState* state)
 // the render thread, between frames.
 void RecreateSwapchain(int width, int height)
 {
-    if (width <= 0 || height <= 0) return; // Minimized — nothing to rebuild yet.
+    if (width <= 0 || height <= 0) return; // Minimized - nothing to rebuild yet.
 
     vkDeviceWaitIdle(device.device);
 
@@ -1646,7 +1892,7 @@ void RecreateSwapchain(int width, int height)
     {
         Log::Error("[ERROR] Swapchain recreation failed (" + swapchainBuilderReturn.error().message()
             + ", VkResult " + std::to_string(static_cast<int>(swapchainBuilderReturn.vk_result()))
-            + ") — retrying without exclusive fullscreen.");
+            + ") - retrying without exclusive fullscreen.");
         swapchainBuilderReturn = buildSwapchain(false, nullptr);
     }
     if (!swapchainBuilderReturn)
@@ -1659,6 +1905,7 @@ void RecreateSwapchain(int width, int height)
     swapchainExtent = swapchain.extent;
     // See the Init() call site's own comment on this same line.
     g_globalState->presentMode = static_cast<uint8_t>(swapchain.present_mode);
+    Log::Info(std::string("[GFX] Present mode " + std::to_string(static_cast<int>(swapchain.present_mode)) + " (requested " + std::to_string(static_cast<int>(DesiredPresentMode())) + "; 0 = immediate, 1 = mailbox, 2 = FIFO)"));
 
     CreateDepthResources();
     CreateHiZResources();
@@ -1671,7 +1918,7 @@ WindowMode GetWindowMode()
     return g_windowMode;
 }
 
-// Settings ApplyWindowSettings last applied — compared against config so
+// Settings ApplyWindowSettings last applied - compared against config so
 // only real changes touch the window (a settings write to some unrelated
 // key shouldn't re-set the window size or re-enter fullscreen).
 struct AppliedWindowSettings {
@@ -1709,7 +1956,7 @@ static void SetWindowMode(WindowMode target, uint32_t fsWidth, uint32_t fsHeight
         case WindowMode::BorderlessFullscreen:
         {
             // A plain undecorated window covering the monitor at its current
-            // mode — no display-mode change, so alt-tab is instant.
+            // mode - no display-mode change, so alt-tab is instant.
             int monitorX, monitorY;
             glfwGetMonitorPos(monitor, &monitorX, &monitorY);
             glfwSetWindowMonitor(window, nullptr, monitorX, monitorY, current->width, current->height, 0);
@@ -1743,7 +1990,7 @@ static void SetWindowMode(WindowMode target, uint32_t fsWidth, uint32_t fsHeight
             {
                 Log::Error("[WINDOW] Fullscreen mode " + std::to_string(width) + "x" + std::to_string(height)
                     + "@" + std::to_string(refresh) + " isn't supported by this monitor"
-                    + (height > width ? " (width/height swapped?)" : "") + " — using the desktop mode "
+                    + (height > width ? " (width/height swapped?)" : "") + " - using the desktop mode "
                     + std::to_string(current->width) + "x" + std::to_string(current->height)
                     + "@" + std::to_string(current->refreshRate) + " instead.");
                 width = current->width;
@@ -1768,7 +2015,7 @@ static void SetWindowMode(WindowMode target, uint32_t fsWidth, uint32_t fsHeight
 // Reads Window.Mode (0 windowed, 1 borderless, 2 fullscreen), Window.Width/
 // Height and Window.FullscreenMode.Width/Height/RefreshRate, and applies
 // whatever changed since last time. Cheap when nothing changed (one atomic
-// compare), so RenderThread calls it every frame — that's what lets a
+// compare), so RenderThread calls it every frame - that's what lets a
 // Settings screen change any of these live. Main thread only (GLFW).
 void ApplyWindowSettings()
 {
@@ -1859,12 +2106,13 @@ void Cleanup()
     }
 
     // Pass-owned pipelines are normally gone already (RenderEngine::
-    // StopRendering destroys every pass) — these are idempotent, and only
+    // StopRendering destroys every pass) - these are idempotent, and only
     // matter if startup failed before the passes could be torn down.
     DestroyNonCubicPipeline();
     DestroyTranslucentPipeline();
     DestroyGraphicsPipeline();
     vkDestroyCommandPool(device.device, commandPool, nullptr);
+    vkDestroyRenderPass(device.device, overlayRenderPass, nullptr);
     vkDestroyRenderPass(device.device, renderPass, nullptr);
 
     if (depthImageView != VK_NULL_HANDLE) {
@@ -1920,8 +2168,8 @@ void Cleanup()
 VkCommandBuffer BeginOneShotCommands()
 {
     // commandPool must already exist (Init() creates it before anything
-    // that calls this — see EntityRenderer::Init()'s own comment on why
-    // that order matters) — a null pool here used to fail both calls below
+    // that calls this - see EntityRenderer::Init()'s own comment on why
+    // that order matters) - a null pool here used to fail both calls below
     // silently and hand back/begin-record a garbage command buffer, which
     // crashed the process outright instead of throwing.
     if (commandPool == VK_NULL_HANDLE) {

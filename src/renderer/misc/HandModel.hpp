@@ -41,7 +41,12 @@ private:
 
     bool ready = false;
     float mainHandHeight = 1.0f; // 1 = raised; drops after a swing.
+    // Where the current swing stands: not swinging, playing in full at the raised height until the attack
+    // indicator reaches SWING_CUT_STRENGTH, cut off by it, or a swing that isn't an attack (placing, mining).
+    enum class SwingMode { Idle, Playing, Cut, Plain };
+    SwingMode swingMode = SwingMode::Idle;
     int64_t lastRecordNs = 0;
+    float handLight = 1.0f; // Brightness at the player, eased between frames.
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     ArmMesh rightArmMesh;
@@ -53,7 +58,7 @@ private:
     GpuBuffer Upload(const void* data, VkDeviceSize size, VkBufferUsageFlags usage);
     void DestroyBuffer(GpuBuffer& buffer);
 
-    void DrawArm(VkCommandBuffer cmd, const ArmMesh& mesh, const glm::mat4& mvp);
+    void DrawArm(VkCommandBuffer cmd, const ArmMesh& mesh, const glm::mat4& mvp, float brightness);
 };
 
 } // namespace Volcano

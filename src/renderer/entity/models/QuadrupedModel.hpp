@@ -7,7 +7,7 @@
 
 namespace Volcano::QuadrupedModel {
 
-// Six-box static mesh (head, body, 4 legs) for four-legged mobs — see
+// Six-box static mesh (head, body, 4 legs) for four-legged mobs - see
 // EntityRegistry::ClassifyShape for which network entity types use it (cows,
 // pigs, sheep, wolves, horses, ...). Drawn through the same batched/
 // instanced path as the placeholder cube (EntityRenderer's g_pipeline,
@@ -21,7 +21,7 @@ namespace Volcano::QuadrupedModel {
 inline void BuildMesh(std::vector<EntityMeshVertex>& vertices, std::vector<uint32_t>& indices)
 {
     // Local +Z is forward, matching entity.vert's yaw rotation (identity at
-    // yaw 0) and TickLoop's own forward vector — no coordinate flip needed
+    // yaw 0) and TickLoop's own forward vector - no coordinate flip needed
     // here, unlike HumanoidModel which ports vanilla's own -Z-forward space.
     AppendBox(vertices, indices, {  0.00f,  0.30f,  0.38f }, { 0.35f, 0.28f, 0.26f }); // head
     AppendBox(vertices, indices, {  0.00f,  0.05f, -0.05f }, { 0.60f, 0.42f, 0.75f }); // body

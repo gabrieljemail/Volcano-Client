@@ -1,0 +1,13 @@
+{
+    "_comment": "SheepModel.createBodyLayer (QuadrupedModel.createBodyMesh(12, false, true)), 64x32.",
+    "textureWidth": 64,
+    "textureHeight": 32,
+    "boxes": [
+        { "name": "head", "origin": [-3, -4, -6],  "size": [6, 6, 8],   "uv": [0, 0],  "pivot": [0, 6, -8] },
+        { "name": "body", "origin": [-4, -10, -7], "size": [8, 16, 6],  "uv": [28, 8], "pivot": [0, 5, 2], "rotation": [90, 0, 0] },
+        { "name": "right_hind_leg",  "origin": [-2, 0, -2], "size": [4, 12, 4], "uv": [0, 16], "mirror": true, "pivot": [-3, 12, 7] },
+        { "name": "left_hind_leg",   "origin": [-2, 0, -2], "size": [4, 12, 4], "uv": [0, 16], "pivot": [3, 12, 7] },
+        { "name": "right_front_leg", "origin": [-2, 0, -2], "size": [4, 12, 4], "uv": [0, 16], "mirror": true, "pivot": [-3, 12, -5] },
+        { "name": "left_front_leg",  "origin": [-2, 0, -2], "size": [4, 12, 4], "uv": [0, 16], "pivot": [3, 12, -5] }
+    ]
+}

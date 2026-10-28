@@ -20,7 +20,7 @@ struct ItemPushConstants {
     glm::vec4 normalRow0;
     glm::vec4 normalRow1;
     glm::vec4 normalRow2;
-    glm::vec4 params; // x: 1 = flat item.
+    glm::vec4 params; // x: 1 = flat item; y: how much of the light to take away (0 = none).
 };
 static_assert(sizeof(ItemPushConstants) == 128, "ItemPushConstants must fit the 128-byte push constant minimum");
 
@@ -35,18 +35,23 @@ void ItemRenderer::Init(const Engine::ShaderLibrary& shaders)
     initialized = true;
 }
 
-void ItemRenderer::Shutdown()
+void ItemRenderer::ReloadTextures()
 {
-    if (!initialized) return;
-    vkDeviceWaitIdle(GetDevice());
-    DestroyWorldPipeline();
-
     for (auto& [name, mesh] : meshes)
     {
         if (mesh.vertices.buffer != VK_NULL_HANDLE) vmaDestroyBuffer(vmaAllocator, mesh.vertices.buffer, mesh.vertices.allocation);
         if (mesh.indices.buffer != VK_NULL_HANDLE) vmaDestroyBuffer(vmaAllocator, mesh.indices.buffer, mesh.indices.allocation);
     }
     meshes.clear();
+}
+
+void ItemRenderer::Shutdown()
+{
+    if (!initialized) return;
+    vkDeviceWaitIdle(GetDevice());
+    DestroyWorldPipeline();
+
+    ReloadTextures();
 
     if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), pipeline, nullptr);
     if (pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(GetDevice(), pipelineLayout, nullptr);
@@ -213,13 +218,14 @@ VkPipeline ItemRenderer::BuildPipeline(const Engine::ShaderLibrary& shaders, VkR
     viewportState.viewportCount = 1;
     viewportState.scissorCount = 1;
 
-    // Same winding convention as the entity pipelines: the projection's Y is
-    // pre-flipped (see RenderGuiIcon), meshes are CCW from outside.
+    // Not culled: extruded sprites are thin shells whose sides flip winding under
+    // the display transforms (mirrored hands, negative scales), and the depth
+    // test already hides the far side of an opaque mesh.
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
-    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
     rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo multisampling{};
@@ -338,7 +344,7 @@ void ItemRenderer::DestroyWorldPipeline()
 }
 
 void ItemRenderer::RecordItem(VkCommandBuffer cmd, const std::string& itemName, const std::string& context,
-                              const glm::mat4& placement, const glm::mat4& viewProj, const glm::mat4& pivotRotation)
+                              const glm::mat4& placement, const glm::mat4& viewProj, const glm::mat4& pivotRotation, float darkness)
 {
     if (!initialized || worldPipeline == VK_NULL_HANDLE || textures == nullptr) return;
 
@@ -359,7 +365,7 @@ void ItemRenderer::RecordItem(VkCommandBuffer cmd, const std::string& itemName, 
     push.normalRow0 = glm::vec4(normalMatrix[0][0], normalMatrix[1][0], normalMatrix[2][0], 0.0f);
     push.normalRow1 = glm::vec4(normalMatrix[0][1], normalMatrix[1][1], normalMatrix[2][1], 0.0f);
     push.normalRow2 = glm::vec4(normalMatrix[0][2], normalMatrix[1][2], normalMatrix[2][2], 0.0f);
-    push.params = glm::vec4(model->IsFlat() ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+    push.params = glm::vec4(model->IsFlat() ? 1.0f : 0.0f, darkness, 0.0f, 0.0f);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
     VkDescriptorSet texturesSet = textureSet;
@@ -388,7 +394,7 @@ bool ItemRenderer::RenderGuiIcon(const std::string& itemName, IconImage& out)
     imageInfo.arrayLayers = 1;
     imageInfo.format = ICON_FORMAT;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // Read back for Pincel.
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;

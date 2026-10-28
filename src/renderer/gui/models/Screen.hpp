@@ -9,8 +9,10 @@
 
 namespace Volcano::GUI {
 
+class ControlRenderer;
+
 // A fullscreen, Minecraft-like menu screen (e.g. the connect screen, a
-// future pause/options menu). Only one Screen is ever active at a time —
+// future pause/options menu). Only one Screen is ever active at a time -
 // GUIController draws it in place of every other window and blocks game
 // input until it's closed.
 struct Screen {
@@ -22,16 +24,29 @@ struct Screen {
     int columns = 1;
     // Draw resources/logo.png (128x128) in place of the title text.
     bool showLogo = false;
+    // False for a screen that draws its own title (or has none).
+    bool showTitle = true;
+    // Text size; 0 is the standard one. In UI units, or in art pixels (see Theme::SMALL_FONT_SIZE) if fontInArtPixels.
+    float fontSize = 0.0f;
+    bool fontInArtPixels = false;
 
     // Escape hatch for content the generic TEXT/BUTTON/INPUT component stack
-    // can't express — a slot grid with item icons (the inventory screen),
+    // can't express - a slot grid with item icons (the inventory screen),
     // say. When set, GUIController::RenderScreen calls this instead of
-    // laying out `components`, right after the title — the darkened
+    // laying out `components`, right after the title - the darkened
     // fullscreen "##screen" ImGui window (and its draw list, via
     // ImGui::GetWindowDrawList()) is already open by the time this runs, so
     // a raw-ImDrawList screen can draw into it the same way GUIController's
     // own HUD methods (DrawSlot, DrawStatBar, ...) already do.
     std::function<void()> customContent;
+
+    // For content that changes while the screen is up (a list of servers) but
+    // still wants the standard look. `build` adds elements after the components
+    // whenever the screen is built, `update` runs every frame after drawing to
+    // react to them, and ControlRenderer::Rebuild() runs `build` again. Both
+    // run on the render thread; a screen with either is drawn by Pincel.
+    std::function<void(ControlRenderer&)> build;
+    std::function<void(ControlRenderer&)> update;
 };
 
 } // namespace Volcano::GUI

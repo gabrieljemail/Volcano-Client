@@ -13,7 +13,7 @@ namespace Volcano::SplashScreen {
 // slow synchronous startup work.
 //
 // Never throws: a missing/unreadable splash image, or any Vulkan call
-// along the way failing, is logged and simply skipped — a missing splash
+// along the way failing, is logged and simply skipped - a missing splash
 // screen isn't worth failing startup over.
 void Show();
 

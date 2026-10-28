@@ -28,6 +28,7 @@
 #include "Config.hpp"
 #include "SystemInfo.hpp"
 #include "inventory/InventoryManager.hpp"
+#include "network/CommandTree.hpp"
 
 namespace Volcano {
 
@@ -41,7 +42,7 @@ enum class WindowMode : uint8_t {
 };
 
 // Defined in TickLoop.hpp, which includes this header (not the other way
-// around) since it needs the full GlobalState — a forward declaration is
+// around) since it needs the full GlobalState - a forward declaration is
 // enough here for a pointer member.
 class TickLoop;
 
@@ -52,7 +53,7 @@ class TickLoop;
 class Connection;
 
 // Defined in interaction/InteractionManager.hpp, which includes this header
-// (not the other way around) since it needs the full GlobalState — same
+// (not the other way around) since it needs the full GlobalState - same
 // forward-declaration reason as TickLoop above.
 class InteractionManager;
 
@@ -60,9 +61,16 @@ class AudioManager;
 class MusicController;
 class ModLoader;
 class SoundRegistry;
+class BlockSounds;
+class EntitySounds;
+class CombatSounds;
+class RideController;
+class LightEngine;
 class ItemRenderer;
+class ParticleSystem;
+class ResourceManager;
 
-// Defined in renderer/engine/RenderEngine.hpp — the abstraction layer every
+// Defined in renderer/engine/RenderEngine.hpp - the abstraction layer every
 // non-renderer system talks to instead of Vulkan. Forward-declared for the
 // same reason as TickLoop above.
 namespace Engine {
@@ -75,7 +83,7 @@ struct Resolution {
 };
 
 // One clientbound Block Update (PlayS2C::BlockUpdate) waiting to be applied
-// — a world position plus the already-resolved Block (visualId/
+// - a world position plus the already-resolved Block (visualId/
 // nonCubeVisualId/collisionShapeId), since the network thread never touches
 // World directly (see NetworkInbox's own comment) but resolving a protocol
 // state id via BlockRegistry is cheap/thread-safe to do up front anyway.
@@ -86,7 +94,7 @@ struct PendingBlockEdit {
 
 // Handoff point from the network thread to the main thread. The network
 // thread parses packets into plain-data Chunks and never touches World or
-// renderList directly — the main thread (which already owns renderList and
+// renderList directly - the main thread (which already owns renderList and
 // calls the Vulkan-touching ChunkMesher) drains this every loop iteration,
 // meshes/inserts each chunk, and applies the spawn position once.
 struct NetworkInbox {
@@ -94,30 +102,30 @@ struct NetworkInbox {
     std::queue<std::unique_ptr<Chunk>> chunks;
     // Carries the initial spawn AND every later teleport the server sends
     // (Player Position, 0x48). Latest wins if two land before MeshingThread
-    // drains it — an outdated correction isn't worth applying.
+    // drains it - an outdated correction isn't worth applying.
     std::optional<glm::vec3> spawnPosition;
 
     // Sections needing a remesh after a local block edit (see World::
-    // SetBlock/BreakBlockEvent) — checked by MeshingThread ahead of `chunks`
+    // SetBlock/BreakBlockEvent) - checked by MeshingThread ahead of `chunks`
     // above, so an edit near the player doesn't sit behind a backlog of
     // ordinary chunk-load traffic. Guarded by the same `mutex`.
     std::deque<SectionKey> dirtySections;
 
     // Block Update packets waiting to be applied to World (see
-    // PendingBlockEdit above) — drained by MeshingThread before it even
+    // PendingBlockEdit above) - drained by MeshingThread before it even
     // looks at dirtySections, converting each into World::SetBlock calls
     // whose own returned SectionKeys then feed dirtySections the usual way.
     // This is what corrects a locally-mispredicted BreakBlockEvent edit
-    // back to the server's real state (see its own comment) — also fires
+    // back to the server's real state (see its own comment) - also fires
     // for block changes this client had no part in (other players,
     // redstone, ...), since nothing distinguishes the two cases on the wire.
     std::deque<PendingBlockEdit> pendingBlockEdits;
 
-    // Update Light packets waiting to be applied — drained by MeshingThread
+    // Update Light packets waiting to be applied - drained by MeshingThread
     // the same way as pendingBlockEdits (World::ApplyLightUpdate).
     std::deque<PendingLightUpdate> pendingLightUpdates;
 
-    // Unload Chunk packets (chunkX, chunkZ) — drained by MeshingThread
+    // Unload Chunk packets (chunkX, chunkZ) - drained by MeshingThread
     // before it pops the next chunk, which drops the chunk from World and
     // its sections from every render list (handing their slab space back).
     // NetworkClient also purges any not-yet-meshed copy of that chunk from
@@ -125,7 +133,7 @@ struct NetworkInbox {
     std::deque<std::pair<int, int>> pendingUnloads;
 };
 
-// Where the client is in getting into a world — drives the loading screen
+// Where the client is in getting into a world - drives the loading screen
 // (renderer/gui/screens/LoadingScreen) and the menu-panorama switch. Written
 // from whichever thread owns the step (main thread for Idle/StartingServer/
 // Connecting/Playing, NetworkThread for the rest); see
@@ -146,7 +154,7 @@ enum class ConnectionPhase : uint8_t {
 // sprint-hit slowdown InteractionManager applies to us when we land a
 // knockback hit on another player. TickLoop owns velocity/sprinting on
 // NetworkThread, while these arrive on NetworkThread (packets) and the
-// render thread (attacks) — so they're queued here instead, and TickLoop::
+// render thread (attacks) - so they're queued here instead, and TickLoop::
 // Tick drains them in arrival order before its next fixed step. Order
 // matters: vanilla applies each one immediately as it happens, so a
 // knockback packet landing right after our own attack must overwrite the
@@ -174,11 +182,11 @@ struct LocalMotionInbox {
 
 // Set by MeshingThread to ReleaseMeshSlabs, so ResetWorldState can hand
 // cleared meshes' slab regions back without GlobalState depending on the
-// meshers (NetDiag builds this header without them — null there).
+// meshers (NetDiag builds this header without them - null there).
 inline void (*releaseMeshSlabsHook)(const Mesh&) = nullptr;
 
 struct GlobalState {
-    // Owns the client's settings — loaded from settings.json (next to the
+    // Owns the client's settings - loaded from settings.json (next to the
     // executable) by LoadSettings() below. config points at configStorage
     // once that's done; every other piece of client code reads settings
     // through this pointer rather than hardcoded constants.
@@ -196,15 +204,24 @@ struct GlobalState {
     MusicController* musicController{nullptr};
     ModLoader* modLoader{nullptr}; // Owned by main(); fires events to loaded mods.
     SoundRegistry* soundRegistry{nullptr};
+    LightEngine* lightEngine{nullptr}; // Local light for block edits; the server's Update Light corrects it.
+    EntitySounds* entitySounds{nullptr}; // Hurt sounds; called from the network thread.
+    CombatSounds* combatSounds{nullptr}; // Hit, spear, mace and arrow sounds; called from the main and network threads.
+    BlockSounds* blockSounds{nullptr}; // Step, break, place and mining-hit sounds; called from the tick and main threads.
+    ResourceManager* resourceManager{nullptr}; // Layered resource packs; created in main() after LoadSettings().
     ItemRenderer* itemRenderer{nullptr}; // 3D item models (GUI icons now; hand and dropped items later).
+
+    // The client's particles. Spawn() may be called from any thread (the network thread does, for the Level Particles
+    // packet); everything else is the render thread's. See ParticlePass.
+    ParticleSystem* particles{nullptr};
 
     // The rendering engine (VulkanRenderEngine today). Owned by main();
     // set before its Init() runs. Use it to add/remove render passes, switch
-    // shader packs (SetShaderPack) or reload shaders — render thread only,
+    // shader packs (SetShaderPack) or reload shaders - render thread only,
     // except RequestShaderReload(), which is safe from anywhere.
     Engine::RenderEngine* renderEngine{nullptr};
 
-    // CPU/GPU/driver/API info for the debug overlay — see SystemInfo's own
+    // CPU/GPU/driver/API info for the debug overlay - see SystemInfo's own
     // comment for the detection story and why there's no GPU compute-unit
     // count. DetectCPU() runs first thing in main(); DetectGPU() runs once
     // VulkanInit has a physical device to read properties off of.
@@ -215,7 +232,7 @@ struct GlobalState {
     // counts down. InteractionManager::GetAttackStrengthScale divides this
     // by a ticks-to-full-charge figure it recomputes from the live
     // generic.attack_speed attribute every call rather than caching it at
-    // swing time — that's what lets swapping weapons mid-recovery actually
+    // swing time - that's what lets swapping weapons mid-recovery actually
     // change how long the recovery takes, matching vanilla's own
     // Player::getAttackStrengthScale/resetAttackStrengthTicker.
     std::atomic<uint32_t> attackStrengthTicker{0};
@@ -223,6 +240,31 @@ struct GlobalState {
     // When the local player last swung an arm (steady_clock ns; 0 = never).
     // Written by SendArmAnimation on the render thread; read by HandModel.
     std::atomic<int64_t> localSwingNs{0};
+
+    // Tick counters for things that update "per tick" (shadow recompute): the
+    // client's fixed 20 Hz TickLoop step, and the server's - approximated by
+    // bundle boundaries and Update Time packets, since the protocol has no
+    // per-tick packet. Both only ever increase.
+    std::atomic<uint64_t> clientTicks{0};
+    std::atomic<uint64_t> serverTicks{0};
+
+    // 0..1 through the local player's current arm swing, or 0 when idle.
+    // While a block is being mined the swing repeats until it finishes.
+    float GetLocalSwingProgress() const
+    {
+        constexpr float SWING_SECONDS = 0.3f; // Vanilla's 6-tick arm swing.
+        int64_t startNs = localSwingNs.load(std::memory_order_relaxed);
+        if (startNs == 0) return 0.0f;
+        int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        float seconds = static_cast<float>(nowNs - startNs) * 1e-9f;
+        if (seconds < 0.0f) return 0.0f;
+        if (seconds >= SWING_SECONDS - 0.1f && miningTicksRequired.load(std::memory_order_relaxed) > 0)
+        {
+            seconds = std::fmod(seconds, SWING_SECONDS);
+        }
+        return seconds < SWING_SECONDS ? seconds / SWING_SECONDS : 0.0f;
+    }
 
     // True while a continuous item use (eating, blocking, a drawn bow) is in
     // progress. Written by the render thread (InteractionManager); read by
@@ -248,20 +290,20 @@ struct GlobalState {
     std::atomic<float> crosshairProgressCurrent{-1.0f};
 
     // Client-generated sequence number for the dig/place/use-item packets
-    // (PlayerAction, BlockPlace, UseItem) — the server echoes it back in
+    // (PlayerAction, BlockPlace, UseItem) - the server echoes it back in
     // Acknowledge Block Changes so a client that predicts block state
     // locally can tell which prediction a given ack confirms/invalidates.
     // This client doesn't predict block state yet (see BreakBlockEvent/
     // PlaceBlockEvent's own comments), so nothing reads the ack side of
-    // this — it only needs to be present and monotonically increasing for
+    // this - it only needs to be present and monotonically increasing for
     // the server's own bookkeeping. Shared across all three packet types,
     // same as vanilla's own single counter.
     std::atomic<int32_t> interactionSequence{0};
 
     // Local player's current gamemode, protocol's own mapper values (0 =
-    // survival, 1 = creative, 2 = adventure, 3 = spectator — see PlayS2C::
+    // survival, 1 = creative, 2 = adventure, 3 = spectator - see PlayS2C::
     // LoginPlay's SpawnInfo.gamemode and PlayS2C::GameStateChange). Informational
-    // only right now — mining-speed decisions read canInstabuild below
+    // only right now - mining-speed decisions read canInstabuild below
     // instead, since that's what vanilla itself actually checks.
     std::atomic<uint8_t> localGameMode{0};
 
@@ -270,21 +312,21 @@ struct GlobalState {
     std::string currentDimension;
     std::mutex currentDimensionMutex;
 
-    // Whether the local player can insta-mine — from PlayS2C::
+    // Whether the local player can insta-mine - from PlayS2C::
     // PlayerAbilities' flags byte (bit 0x08), NOT derived from localGameMode.
     // Vanilla grants this ability alongside creative mode but checks the
     // ability itself for destroy speed (Player::getDestroySpeed reads
     // getAbilities().instabuild), and an op can flip it independently via
-    // /gamerule or a plugin — see InteractionManager::BeginMining. Same
+    // /gamerule or a plugin - see InteractionManager::BeginMining. Same
     // atomic-not-mutex reasoning as lookingAtEntity above.
     std::atomic<bool> canInstabuild{false};
 
-    // Player inventory (hotbar/main inventory/armor/offhand slot groups) —
+    // Player inventory (hotbar/main inventory/armor/offhand slot groups) -
     // held directly rather than behind a pointer, same as networkInbox below,
     // since there's exactly one per session. Not yet populated by anything:
     // no packet handling for Window Items/Set Container Slot exists yet, so
     // this is currently just the storage those will write into and the
-    // future inventory/hotbar/armor GUI will read from — see its own header
+    // future inventory/hotbar/armor GUI will read from - see its own header
     // for the concurrency convention (a mutex member right alongside the
     // data, matching entities/entitiesMutex and playerList/playerListMutex
     // below).
@@ -296,18 +338,18 @@ struct GlobalState {
     uint16_t targetFPS{60};
     uint16_t currentFPS{0};
 
-    // The swapchain's actual active VkPresentModeKHR, cast down to a byte —
+    // The swapchain's actual active VkPresentModeKHR, cast down to a byte -
     // fits every mode this client can request (FIFO=2/IMMEDIATE=0, per
-    // Graphics.VSync — see VulkanInit's DesiredPresentMode()) with room to
+    // Graphics.VSync - see VulkanInit's DesiredPresentMode()) with room to
     // spare; only the SHARED_* modes (unused here) don't fit in a byte.
-    // Set by VulkanInit whenever the swapchain is (re)created — vk-bootstrap
+    // Set by VulkanInit whenever the swapchain is (re)created - vk-bootstrap
     // can silently fall back to a different mode than requested if the
     // surface doesn't support it, so this is what was actually granted, not
     // just what Graphics.VSync asked for. Same thread-ownership story as
     // resolution/targetFPS above: only VulkanInit (Main/Render thread)
     // writes it.
     uint8_t presentMode{0};
-    // Keyed by SectionKey (chunk column + 16-tall Y section — see
+    // Keyed by SectionKey (chunk column + 16-tall Y section - see
     // ChunkSection.hpp) rather than an append-only list, since a section
     // can now be remeshed in place after a block edit (World::SetBlock):
     // MeshingThread upserts by key instead of appending a duplicate, and
@@ -316,7 +358,7 @@ struct GlobalState {
     // map+mutex convention as elsewhere in this file.
     //
     // Guards renderList itself (not the Meshes' Vulkan handles, which are
-    // never mutated after being placed in the slab buffers) — MeshingThread
+    // never mutated after being placed in the slab buffers) - MeshingThread
     // writes to it as chunks stream in or a section gets remeshed, while
     // RenderThread iterates it every frame on its own thread. Without this,
     // an insert that rehashes while the render thread is mid-iteration is a
@@ -325,13 +367,36 @@ struct GlobalState {
     std::unordered_map<SectionKey, Mesh, SectionKeyHash> renderList = {};
     std::mutex renderListMutex;
 
-    // Triangles actually drawn this frame, for the debug HUD (GUIController)
-    // — reset to 0 at the top of RenderEngine::RecordPasses, then added to by
-    // each pass's own draw calls (ChunkMeshPass::DrawMesh, EntityRenderer,
-    // ...) as it records them. Render-thread-owned like renderList itself:
-    // written and read only from RecordPasses' own call chain, all on
-    // RenderThread, so no mutex/atomic needed.
-    uint64_t trianglesDrawn = 0;
+    // Bumped whenever a section is added, replaced or removed in ANY of the
+    // three render lists (renderList, nonCubicRenderList, translucentRenderList),
+    // so the passes' cached visible sets (see ChunkMeshPass::GetVisible) know
+    // to recompute. Coarse on purpose: one counter for all three lists.
+    std::atomic<uint64_t> meshListGeneration{0};
+
+    // Debug HUD (F3). Off by default; every piece of debug data below (and
+    // the GPU timestamp queries, occlusion stats, ...) is only collected
+    // while this is true, so it costs nothing when hidden.
+    std::atomic<bool> debugHudVisible{false};
+
+    // Triangles actually drawn this frame, for the debug HUD (GUIController),
+    // split by what drew them - reset at the top of RenderEngine::RecordPasses,
+    // then added to by each pass's own draw calls (ChunkMeshPass::DrawMesh,
+    // EntityRenderer) as it records them, only while debugHudVisible.
+    // Render-thread-owned like renderList itself, so no mutex/atomic needed.
+    enum TriangleCategory { TRIANGLES_TERRAIN, TRIANGLES_CUTOUT, TRIANGLES_TRANSLUCENT, TRIANGLES_ENTITY, TRIANGLE_CATEGORY_COUNT };
+    uint64_t trianglesDrawn[TRIANGLE_CATEGORY_COUNT] = {};
+
+    // Last frame's in-frustum section draws and how many Hi-Z occluded
+    // (terrain + non-cubic lists). Same ownership and gating as trianglesDrawn.
+    uint32_t sectionsTested = 0, sectionsOccluded = 0;
+
+    // CPU time the chunk passes (terrain + cutout + water) spend per frame on
+    // culling, back-to-front sorting and recording draws, for the debug HUD.
+    // chunkPhaseFrameMs is summed during RecordPasses and folded into the
+    // smoothed chunkPhaseMs after it. Same ownership and gating as above.
+    enum ChunkPhase { CHUNK_PHASE_CULL, CHUNK_PHASE_SORT, CHUNK_PHASE_DRAW, CHUNK_PHASE_COUNT };
+    float chunkPhaseFrameMs[CHUNK_PHASE_COUNT] = {};
+    float chunkPhaseMs[CHUNK_PHASE_COUNT] = {};
 
     // Smoothed per-stage timings in milliseconds, for the debug HUD. Each
     // field has exactly one writer thread, so plain atomic stores suffice.
@@ -346,7 +411,7 @@ struct GlobalState {
     } timings;
 
     // Non-cubic meshes (transparent full cubes, partial-volume shapes, and
-    // cross-shaped plants — see NonCubicMesher) for the engine's separate
+    // cross-shaped plants - see NonCubicMesher) for the engine's separate
     // NonCubicPass. One entry per chunk section, same as renderList,
     // populated alongside it by MeshingThread and guarded/keyed the same
     // way; kept as a separate map (rather than folded into renderList)
@@ -354,13 +419,13 @@ struct GlobalState {
     std::unordered_map<SectionKey, Mesh, SectionKeyHash> nonCubicRenderList = {};
     std::mutex nonCubicRenderListMutex;
 
-    // Genuinely translucent meshes (currently water only — see
+    // Genuinely translucent meshes (currently water only - see
     // NonCubicMesher::ChunkMeshes::translucent) for RenderThread's separate
     // translucent pass: alpha blended like nonCubicRenderList's cutout pass,
     // but with depth WRITE off (VulkanInit's translucentPipeline) so two
     // overlapping translucent surfaces actually blend instead of whichever
     // one happened to draw first winning the depth test outright. Same
-    // population/locking/keying story as nonCubicRenderList — populated by
+    // population/locking/keying story as nonCubicRenderList - populated by
     // MeshingThread alongside it, one entry per chunk section.
     std::unordered_map<SectionKey, Mesh, SectionKeyHash> translucentRenderList = {};
     std::mutex translucentRenderListMutex;
@@ -370,18 +435,18 @@ struct GlobalState {
     // Remove Entities packet. Populated directly by NetworkClient's Play
     // packet loop (Entity has no Vulkan handles, unlike Mesh/renderList, so
     // there's no need to hand it off through a main-thread-only inbox first)
-    // — guarded by entitiesMutex the same way renderList is guarded against
+    // - guarded by entitiesMutex the same way renderList is guarded against
     // RenderThread, since NetworkClient runs on its own thread too.
     std::unordered_map<uint32_t, Entity> entities = {};
     std::mutex entitiesMutex;
 
     // Other players, keyed by network entity ID like `entities` above but
     // kept in their own map so their player-only fields (uuid, username,
-    // equipment, health, pose flags — see PlayerEntity) survive; `entities`
+    // equipment, health, pose flags - see PlayerEntity) survive; `entities`
     // holds plain Entity values, which would slice those off. Written by
     // NetworkClient (Spawn Entity for type "player", Set Equipment, Set
     // Entity Data, ...), read by EntityRenderer and InteractionManager's
-    // raycast. Guarded by entitiesMutex too, not a mutex of its own — an
+    // raycast. Guarded by entitiesMutex too, not a mutex of its own - an
     // entity id lives in exactly one of the two maps, and every movement/
     // removal packet has to look in both under one lock anyway (see
     // FindEntity/ForEachEntity below).
@@ -412,22 +477,35 @@ struct GlobalState {
         for (const auto& [id, player] : playerEntities) fn(id, static_cast<const Entity&>(player));
     }
 
-    // Our own network entity id, from PlayS2C::LoginPlay — what the server
+    // Our own network entity id, from PlayS2C::LoginPlay - what the server
     // addresses packets about the local player with (knockback velocity,
     // attribute updates, ...) and what PlayC2S::PlayerCommand has to name.
     // -1 until LoginPlay arrives. Written by NetworkThread, read from the
     // render thread too (InteractionManager), hence atomic.
     std::atomic<int32_t> localEntityId{-1};
 
+    // Network id of the vehicle or mount we are riding, -1 when on foot.
+    // Written by NetworkThread (Set Passengers, Remove Entities, world reset),
+    // read by RenderThread (TickLoop, RideController) and TickThread.
+    std::atomic<int32_t> ridingEntityId{-1};
+
+    // Steers the ridden vehicle; owned by main, see RideController.hpp.
+    RideController* rideController = nullptr;
+
+    // Our own username, as confirmed by Login Success. Written by
+    // NetworkThread, read by the render thread for the third-person nametag.
+    std::string localUsername;
+    std::mutex localUsernameMutex;
+
     // See LocalMotionInbox's own comment.
     LocalMotionInbox localMotion;
 
-    // Whether the crosshair is currently over an attackable entity — the
+    // Whether the crosshair is currently over an attackable entity - the
     // tracking field GUIController::RenderCrosshair reads to pick
     // crosshair-entity.png over the plain crosshair.png (vanilla's own
     // attack-indicator swap). Nothing sets this yet: there's no
     // block/entity raycast in this client, against `entities` above or
-    // otherwise — see STATE.md's tasks. Stays false (plain crosshair only)
+    // otherwise - see STATE.md's tasks. Stays false (plain crosshair only)
     // until one exists to write it. Atomic rather than mutex-guarded since
     // whatever raycast eventually writes it will most naturally run on the
     // render thread already reading it, but nothing should have to assume
@@ -435,7 +513,7 @@ struct GlobalState {
     std::atomic<bool> lookingAtEntity{false};
 
     // Tab-list names, keyed by hex-formatted UUID (see NetworkClient's
-    // FormatUuid) rather than the raw 16-byte array — same
+    // FormatUuid) rather than the raw 16-byte array - same
     // write-from-network/read-from-render split and map+mutex convention as
     // entities/entitiesMutex above. Populated by the Player Info Update/
     // Remove packets in NetworkClient::RunPlayLoop.
@@ -445,13 +523,19 @@ struct GlobalState {
     // Each tab-list player's game mode (Player Info Update's
     // UPDATE_GAME_MODE), keyed the same way as playerList and guarded by the
     // same mutex. Kept apart from the PlayerEntity itself because the info
-    // update usually arrives before that player's Spawn Entity does —
+    // update usually arrives before that player's Spawn Entity does -
     // NetworkClient copies it onto the PlayerEntity at spawn, and onto an
     // already-spawned one when it changes.
     std::unordered_map<std::string, GameMode> playerGameModes = {};
 
+    // The server's command tree from the Commands packet. The network thread
+    // replaces it whole whenever one arrives; readers copy the pointer under
+    // the lock and walk their copy, which never changes. Null until the first.
+    std::shared_ptr<const CommandTree> commands;
+    std::mutex commandsMutex;
+
     // Last values reported by the server's Set Health packet (see
-    // NetworkClient's PlayS2C::SetHealth handler) — read every frame by
+    // NetworkClient's PlayS2C::SetHealth handler) - read every frame by
     // GUIController::RenderPlayerStatusBars on the render thread, written
     // by the network thread the same way entities/entitiesMutex above is.
     // Vanilla's own ranges (health 0-20, food 0-20, saturation 0-5, though
@@ -462,10 +546,17 @@ struct GlobalState {
     float saturation{5.0f};
     std::mutex healthMutex;
 
+    // Last Set Experience values: progress through the current level (0-1)
+    // and the level itself. Written by the network thread, read by
+    // GUIController::RenderExperienceBar.
+    float experienceProgress{0.0f};
+    int32_t experienceLevel{0};
+    std::mutex experienceMutex;
+
     NetworkInbox networkInbox;
 
     // Recent lines from a starting/running singleplayer server's stdout and
-    // stderr (see LocalServer::onOutputLine, wired up by NetworkThread) —
+    // stderr (see LocalServer::onOutputLine, wired up by NetworkThread) -
     // capped so a chatty server can't grow this unboundedly. Read every
     // frame by the starting-server screen's customContent (render thread),
     // written by NetworkThread's background thread; cleared at the start of
@@ -475,7 +566,7 @@ struct GlobalState {
 
     // The live Play-session connection, published by NetworkThread right
     // before it starts pumping the Play packet loop and cleared again once
-    // that loop returns — null the rest of the time (not yet connected,
+    // that loop returns - null the rest of the time (not yet connected,
     // still in Login/Configuration, or disconnected). Lets
     // NetworkClient::SendChatMessage (called from the render thread, via
     // GUIController's chat input box) reach the connection without
@@ -485,21 +576,21 @@ struct GlobalState {
     // by a NetworkClient that NetworkThread destroys as soon as the session
     // ends. With a raw pointer, another thread could load it, pass the null
     // check, be descheduled while the app quits, and come back to a
-    // destroyed object — clearing the field afterward doesn't help, since
+    // destroyed object - clearing the field afterward doesn't help, since
     // the load already happened. Loading a shared_ptr copy (see
     // SendChatMessage) keeps the connection alive for exactly as long as
     // that caller is still using it. NetworkThread publishes an aliasing
-    // shared_ptr that owns the whole NetworkClient — see its own comment.
+    // shared_ptr that owns the whole NetworkClient - see its own comment.
     //
     // Cross-thread callers must use Connection::QueuePacket, never
-    // SendPacket — see Connection's own comment for why.
+    // SendPacket - see Connection's own comment for why.
     std::atomic<std::shared_ptr<Connection>> activeConnection{};
 
     // Set once by MeshingThread, after it has synced TickLoop's cached
     // position and inserted the specific chunk the player is spawning into
-    // (not just any chunk — the server has no obligation to send that one
+    // (not just any chunk - the server has no obligation to send that one
     // first); read every call by TickLoop::Tick (RenderThread) to hold
-    // off gravity/collision until there's an actual floor to land on —
+    // off gravity/collision until there's an actual floor to land on -
     // otherwise the player free-falls through the still-empty world from the
     // moment the app starts, before any chunk has loaded. Must be set only
     // after all of MeshingThread's other writes for this transition, since
@@ -511,7 +602,7 @@ struct GlobalState {
 
     // See ConnectionPhase. connectionDetail is the human-readable specifics
     // for the current phase (the host being connected to, the Configuration
-    // packet currently being processed) — guarded by connectionDetailMutex
+    // packet currently being processed) - guarded by connectionDetailMutex
     // since std::string isn't safe to share via the atomic alone.
     std::atomic<ConnectionPhase> connectionPhase{ConnectionPhase::Idle};
     std::mutex connectionDetailMutex;
@@ -526,7 +617,7 @@ struct GlobalState {
         connectionPhase.store(phase);
     }
 
-    // Updates just the detail line, leaving the phase alone — for progress
+    // Updates just the detail line, leaving the phase alone - for progress
     // within one phase (each Configuration packet).
     void SetConnectionDetail(const std::string& detail)
     {
@@ -541,7 +632,7 @@ struct GlobalState {
     }
 
     // GLFW only guarantees glfwSetInputMode/glfwGetWindowAttrib are safe to
-    // call from the thread that created the window — the main (GLFW-owning)
+    // call from the thread that created the window - the main (GLFW-owning)
     // thread here, not the render thread GUIController and
     // NotifyFramePresented actually run on. Calling them cross-thread was
     // undefined behavior and the real cause of the pause screen's cursor
@@ -556,7 +647,7 @@ struct GlobalState {
 
     // Set by NetworkThread when a session ends unexpectedly (kicked,
     // connection dropped, login failure) rather than via a deliberate
-    // app-level stop — polled once per frame by the main GLFW loop in
+    // app-level stop - polled once per frame by the main GLFW loop in
     // VolcanoClient.cpp, which resets world/render state and reopens the
     // connect screen with disconnectReason shown. Guarded by
     // disconnectMutex since std::string isn't safe to share via the atomic
@@ -574,7 +665,7 @@ struct GlobalState {
         disconnected.store(true);
     }
 
-    // Set by NetworkClient on PlayS2C::PlayerCombatKill — polled by
+    // Set by NetworkClient on PlayS2C::PlayerCombatKill - polled by
     // GUIController::Update() (render thread), which shows a death screen
     // with deathMessage and a Respawn button. Same mutex-for-the-string,
     // atomic-for-the-flag pattern as disconnected/disconnectReason above.
@@ -592,7 +683,7 @@ struct GlobalState {
     }
 
     // World day-time, 0..23999 ticks (0/24000 = dawn, 6000 = noon, 12000 =
-    // dusk, 18000 = midnight — vanilla's own convention). Set by NetworkClient
+    // dusk, 18000 = midnight - vanilla's own convention). Set by NetworkClient
     // on PlayS2C::UpdateTime, read every frame by RenderThread to pick the
     // sky clear color between its night/day extremes. Defaults to 6000
     // (noon) so a server/dimension that never sends a clock update (this
@@ -603,7 +694,7 @@ struct GlobalState {
     glm::vec3 cameraPosition{0.0f, 0.0f, 5.0f};
 
     // Set by VulkanInit's GLFW framebuffer-size callback (main thread) and
-    // consumed by RenderThread (its own thread) to recreate the swapchain —
+    // consumed by RenderThread (its own thread) to recreate the swapchain -
     // atomics so no lock is needed across that handoff.
     std::atomic<bool> framebufferResized{false};
     std::atomic<int> pendingFramebufferWidth{0};
@@ -611,7 +702,7 @@ struct GlobalState {
 
     // Loads settings.json (next to the executable) and wires config up to
     // point at it. Must run before anything below reads a setting through
-    // state->config — in particular before VulkanInit's Init(), which needs
+    // state->config - in particular before VulkanInit's Init(), which needs
     // Window.Width/Height.
     void LoadSettings()
     {
@@ -623,31 +714,32 @@ struct GlobalState {
         targetFPS = static_cast<uint16_t>(std::get<uint32_t>(config->Get("Graphics.TargetFPS", uint32_t{60})));
     }
 
-    // Drops every trace of the current world — chunks, both render lists,
+    // Drops every trace of the current world - chunks, both render lists,
     // tracked entities, and anything MeshingThread hasn't drained off
     // networkInbox yet (dropped rather than left to land afterward, since a
     // chunk from the world being left behind could otherwise bleed into the
-    // one about to replace it) — then marks the world not-ready so TickLoop
+    // one about to replace it) - then marks the world not-ready so TickLoop
     // holds off simulating again until a fresh spawn position and chunk
     // arrive. Used both when returning to the connect screen after a
     // disconnect (VolcanoClient.cpp's main loop) and, without reopening that
-    // screen, when the server sends PlayS2C::Respawn mid-session — vanilla
+    // screen, when the server sends PlayS2C::Respawn mid-session - vanilla
     // sends that on every dimension change (not just death), and without
     // this the old dimension's chunks just kept rendering forever alongside
     // whatever streamed in for the new one ("ghost chunk geometry").
     //
     // Every container touched here already has its own mutex for exactly
     // this kind of cross-thread mutation (chunks stream in continuously
-    // under the same locks), so this is safe to call from any thread — in
+    // under the same locks), so this is safe to call from any thread - in
     // particular, directly from NetworkThread on a Respawn packet, not just
     // from the main thread the disconnect path happens to run on.
     //
     // Does NOT reopen the connect screen or touch the network connection
-    // itself — callers that need that (the disconnect path) do it
+    // itself - callers that need that (the disconnect path) do it
     // separately, since a mid-session dimension change should stay connected.
     void ResetWorldState()
     {
         worldReady.store(false);
+        ridingEntityId.store(-1);
         world->Clear();
         auto clearList = [](std::mutex& mutex, std::unordered_map<SectionKey, Mesh, SectionKeyHash>& list)
         {
@@ -661,6 +753,7 @@ struct GlobalState {
         clearList(renderListMutex, renderList);
         clearList(nonCubicRenderListMutex, nonCubicRenderList);
         clearList(translucentRenderListMutex, translucentRenderList);
+        meshListGeneration++;
         {
             std::lock_guard<std::mutex> lock(entitiesMutex);
             entities.clear();

@@ -32,10 +32,8 @@ void Error(const std::string& message)
 void Debug(const std::string& message)
 {
     std::cout << message << std::endl;
-    // Config isn't loaded yet for any Debug() call made before
-    // GlobalState::LoadSettings runs — default to on, same as before Config
-    // existed, rather than silently dropping those early messages.
-    bool logMessages = Config::Active() == nullptr || std::get<bool>(Config::Active()->Get("Debug.LogMessages", true));
+    // Off unless Debug.LogMessages asks for it (and before Config is loaded): diagnostics belong in the console.
+    bool logMessages = Config::Active() != nullptr && std::get<bool>(Config::Active()->Get("Debug.LogMessages", false));
     if (logMessages)
     {
         GUI::Chat::AddLine(message, 0xAAAAAAu); // dim gray, distinct from normal chat/system white

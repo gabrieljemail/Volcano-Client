@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
+#include <array>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -17,7 +18,7 @@ namespace Volcano {
 struct InventoryManager {
     static constexpr size_t MAIN_INVENTORY_SIZE = 27;
     static constexpr size_t HOTBAR_SIZE = 9;
-    static constexpr size_t ARMOR_SIZE = 4; // helmet, chestplate, leggings, boots — see SetSlot's protocol index mapping.
+    static constexpr size_t ARMOR_SIZE = 4; // helmet, chestplate, leggings, boots - see SetSlot's protocol index mapping.
     // Protocol MenuType ids. 26.1 inserted crafter_3x3 (7), shifting these up
     // by one from the 1.20 values (11/13). Unverified against the registry,
     // check the "Open window" log line if the layouts look wrong.
@@ -25,6 +26,32 @@ struct InventoryManager {
     static constexpr int32_t FURNACE_MENU_TYPE = 14;
 
     std::mutex mutex;
+
+    // A copy of the player's inventory, safe to hold and draw from without the
+    // lock. Slot order matches the groups below: hotbar 0-8, main 0-26 (the
+    // top row first), armor head-to-feet.
+    struct Snapshot {
+        std::array<ItemStack, HOTBAR_SIZE> hotbar;
+        std::array<ItemStack, MAIN_INVENTORY_SIZE> main;
+        std::array<ItemStack, ARMOR_SIZE> armor;
+        ItemStack offhand;
+        ItemStack carried;
+        uint8_t selectedHotbarSlot = 0;
+    };
+
+    // Takes the lock itself; never call it while holding `mutex`.
+    Snapshot TakeSnapshot()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        Snapshot snapshot;
+        for (size_t i = 0; i < HOTBAR_SIZE; i++) snapshot.hotbar[i] = hotbar.Get(i);
+        for (size_t i = 0; i < MAIN_INVENTORY_SIZE; i++) snapshot.main[i] = mainInventory.Get(i);
+        for (size_t i = 0; i < ARMOR_SIZE; i++) snapshot.armor[i] = armor.Get(i);
+        snapshot.offhand = offhand.Get(0);
+        snapshot.carried = carriedItem;
+        snapshot.selectedHotbarSlot = selectedHotbarSlot;
+        return snapshot;
+    }
 
     SlotGroup mainInventory{"Main Inventory", MAIN_INVENTORY_SIZE};
     SlotGroup hotbar{"Hotbar", HOTBAR_SIZE};

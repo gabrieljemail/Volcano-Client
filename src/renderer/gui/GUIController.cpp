@@ -5,7 +5,12 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cctype>
 #include <chrono>
+#include <map>
+#include <memory>
+#include <optional>
+#include <mutex>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <cfloat>
@@ -15,6 +20,9 @@
 #include <cstring>
 #include <unordered_set>
 #include <stb_image.h>
+#include "../../resources/ImageLoad.hpp"
+#include "gui/Animation.hpp"
+#include "gui/screens/InventoryScreen.hpp"
 #include "gui/models/GUIComponent.hpp"
 #include "gui/models/Button.hpp"
 #include "gui/models/Chat.hpp"
@@ -22,8 +30,14 @@
 #include "gui/models/OptionButton.hpp"
 #include "gui/models/Slider.hpp"
 #include "inventory/ItemRegistry.hpp"
+#include "inventory/ToolStats.hpp"
 #include "TickLoop.hpp"
+#include "ModLoader.hpp"
+#include "DropKey.hpp"
 #include "SystemInfo.hpp"
+#include "network/NetworkStats.hpp"
+#include "network/PacketIds.hpp"
+#include "renderer/engine/RenderEngine.hpp"
 #include "renderer/engine/SceneView.hpp"
 #include "renderer/entity/models/EntityRegistry.hpp"
 #include "platform/OS.hpp"
@@ -50,7 +64,7 @@ static void AddImageNearest(ImDrawList* drawList, ImTextureID texture, const ImV
 }
 
 // Declared here rather than including network/NetworkClient.hpp: that
-// header drags in asio.hpp, which on Windows pulls in <windows.h> —
+// header drags in asio.hpp, which on Windows pulls in <windows.h> -
 // whose CreateWindowA/CreateWindow macros collide with
 // GUIController::CreateWindow below. This one free function is all
 // GUIController actually needs from it.
@@ -59,6 +73,8 @@ void SendChatCommand(GlobalState* state, const std::string& command);
 void SendRespawnRequest(GlobalState* state);
 void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
                         uint8_t button, const ItemStack& slotItem, const ItemStack& carriedItem);
+void SendInventoryAction(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+                         uint8_t button, int32_t mode, const ItemStack& carriedItem);
 void SendInventoryClose(GlobalState* state, int32_t windowId);
 }
 
@@ -71,6 +87,46 @@ namespace {
     // extra +1 is a (scale + 1) / scale factor on vanilla-sized geometry.
     float g_artScale = 1.0f;
     float Art(float units) { return units * g_artScale; }
+
+    // Every standard control (main menu buttons, inputs, dropdowns) is drawn with
+    // frames this much taller than ImGui's default, so they all match the main
+    // menu's buttons. Controls nest (RenderComponent -> DrawButton), so the
+    // padding is only added once.
+    constexpr float CONTROL_EXTRA_PADDING = 4.0f;
+    bool controlPaddingActive = false;
+
+    struct ControlStyle {
+        bool owner;
+        ControlStyle() : owner(!controlPaddingActive)
+        {
+            if (!owner) return;
+            controlPaddingActive = true;
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                ImVec2(ImGui::GetStyle().FramePadding.x, ImGui::GetStyle().FramePadding.y + CONTROL_EXTRA_PADDING));
+        }
+        ~ControlStyle()
+        {
+            if (!owner) return;
+            ImGui::PopStyleVar();
+            controlPaddingActive = false;
+        }
+        ControlStyle(const ControlStyle&) = delete;
+        ControlStyle& operator=(const ControlStyle&) = delete;
+    };
+
+    // Vanilla's font line height (9 units) at the base GUI scale.
+    constexpr float FONT_SIZE = 18.0f;
+
+
+    // Text this dark gets no shadow (labels on the light vanilla panels): a
+    // black shadow behind it only muddies it.
+    bool IsDarkText(ImU32 color)
+    {
+        int sum = static_cast<int>((color >> IM_COL32_R_SHIFT) & 0xFF)
+            + static_cast<int>((color >> IM_COL32_G_SHIFT) & 0xFF)
+            + static_cast<int>((color >> IM_COL32_B_SHIFT) & 0xFF);
+        return sum < 3 * 96;
+    }
 }
 
 GlobalState* GUIController::state = nullptr;
@@ -78,14 +134,16 @@ GLFWwindow* GUIController::windowHandle = nullptr;
 const TextureManager* GUIController::textureManager = nullptr;
 std::vector<GUI::GUIWindow*> GUIController::windows = {};
 GUI::Screen* GUIController::activeScreen = nullptr;
+std::unique_ptr<GUI::ControlRenderer> GUIController::controlRenderer;
+std::unique_ptr<GUI::HudRenderer> GUIController::hudRenderer;
+bool GUIController::hudDrawn = false;
+const GUI::Screen* GUIController::pincelScreen = nullptr;
 ImGuiVulkanContext GUIController::imguiContext;
 bool GUIController::initialized = false;
 float GUIController::fps = 0.0f;
 float GUIController::frameTime = 0.0f;
 int GUIController::frameCount = 0;
 float GUIController::fpsTimer = 0.0f;
-GUI::GUIWindow* GUIController::debugWindow = nullptr;
-GUI::GUIComponent* GUIController::debugText = nullptr;
 GUI::Screen* GUIController::pauseScreen = nullptr;
 GUI::Screen* GUIController::deathScreen = nullptr;
 GUI::GUIComponent* GUIController::deathMessageText = nullptr;
@@ -95,6 +153,7 @@ bool GUIController::chatInputJustOpened = false;
 char GUIController::chatInputBuffer[256] = {};
 std::unordered_map<uint16_t, GUIController::ItemIcon> GUIController::itemIconCache;
 std::unordered_map<uint16_t, GUIController::ModelIcon> GUIController::modelIconCache;
+std::unordered_map<uint16_t, GUI::Sprite> GUIController::itemSprites;
 GUIController::StandaloneIcon GUIController::crosshairIcon;
 GUIController::StandaloneIcon GUIController::crosshairEntityIcon;
 GUIController::StandaloneIcon GUIController::attackIndicatorBackgroundIcon;
@@ -108,6 +167,18 @@ GUIController::StandaloneIcon GUIController::craftingBackground;
 GUIController::StandaloneIcon GUIController::furnaceBackground;
 GUIController::StandaloneIcon GUIController::genericBackground;
 GUIController::StandaloneIcon GUIController::logoIcon;
+GUIController::StandaloneIcon GUIController::heartContainerIcon;
+GUIController::StandaloneIcon GUIController::heartFullIcon;
+GUIController::StandaloneIcon GUIController::heartHalfIcon;
+GUIController::StandaloneIcon GUIController::foodEmptyIcon;
+GUIController::StandaloneIcon GUIController::foodFullIcon;
+GUIController::StandaloneIcon GUIController::foodHalfIcon;
+GUIController::StandaloneIcon GUIController::experienceBackgroundIcon;
+GUIController::StandaloneIcon GUIController::experienceProgressIcon;
+GUIController::StandaloneIcon GUIController::armorEmptyIcon;
+GUIController::StandaloneIcon GUIController::armorFullIcon;
+GUIController::StandaloneIcon GUIController::armorHalfIcon;
+GUIController::StandaloneIcon GUIController::saturationOutlineIcon;
 
 void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState,
                           const TextureManager* textureMgr)
@@ -126,7 +197,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     fontConfig.OversampleH = 1; // This is a pixel font, so oversampling looks weird.
     fontConfig.OversampleV = 1;
     fontConfig.PixelSnapH = true; // whole-pixel glyph positions, also for the pixel font
-    io.Fonts->AddFontFromFileTTF("resources/fonts/Minecraft.ttf", 16.0f, &fontConfig);
+    io.Fonts->AddFontFromFileTTF("resources/fonts/Minecraft.ttf", FONT_SIZE, &fontConfig);
 
     // System fonts merged in as fallbacks for characters Minecraft.ttf lacks
     // (box drawing, symbols, emoji in chat); glyphs load on demand.
@@ -135,7 +206,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
         ImFontConfig fallbackConfig;
         fallbackConfig.MergeMode = true;
         fallbackConfig.PixelSnapH = true;
-        io.Fonts->AddFontFromFileTTF(path.c_str(), 16.0f, &fallbackConfig);
+        io.Fonts->AddFontFromFileTTF(path.c_str(), FONT_SIZE, &fallbackConfig);
     }
 
     // TODO: once an icon font (FontAwesome/Material) lands in
@@ -154,17 +225,28 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     // Initialize ImGui for Vulkan
     ImGuiVulkan::Init(imguiContext, renderPass, imageCount);
 
+    // Screens made of plain components are drawn by Pincel; if it can't start, ImGui draws them as before.
+    controlRenderer = std::make_unique<GUI::ControlRenderer>(state);
+    if (!controlRenderer->Init(renderPass))
+    {
+        Log::Error("GUIController: Pincel could not start, drawing screens with ImGui");
+        controlRenderer.reset();
+    }
+    hudRenderer = std::make_unique<GUI::HudRenderer>(state);
+    if (!hudRenderer->Init(renderPass))
+    {
+        Log::Error("GUIController: Pincel could not start the HUD");
+        hudRenderer.reset();
+    }
+
     // Setup style
     ImGui::StyleColorsDark();
     ApplyVolcanoTheme();
 
-    // Create debug window.
-    std::string debugWindowName = "Debug";
-    debugWindow = CreateWindow(debugWindowName, GUI::ScreenAnchor::TOP_RIGHT);
-    debugText = new GUI::GUIComponent(GUI::GUIComponentType::TEXT, "");
-    debugWindow->components.push_back(debugText);
+    // The F3 overlay's built-in entries (mods add theirs via SetDebugDisplay).
+    RegisterBuiltinDebugDisplays();
 
-    // Death screen — opened by Update() when GlobalState::playerDied is set
+    // Death screen - opened by Update() when GlobalState::playerDied is set
     // (see NetworkClient's PlayerCombatKill handling). Not closable via Esc;
     // Respawn is the only way out.
     deathScreen = CreateScreen("You Died!", /* closable */ false);
@@ -177,21 +259,27 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     deathScreen->components.push_back(deathMessageText);
     deathScreen->components.push_back(respawnButton);
 
-    // Inventory screen — "E" toggles it (see Update()), same as vanilla.
-    // customContent does all the actual drawing (a raw-ImDrawList slot
-    // grid, not the generic TEXT/BUTTON/INPUT stack) — see
-    // RenderInventoryScreen's own comment.
-    inventoryScreen = CreateScreen("Inventory", /* closable */ true);
-    inventoryScreen->customContent = RenderInventoryScreen;
+    // Inventory screen - "E" toggles it (see Update()), same as vanilla. It
+    // draws its own slot grid with Pincel; see screens/InventoryScreen.
+    inventoryScreen = GUI::CreateInventoryScreen(state);
 
-    // Crosshair — see RenderCrosshair(). Loaded once here rather than
+    LoadStandaloneIcons();
+
+    Log::Info("GUI Controller initialized with ImGui");
+    initialized = true;
+}
+
+// Loads every standalone HUD/GUI icon. Used by Init() and ReloadTextures().
+void GUIController::LoadStandaloneIcons()
+{
+    // Crosshair - see RenderCrosshair(). Loaded once here rather than
     // lazily on first draw (like GetItemIcon's item-icon cache) since,
     // unlike item icons, both variants are needed from the very first HUD
     // frame and there are only ever exactly two of them.
     crosshairIcon = LoadStandaloneIcon("resources/crosshair.png");
     crosshairEntityIcon = LoadStandaloneIcon("resources/crosshair-entity.png");
 
-    const std::string guiTextures = "resources/minecraft/assets/minecraft/textures/gui/";
+    const std::string guiTextures = "assets/minecraft/textures/gui/"; // Logical pack path.
     attackIndicatorBackgroundIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/crosshair_attack_indicator_background.png");
     attackIndicatorProgressIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/crosshair_attack_indicator_progress.png");
     hotbarIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/hotbar.png");
@@ -203,38 +291,86 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     furnaceBackground = LoadStandaloneIcon(guiTextures + "container/furnace.png");
     genericBackground = LoadStandaloneIcon(guiTextures + "container/generic_54.png");
     logoIcon = LoadStandaloneIcon("resources/logo.png");
+    heartContainerIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/heart/container.png");
+    heartFullIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/heart/full.png");
+    heartHalfIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/heart/half.png");
+    foodEmptyIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/food_empty.png");
+    foodFullIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/food_full.png");
+    foodHalfIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/food_half.png");
+    experienceBackgroundIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/experience_bar_background.png");
+    experienceProgressIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/experience_bar_progress.png");
+    armorEmptyIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/armor_empty.png"); 
+    armorFullIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/armor_full.png"); 
+    armorHalfIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/armor_half.png"); 
+    saturationOutlineIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/food_empty.png", IM_COL32(255, 205, 40, 255));
+}
 
-    Log::Info("GUI Controller initialized with ImGui");
-    initialized = true;
+// Destroys every cached/standalone icon. removeDescriptors frees the ImGui
+// descriptor sets too (needed while the backend stays alive).
+void GUIController::FreeIcons(bool removeDescriptors)
+{
+    auto removeSet = [&](VkDescriptorSet set)
+    {
+        if (removeDescriptors && set != VK_NULL_HANDLE) ImGui_ImplVulkan_RemoveTexture(set);
+    };
+
+    for (auto& [layer, icon] : itemIconCache) {
+        removeSet(icon.descriptorSet);
+        if (icon.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), icon.view, nullptr);
+    }
+    itemIconCache.clear();
+
+    for (auto& [itemId, entry] : modelIconCache) {
+        removeSet(entry.icon.descriptorSet);
+        if (entry.icon.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), entry.icon.view, nullptr);
+        if (entry.icon.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, entry.icon.image, entry.icon.allocation);
+    }
+    modelIconCache.clear();
+    itemSprites.clear();
+    linearIconTextures.clear();
+
+    // Unlike itemIconCache's views above, these own the whole image (see
+    // StandaloneIcon's own comment) - the view alone isn't enough to free.
+    for (StandaloneIcon* icon : { &crosshairIcon, &crosshairEntityIcon, &attackIndicatorBackgroundIcon,
+            &attackIndicatorProgressIcon, &hotbarIcon, &hotbarSelectionIcon,
+            &slotHighlightBackIcon, &slotHighlightFrontIcon, &inventoryBackground, &craftingBackground,
+            &furnaceBackground, &genericBackground, &logoIcon, &heartContainerIcon, &heartFullIcon,
+            &heartHalfIcon, &foodEmptyIcon, &foodFullIcon, &foodHalfIcon, &experienceBackgroundIcon, &experienceProgressIcon, &armorEmptyIcon, &armorFullIcon, &armorHalfIcon, &saturationOutlineIcon }) {
+        removeSet(icon->descriptorSet);
+        if (icon->view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), icon->view, nullptr);
+        if (icon->image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, icon->image, icon->allocation);
+        *icon = StandaloneIcon{};
+    }
+}
+
+// Rebuilds every icon after a resource reload. Call with the GPU idle and no
+// ImGui frame open; `textureManager` must already hold the new atlas.
+void GUIController::ReloadTextures(const TextureManager* textureMgr)
+{
+    if (!initialized) return;
+    textureManager = textureMgr;
+    FreeIcons(true);
+    LoadStandaloneIcons();
+    if (controlRenderer != nullptr) controlRenderer->ReloadResources();
+    if (hudRenderer != nullptr) hudRenderer->ReloadResources();
 }
 
 void GUIController::Shutdown()
 {
     if (!initialized) return;
 
+    if (hudRenderer != nullptr)
+    {
+        hudRenderer->Shutdown();
+        hudRenderer.reset();
+    }
+    if (controlRenderer != nullptr)
+    {
+        controlRenderer->Shutdown();
+        controlRenderer.reset();
+    }
     ImGuiVulkan::Shutdown(imguiContext);
-
-    for (auto& [layer, icon] : itemIconCache) {
-        if (icon.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), icon.view, nullptr);
-    }
-    itemIconCache.clear();
-
-    for (auto& [itemId, entry] : modelIconCache) {
-        if (entry.icon.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), entry.icon.view, nullptr);
-        if (entry.icon.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, entry.icon.image, entry.icon.allocation);
-    }
-    modelIconCache.clear();
-
-    // Unlike itemIconCache's views above, these own the whole image (see
-    // StandaloneIcon's own comment) — the view alone isn't enough to free.
-    for (StandaloneIcon* icon : { &crosshairIcon, &crosshairEntityIcon, &attackIndicatorBackgroundIcon,
-            &attackIndicatorProgressIcon, &hotbarIcon, &hotbarSelectionIcon,
-            &slotHighlightBackIcon, &slotHighlightFrontIcon, &inventoryBackground, &craftingBackground,
-            &furnaceBackground, &genericBackground, &logoIcon }) {
-        if (icon->view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), icon->view, nullptr);
-        if (icon->image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, icon->image, icon->allocation);
-        *icon = StandaloneIcon{};
-    }
+    FreeIcons(false);
 
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -250,7 +386,7 @@ ImTextureID GUIController::TextureOf(const StandaloneIcon& icon)
 }
 
 // See the header's own comment. Returns a null ImTextureID (0) on any
-// Vulkan failure — callers skip drawing rather than pass that to AddImage.
+// Vulkan failure - callers skip drawing rather than pass that to AddImage.
 ImTextureID GUIController::GetItemIcon(uint16_t textureLayer)
 {
     auto cached = itemIconCache.find(textureLayer);
@@ -260,7 +396,7 @@ ImTextureID GUIController::GetItemIcon(uint16_t textureLayer)
 
     ItemIcon icon;
 
-    // A narrow 2D slice of TextureManager::array's single 2D_ARRAY image —
+    // A narrow 2D slice of TextureManager::array's single 2D_ARRAY image -
     // same image, same format, just one layer/one mip, since ImGui's
     // Vulkan backend draws a single flat texture per ImTextureID rather
     // than sampling an indexed array layer the way the 3D world pass does.
@@ -299,6 +435,36 @@ ImTextureID GUIController::IconForItem(const ItemStack& item)
     return GetItemIcon(info->textureLayer);
 }
 
+const GUI::Sprite* GUIController::GetItemSprite(const ItemStack& item)
+{
+    if (item.IsEmpty()) return nullptr;
+    uint16_t id = static_cast<uint16_t>(item.itemId);
+
+    auto found = itemSprites.find(id);
+    if (found == itemSprites.end())
+    {
+        GUI::Sprite sprite;
+        const ItemRegistry::ItemTypeInfo* info = ItemRegistry::Lookup(item.itemId);
+        if (info != nullptr)
+        {
+            // The same choice IconForItem makes: the 3D model's icon if it has one, else the flat sprite.
+            ModelIconForItem(id, info->name);
+            const StandaloneIcon& model = modelIconCache[id].icon;
+            if (model.image != VK_NULL_HANDLE)
+            {
+                sprite = GUI::Sprite::FromGpuImage(model.image, 0, ItemRenderer::GUI_ICON_SIZE, ItemRenderer::GUI_ICON_SIZE);
+            }
+            else if (info->hasTexture && textureManager != nullptr)
+            {
+                sprite = GUI::Sprite::FromGpuImage(textureManager->array.image, info->textureLayer,
+                    textureManager->LayerSize(), textureManager->LayerSize());
+            }
+        }
+        found = itemSprites.emplace(id, std::move(sprite)).first;
+    }
+    return found->second.IsEmpty() ? nullptr : &found->second;
+}
+
 ImTextureID GUIController::ModelIconForItem(uint16_t itemId, const std::string& itemName)
 {
     ModelIcon& entry = modelIconCache[itemId];
@@ -326,18 +492,31 @@ ImTextureID GUIController::ModelIconForItem(uint16_t itemId, const std::string& 
 }
 
 // See the header's own comment.
-GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::string& path)
+GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::string& path, uint32_t outlineColor)
 {
     StandaloneIcon icon;
 
+    // "assets/..." is a pack (logical) path; anything else is a client file on disk.
     int width = 0, height = 0, channels = 0;
-    uint8_t* pixels = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+    uint8_t* pixels = path.starts_with("assets/")
+        ? LoadImageRGBA(path, width, height)
+        : stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
     if (!pixels) {
         Log::Error("GUIController: failed to load " + path + ", skipping.");
         return icon;
     }
 
-    // Single 2D image, one layer, no mip chain — this is small UI art drawn
+    if (outlineColor != 0) {
+        // The outline is the sprite's black pixels; everything else goes clear.
+        for (int i = 0; i < width * height; i++) {
+            uint8_t* pixel = pixels + i * 4;
+            bool outline = pixel[3] > 0 && pixel[0] < 24 && pixel[1] < 24 && pixel[2] < 24;
+            uint32_t value = outline ? outlineColor : 0u;
+            std::memcpy(pixel, &value, 4);
+        }
+    }
+
+    // Single 2D image, one layer, no mip chain - this is small UI art drawn
     // at roughly its native size, not a world texture sampled at a range of
     // distances the way TextureManager's array needs mips for.
     VkImageCreateInfo imageInfo{};
@@ -364,7 +543,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
 
     // Upload via the same staging-buffer-then-copy path TextureManager::
     // UploadLayer uses (CreateBuffer/BeginOneShotCommands/
-    // TransitionImageLayout — see VulkanInit.hpp).
+    // TransitionImageLayout - see VulkanInit.hpp).
     VkDeviceSize size = static_cast<VkDeviceSize>(width) * height * 4;
     AllocatedBuffer staging = CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
 
@@ -406,7 +585,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
 }
 
 // Centered on the display, drawn on ImGui's foreground draw list rather
-// than in a Begin/End window — it needs no chrome, background, or input
+// than in a Begin/End window - it needs no chrome, background, or input
 // handling, just an image pinned to the exact center every frame regardless
 // of display size (unlike the hotbar/status HUD, which anchors off
 // HotbarOrigin()).
@@ -417,7 +596,7 @@ void GUIController::RenderCrosshair()
     constexpr float CROSSHAIR_SIZE = 32.0f;
 
     const StandaloneIcon& active = state->lookingAtEntity.load() ? crosshairEntityIcon : crosshairIcon;
-    if (active.descriptorSet == VK_NULL_HANDLE) return; // Missing/failed-to-load asset — draw nothing.
+    if (active.descriptorSet == VK_NULL_HANDLE) return; // Missing/failed-to-load asset - draw nothing.
 
     ImTextureID texture = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(active.descriptorSet));
     ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -508,8 +687,8 @@ void GUIController::Update(float deltaTime)
 {
     if (!initialized) return;
 
-    // Death takes over whatever's on screen — including the pause menu, if
-    // that happened to be open — same as vanilla's death screen does.
+    // Death takes over whatever's on screen - including the pause menu, if
+    // that happened to be open - same as vanilla's death screen does.
     if (state->playerDied.exchange(false))
     {
         std::string message;
@@ -561,24 +740,29 @@ void GUIController::Update(float deltaTime)
         OpenScreen(pauseScreen);
     }
 
-    // "T" opens the chat input box, same key Minecraft uses — but not while
+    // "T" opens the chat input box, same key Minecraft uses - but not while
     // a Screen already owns input, and not if it's already open (PRESS is
     // edge-triggered so this only fires once per keypress anyway, but the
     // guard makes the intent explicit).
-    if (!chatInputOpen && activeScreen == nullptr && state->input->WasActivated("OpenChat"))
+    if (!chatInputOpen && activeScreen == nullptr && !state->input->IsKeyDown(GLFW_KEY_F3) // F3+T reloads resources.
+        && state->input->WasActivated("OpenChat"))
     {
         OpenChatInput();
+    }
+    else if (!chatInputOpen && activeScreen == nullptr && state->input->WasActivated("OpenCommand"))
+    {
+        OpenChatInput("/");
     }
     else if (chatInputOpen && state->input->IsKeyPressed(GLFW_KEY_ESCAPE))
     {
         CloseChatInput();
     }
 
-    // "E" toggles the inventory screen, same key Minecraft uses — opens it
+    // "E" toggles the inventory screen, same key Minecraft uses - opens it
     // only while nothing else owns input (matching "T" above), closes it
     // again on a second press. Esc also closes it via the generic
     // activeScreen->closable branch above, same as any other closable
-    // screen — no separate handling needed for that direction.
+    // screen - no separate handling needed for that direction.
     if (activeScreen == nullptr && !chatInputOpen && state->input->WasActivated("ToggleInventory"))
     {
         OpenScreen(inventoryScreen);
@@ -586,6 +770,27 @@ void GUIController::Update(float deltaTime)
     else if (activeScreen == inventoryScreen && state->input->WasActivated("ToggleInventory"))
     {
         CloseScreen();
+    }
+
+    // A screen of plain components is drawn by Pincel into a texture now, before the frame is recorded.
+    pincelScreen = nullptr;
+    if (activeScreen != nullptr && IsDrawnByPincel(*activeScreen))
+    {
+        controlRenderer->Update(*activeScreen, guiScale);
+        pincelScreen = activeScreen;
+    }
+
+    // The HUD is drawn by Pincel into a texture now too, while no screen is open.
+    hudDrawn = false;
+    if (activeScreen == nullptr && hudRenderer != nullptr)
+    {
+        GUI::HudRenderer::ChatBox chat;
+        chat.open = chatInputOpen;
+        chat.justOpened = chatInputJustOpened;
+        chat.initialText = chatInputBuffer;
+        chatInputJustOpened = false;
+        if (std::optional<std::string> submitted = hudRenderer->Update(guiScale, chat)) SubmitChatInput(*submitted);
+        hudDrawn = true;
     }
 
     // FPS calculation
@@ -598,93 +803,446 @@ void GUIController::Update(float deltaTime)
         frameTime = (fpsTimer / frameCount) * 1000.0f; // Average frame time in ms
         frameCount = 0;
         fpsTimer = 0.0f;
+    }
 
-        // GlobalState::presentMode is the swapchain's actual active
-        // VkPresentModeKHR (see its own comment) — this client only ever
-        // requests FIFO or IMMEDIATE (Graphics.VSync), but reports whatever
-        // vk-bootstrap actually granted, so an unsupported request showing
-        // up here as something else is visible rather than silently wrong.
-        std::string vsync;
-        switch (static_cast<VkPresentModeKHR>(state->presentMode))
+    UpdateDebugDisplay(deltaTime);
+}
+
+// ---- Debug display (F3 overlay) ----
+
+namespace {
+
+// Alphabetical, ignoring case, so "movement_speed" doesn't sort after every capital.
+struct CaseInsensitiveLess
+{
+    bool operator()(const std::string& a, const std::string& b) const
+    {
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
+            [](unsigned char x, unsigned char y) { return std::tolower(x) < std::tolower(y); });
+    }
+};
+
+struct DebugEntry
+{
+    std::function<std::string()> format;
+    std::string cached; // Last evaluated text; what the overlay draws between refreshes.
+};
+
+using DebugCategory = std::map<std::string, DebugEntry, CaseInsensitiveLess>;
+
+// Guards the entries: mods may register from their own load path while the
+// render thread evaluates and draws them.
+std::mutex debugMutex;
+std::map<std::string, DebugCategory, CaseInsensitiveLess> debugCategories;
+
+bool debugWasVisible = false;
+bool debugDirty = false;
+float debugRefreshTimer = 0.0f;
+constexpr float DEBUG_REFRESH_SECONDS = 0.5f; // Values change faster than they're readable, and some cost a syscall.
+
+// Owns the std::function objects behind the built-in entries (SetDebugDisplay
+// only borrows a pointer); they live for the whole process.
+std::vector<std::shared_ptr<void>> builtinDebugOwners;
+
+template <typename T>
+void AddBuiltin(const std::string& category, const std::string& name, std::function<T()> update)
+{
+    auto owned = std::make_shared<std::function<T()>>(std::move(update));
+    builtinDebugOwners.push_back(owned);
+    GUIController::SetDebugDisplay<T>(category, name, owned.get());
+}
+
+std::string FormatMs(float ms)
+{
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.2f ms", static_cast<double>(ms));
+    return text;
+}
+
+// Network counters as of one evaluation of the "Traffic" entry, to turn the
+// running totals into per-second rates.
+struct TrafficSample
+{
+    bool valid = false;
+    std::chrono::steady_clock::time_point time{};
+    uint64_t packetsIn = 0, packetsOut = 0, bytesIn = 0, bytesOut = 0;
+};
+
+std::string ToMB(uint64_t bytes)
+{
+    return std::to_string(bytes / (1024ull * 1024ull)) + " MB";
+}
+
+} // namespace
+
+void GUIController::RegisterDebugEntry(const std::string& category, const std::string& name, std::function<std::string()> format)
+{
+    std::lock_guard<std::mutex> lock(debugMutex);
+    debugCategories[category][name] = DebugEntry{ std::move(format), std::string() };
+    debugDirty = true;
+}
+
+void GUIController::RemoveDebugDisplay(const std::string& category, const std::string& name)
+{
+    std::lock_guard<std::mutex> lock(debugMutex);
+    auto found = debugCategories.find(category);
+    if (found == debugCategories.end()) return;
+
+    found->second.erase(name);
+    if (found->second.empty()) debugCategories.erase(found);
+}
+
+// Re-evaluates every entry twice a second, and only while the overlay is
+// visible - so with F3 off none of the update functions run at all.
+void GUIController::UpdateDebugDisplay(float deltaTime)
+{
+    if (!state->debugHudVisible)
+    {
+        debugWasVisible = false;
+        return;
+    }
+
+    debugRefreshTimer += deltaTime;
+    if (debugWasVisible && !debugDirty && debugRefreshTimer < DEBUG_REFRESH_SECONDS) return;
+    debugWasVisible = true;
+    debugDirty = false;
+    debugRefreshTimer = 0.0f;
+
+    std::lock_guard<std::mutex> lock(debugMutex);
+    for (auto& [categoryName, category] : debugCategories)
+    {
+        for (auto& [entryName, entry] : category)
         {
-            case VK_PRESENT_MODE_FIFO_KHR: vsync = "VSync (FIFO)"; break;
-            case VK_PRESENT_MODE_IMMEDIATE_KHR: vsync = "Immediate"; break;
-            case VK_PRESENT_MODE_MAILBOX_KHR: vsync = "Mailbox"; break;
-            case VK_PRESENT_MODE_FIFO_RELAXED_KHR: vsync = "FIFO Relaxed"; break;
-            default: vsync = "Unknown"; break;
-        }
-
-        // Update debug window text.
-        if (debugText)
-        {
-            glm::vec3 position = state->player->GetPosition();
-
-            // Live framebuffer size, not GlobalState::resolution (the
-            // startup-config value) — glfwGetFramebufferSize is safe here
-            // since this runs on the same GLFW-window-owning thread every
-            // other window query in this codebase requires.
-            int windowWidth = 0, windowHeight = 0;
-            glfwGetFramebufferSize(state->window, &windowWidth, &windowHeight);
-
-            const SystemInfo& sys = state->systemInfo;
-            std::string vulkanVersion = "Vulkan "
-                + std::to_string(VK_API_VERSION_MAJOR(sys.vulkanApiVersion)) + "."
-                + std::to_string(VK_API_VERSION_MINOR(sys.vulkanApiVersion)) + "."
-                + std::to_string(VK_API_VERSION_PATCH(sys.vulkanApiVersion));
-
-            auto ToMB = [](uint64_t bytes) { return std::to_string(bytes / (1024ull * 1024ull)) + " MB"; };
-            auto FormatMs = [](const std::atomic<float>& ms)
+            try
             {
-                char text[24];
-                std::snprintf(text, sizeof(text), "%.2f ms", ms.load());
-                return std::string(text);
-            };
-
-            // Working set, not committed/virtual size — the number Task
-            // Manager's "Memory" column shows. See GetProcessMemoryUsageBytes'
-            // own comment for why this lives in SystemInfo.cpp, not here.
-            uint64_t ramUsage = GetProcessMemoryUsageBytes();
-
-            VmaBudget heapBudgets[VK_MAX_MEMORY_HEAPS]{};
-            vmaGetHeapBudgets(vmaAllocator, heapBudgets);
-            uint64_t vramUsage = 0;
-            for (const VmaBudget& budget : heapBudgets) vramUsage += budget.usage;
-
-            SlabStats cubicSlab = ChunkMesher::GetSlabStats();
-            SlabStats nonCubicSlab = NonCubicMesher::GetSlabStats();
-
-            char buf[96];
-            std::snprintf(buf, sizeof(buf), "(%.5f, %.5f, %.5f)", position.x, position.y, position.z);
-            std::string posString(buf);
-
-            // What NetworkClient last stored from Update Attributes (or the default).
-            double moveSpeed = state->attributes ? state->attributes->GetDouble("generic.movement_speed", -1.0) : -1.0;
-            std::snprintf(buf, sizeof(buf), "%.7g", moveSpeed);
-            std::string moveSpeedString(buf);
-
-            debugText->SetLabel(
-                "\nFPS: " + std::to_string(static_cast<int>(std::round(fps))) +
-                "\nFrame Time: " + std::to_string(frameTime) + "ms" +
-                "\nTriangles: " + std::to_string(state->trianglesDrawn) +
-                "\nRender CPU: " + FormatMs(state->timings.renderCpuMs) +
-                "\nWaiting on GPU: " + FormatMs(state->timings.gpuWaitMs) +
-                "\nGPU Time: " + (state->timings.gpuMs.load() < 0.0f ? std::string("n/a") : FormatMs(state->timings.gpuMs)) +
-                "\nMesher: " + FormatMs(state->timings.meshMs) + "/section, "
-                    + std::to_string(state->timings.meshQueue.load()) + " queued" +
-                "\nPresent Mode: " + vsync +
-                "\nCPU: " + std::to_string(sys.cpuLogicalCores) + "x " + sys.cpuModel +
-                "\nRAM: " + ToMB(ramUsage) +
-                "\nGPU: " + sys.gpuModel +
-                "\nVRAM: " + ToMB(vramUsage) +
-                "\nCubic Slab: " + ToMB(cubicSlab.used) + " / " + ToMB(cubicSlab.capacity) +
-                "\nNon-Cubic Slab: " + ToMB(nonCubicSlab.used) + " / " + ToMB(nonCubicSlab.capacity) +
-                "\nDisplay: " + std::to_string(windowWidth) + "x" + std::to_string(windowHeight)
-                    + " (" + sys.gpuDriverVendor + ")" +
-                "\nGraphics API: " + vulkanVersion +
-                "\nPosition: " + posString +
-                "\nmovement_speed: " + moveSpeedString);
+                entry.cached = entry.format();
+            }
+            catch (const std::exception& e)
+            {
+                entry.cached = std::string("<error: ") + e.what() + ">";
+            }
         }
     }
+}
+
+// Draws the entries as "<name>: <value>" lines under their category, in two
+// columns: left-aligned on the left of the screen, right-aligned on the right,
+// categories in order and filling the left first. Uses the foreground draw
+// list (a transparent, input-free layer over the whole screen), so nothing
+// here takes focus or blocks clicks; AddTextShadows still shadows it.
+void GUIController::RenderDebugOverlay()
+{
+    if (!state->debugHudVisible) return;
+
+    struct Line
+    {
+        std::string text;
+        bool header;
+    };
+    struct Block
+    {
+        std::vector<Line> lines;
+    };
+    std::vector<Block> blocks;
+    size_t totalLines = 0;
+    {
+        std::lock_guard<std::mutex> lock(debugMutex);
+        for (const auto& [categoryName, category] : debugCategories)
+        {
+            Block block;
+            block.lines.push_back({ categoryName, true });
+            for (const auto& [entryName, entry] : category)
+            {
+                // Continuation lines (after "\n" or "\n\t") are indented; ImGui has
+                // no tab glyph, so a tab is drawn as 4 spaces.
+                std::string text = entryName + ": " + entry.cached;
+                size_t start = 0;
+                while (true)
+                {
+                    size_t end = text.find('\n', start);
+                    std::string line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                    for (size_t tab = line.find('\t'); tab != std::string::npos; tab = line.find('\t', tab + 4))
+                    {
+                        line.replace(tab, 1, "    ");
+                    }
+                    block.lines.push_back({ line, false });
+                    if (end == std::string::npos) break;
+                    start = end + 1;
+                }
+            }
+            totalLines += block.lines.size();
+            blocks.push_back(std::move(block));
+        }
+    }
+    if (blocks.empty()) return;
+
+    // The left column takes categories until it holds at least half the lines.
+    size_t leftCount = 0;
+    for (size_t leftLines = 0; leftCount < blocks.size() && leftLines * 2 < totalLines; leftCount++)
+    {
+        leftLines += blocks[leftCount].lines.size();
+    }
+
+    constexpr float margin = 8.0f;
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    const ImU32 headerColor = IM_COL32(255, 213, 79, 255);
+    const ImU32 textColor = IM_COL32(235, 235, 235, 255);
+
+    float leftY = margin, rightY = margin;
+    for (size_t i = 0; i < blocks.size(); i++)
+    {
+        const bool left = i < leftCount;
+        float& y = left ? leftY : rightY;
+        for (const Line& line : blocks[i].lines)
+        {
+            float x = left ? margin : display.x - margin - ImGui::CalcTextSize(line.text.c_str()).x;
+            draw->AddText(ImVec2(x, y), line.header ? headerColor : textColor, line.text.c_str());
+            y += lineHeight;
+        }
+        y += lineHeight * 0.5f; // Gap before the next category.
+    }
+}
+
+// The codebase's own entries. Each is evaluated only while the overlay is
+// visible (see UpdateDebugDisplay), so none of this runs with F3 off.
+void GUIController::RegisterBuiltinDebugDisplays()
+{
+    AddBuiltin<uint32_t>("Performance", "FPS", [] { return static_cast<uint32_t>(std::lround(fps)); });
+    AddBuiltin<std::string>("Performance", "Frame Time", [] { return FormatMs(frameTime); });
+    AddBuiltin<std::string>("Performance", "Render CPU", []
+    {
+        // Total, then where it goes: per-pass record time (hiding the near-zero
+        // ones) and the chunk passes' cull / sort / draw split.
+        std::string text = FormatMs(state->timings.renderCpuMs.load());
+        if (state->renderEngine)
+        {
+            for (const auto& [passName, ms] : state->renderEngine->GetPassRecordTimes())
+            {
+                if (ms >= 0.05f) text += "\n\t" + passName + ": " + FormatMs(ms);
+            }
+        }
+        char phases[96];
+        std::snprintf(phases, sizeof(phases), "\n\tChunk cull / sort / draw: %.2f / %.2f / %.2f ms",
+            static_cast<double>(state->chunkPhaseMs[GlobalState::CHUNK_PHASE_CULL]),
+            static_cast<double>(state->chunkPhaseMs[GlobalState::CHUNK_PHASE_SORT]),
+            static_cast<double>(state->chunkPhaseMs[GlobalState::CHUNK_PHASE_DRAW]));
+        return text + phases;
+    });
+    AddBuiltin<std::string>("Performance", "Waiting on GPU", [] { return FormatMs(state->timings.gpuWaitMs.load()); });
+    AddBuiltin<std::string>("Performance", "GPU Time", []
+    {
+        float gpuMs = state->timings.gpuMs.load();
+        return gpuMs < 0.0f ? std::string("n/a") : FormatMs(gpuMs);
+    });
+    AddBuiltin<std::string>("Performance", "Mesher", []
+    {
+        return FormatMs(state->timings.meshMs.load()) + "/section, "
+            + std::to_string(state->timings.meshQueue.load()) + " queued";
+    });
+    AddBuiltin<std::string>("Performance", "Present Mode", []
+    {
+        // GlobalState::presentMode is the swapchain's actual active
+        // VkPresentModeKHR - this client only ever requests FIFO or IMMEDIATE
+        // (Graphics.VSync), but reports whatever vk-bootstrap actually
+        // granted, so an unsupported request showing up here as something
+        // else is visible rather than silently wrong.
+        switch (static_cast<VkPresentModeKHR>(state->presentMode))
+        {
+            case VK_PRESENT_MODE_FIFO_KHR: return std::string("VSync (FIFO)");
+            case VK_PRESENT_MODE_IMMEDIATE_KHR: return std::string("Immediate");
+            case VK_PRESENT_MODE_MAILBOX_KHR: return std::string("Mailbox");
+            case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return std::string("FIFO Relaxed");
+            default: return std::string("Unknown");
+        }
+    });
+
+    AddBuiltin<std::array<std::string, 5>>("Rendering", "Triangles", []
+    {
+        uint64_t total = 0;
+        for (uint64_t count : state->trianglesDrawn) total += count;
+        return std::array<std::string, 5>{
+            std::to_string(total),
+            "Terrain: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_TERRAIN]),
+            "Cutout: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_CUTOUT]),
+            "Water: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_TRANSLUCENT]),
+            "Entities: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY])
+        };
+    });
+    AddBuiltin<std::string>("Rendering", "Sections", []
+    {
+        return std::to_string(state->sectionsTested - state->sectionsOccluded) + " drawn, "
+            + std::to_string(state->sectionsOccluded) + " Hi-Z occluded";
+    });
+
+    AddBuiltin<std::string>("Memory", "RAM", [] { return ToMB(GetProcessMemoryUsageBytes()); });
+    AddBuiltin<std::string>("Memory", "VRAM", []
+    {
+        VmaBudget heapBudgets[VK_MAX_MEMORY_HEAPS]{};
+        vmaGetHeapBudgets(vmaAllocator, heapBudgets);
+        uint64_t usage = 0;
+        for (const VmaBudget& budget : heapBudgets) usage += budget.usage;
+        return ToMB(usage);
+    });
+    AddBuiltin<std::string>("Memory", "Cubic Slab", []
+    {
+        SlabStats slab = ChunkMesher::GetSlabStats();
+        return ToMB(slab.used) + " used / " + ToMB(slab.capacity) + " committed (limit " + ToMB(slab.limit) + ", " + std::to_string(slab.blocks) + " blocks)";
+    });
+    AddBuiltin<std::string>("Memory", "Non-Cubic Slab", []
+    {
+        SlabStats slab = NonCubicMesher::GetSlabStats();
+        return ToMB(slab.used) + " used / " + ToMB(slab.capacity) + " committed (limit " + ToMB(slab.limit) + ", " + std::to_string(slab.blocks) + " blocks)";
+    });
+
+    AddBuiltin<std::string>("System", "CPU", []
+    {
+        return std::to_string(state->systemInfo.cpuLogicalCores) + "x " + state->systemInfo.cpuModel;
+    });
+    AddBuiltin<std::string>("System", "GPU", [] { return state->systemInfo.gpuModel; });
+    AddBuiltin<std::string>("System", "Display", []
+    {
+        // Live framebuffer size, not GlobalState::resolution (the
+        // startup-config value). Safe here: this runs on the GLFW window's thread.
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(state->window, &width, &height);
+        return std::to_string(width) + "x" + std::to_string(height) + " (" + state->systemInfo.gpuDriverVendor + ")";
+    });
+    AddBuiltin<std::string>("System", "Graphics API", []
+    {
+        const SystemInfo& sys = state->systemInfo;
+        return "Vulkan " + std::to_string(VK_API_VERSION_MAJOR(sys.vulkanApiVersion)) + "."
+            + std::to_string(VK_API_VERSION_MINOR(sys.vulkanApiVersion)) + "."
+            + std::to_string(VK_API_VERSION_PATCH(sys.vulkanApiVersion));
+    });
+
+    // Network: what actually crossed the wire (see NetworkStats), to tell "the
+    // server stopped sending" from "the client stopped handling it".
+    AddBuiltin<std::string>("Network", "Traffic", [last = TrafficSample{}]() mutable
+    {
+        // Rates over the time since the HUD last evaluated this.
+        auto now = std::chrono::steady_clock::now();
+        uint64_t packetsIn = networkStats.packetsIn.load(), packetsOut = networkStats.packetsOut.load();
+        uint64_t bytesIn = networkStats.bytesIn.load(), bytesOut = networkStats.bytesOut.load();
+        double seconds = std::chrono::duration<double>(now - last.time).count();
+        std::string text = "n/a";
+        if (last.valid && seconds > 0.0)
+        {
+            char buffer[128];
+            std::snprintf(buffer, sizeof(buffer), "in %.0f/s (%.1f KB/s), out %.0f/s (%.1f KB/s)",
+                static_cast<double>(packetsIn - last.packetsIn) / seconds,
+                static_cast<double>(bytesIn - last.bytesIn) / 1024.0 / seconds,
+                static_cast<double>(packetsOut - last.packetsOut) / seconds,
+                static_cast<double>(bytesOut - last.bytesOut) / 1024.0 / seconds);
+            text = buffer;
+        }
+        last = TrafficSample{ true, now, packetsIn, packetsOut, bytesIn, bytesOut };
+        return text;
+    });
+    AddBuiltin<std::string>("Network", "Last Packet", []
+    {
+        auto format = [](double ms) {
+            if (ms < 0.0) return std::string("never");
+            char buffer[32];
+            std::snprintf(buffer, sizeof(buffer), "%.0f ms ago", ms);
+            return std::string(buffer);
+        };
+        return "in " + format(NetworkStats::AgeMs(networkStats.lastInTicks.load()))
+            + ", out " + format(NetworkStats::AgeMs(networkStats.lastOutTicks.load()));
+    });
+    AddBuiltin<std::string>("Network", "Counters", []
+    {
+        auto in = [](int32_t id) { return networkStats.inById[static_cast<size_t>(id)].load(); };
+        auto out = [](int32_t id) { return networkStats.outById[static_cast<size_t>(id)].load(); };
+        std::string text = "since launch, in / out";
+        text += "\n\tTeleports: " + std::to_string(in(PlayS2C::SynchronizePlayerPosition))
+            + " received / " + std::to_string(out(PlayC2S::ConfirmTeleportation)) + " confirmed";
+        text += "\n\tMovement: " + std::to_string(out(PlayC2S::SetPlayerPosition) + out(PlayC2S::SetPlayerPositionAndRotation))
+            + " position, " + std::to_string(out(PlayC2S::SetPlayerRotation)) + " rotation, "
+            + std::to_string(out(PlayC2S::SetPlayerMovementFlags)) + " flags";
+        text += "\n\tTick ends: " + std::to_string(out(PlayC2S::ClientTickEnd));
+        text += "\n\tBlocks: " + std::to_string(in(PlayS2C::BlockUpdate) + in(PlayS2C::MultiBlockChange))
+            + " updates in / " + std::to_string(out(PlayC2S::BlockPlace)) + " places out";
+        text += "\n\tEntities: " + std::to_string(in(PlayS2C::RelEntityMove) + in(PlayS2C::EntityMoveLook))
+            + " moves + " + std::to_string(in(PlayS2C::EntityTeleport)) + " teleports in";
+        text += "\n\tCombat: " + std::to_string(out(PlayC2S::Attack)) + " attacks / "
+            + std::to_string(out(PlayC2S::UseEntity)) + " interacts out";
+        // What the server sent back that an accepted hit would cause: if attacks
+        // go up and none of these do, the server is dropping them.
+        text += "\n\tServer replies: " + std::to_string(in(PlayS2C::DamageEvent)) + " damage, "
+            + std::to_string(in(PlayS2C::HurtAnimation)) + " hurt, "
+            + std::to_string(in(PlayS2C::SetEntityMotion)) + " motion, "
+            + std::to_string(in(PlayS2C::EntityEvent)) + " entity events, "
+            + std::to_string(in(PlayS2C::Animate)) + " animations";
+        text += "\n\tHeld slot / loaded: " + std::to_string(out(PlayC2S::SetHeldItem)) + " slot reports, "
+            + std::to_string(out(PlayC2S::PlayerLoaded)) + " player-loaded";
+        text += "\n\tKeep-alive: " + std::to_string(in(PlayS2C::KeepAlive)) + " in / "
+            + std::to_string(out(PlayC2S::KeepAlive)) + " out";
+        return text;
+    });
+    // Keep-alive timing. If the server's own clock (id delta) advances far
+    // less than the wall-clock gap between challenges, the server is running
+    // slow or its packets are being held up.
+    AddBuiltin<std::string>("Network", "Keep-alive", []
+    {
+        if (networkStats.keepAliveInTicks.load() == 0) return std::string("none received");
+        char buffer[192];
+        int64_t gapUs = networkStats.keepAliveGapUs.load();
+        int64_t replyUs = networkStats.keepAliveReplyUs.load();
+        std::string gap = "n/a";
+        if (gapUs >= 0)
+        {
+            std::snprintf(buffer, sizeof(buffer), "%.0f ms (server clock +%lld ms)",
+                static_cast<double>(gapUs) / 1000.0, static_cast<long long>(networkStats.keepAliveIdDelta.load()));
+            gap = buffer;
+        }
+        std::snprintf(buffer, sizeof(buffer), "last %.1f s ago, replied in %.2f ms, gap since previous %s",
+            NetworkStats::AgeMs(networkStats.keepAliveInTicks.load()) / 1000.0,
+            replyUs >= 0 ? static_cast<double>(replyUs) / 1000.0 : 0.0, gap.c_str());
+        return std::string(buffer);
+    });
+    AddBuiltin<std::string>("Network", "Entities", []
+    {
+        // How many the client tracks, and how stale the freshest server update
+        // is — a frozen world shows as a large (or "never") age here.
+        size_t count = 0;
+        auto newest = std::chrono::steady_clock::time_point{};
+        {
+            std::lock_guard<std::mutex> lock(state->entitiesMutex);
+            state->ForEachEntity([&](uint32_t, const Entity& entity)
+            {
+                count++;
+                if (entity.lastUpdateTime > newest) newest = entity.lastUpdateTime;
+            });
+        }
+        std::string age = "never";
+        if (newest != std::chrono::steady_clock::time_point{})
+        {
+            char buffer[32];
+            std::snprintf(buffer, sizeof(buffer), "%.0f ms ago",
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - newest).count());
+            age = buffer;
+        }
+        return std::to_string(count) + " tracked, newest update " + age;
+    });
+
+    AddBuiltin<std::string>("Player", "Position", []
+    {
+        glm::vec3 position = state->player->GetPosition();
+        char text[96];
+        std::snprintf(text, sizeof(text), "(%.5f, %.5f, %.5f)", static_cast<double>(position.x),
+            static_cast<double>(position.y), static_cast<double>(position.z));
+        return std::string(text);
+    });
+    AddBuiltin<std::string>("Player", "movement_speed", []
+    {
+        // What NetworkClient last stored from Update Attributes (or the default).
+        double speed = state->attributes ? state->attributes->GetDouble("generic.movement_speed", -1.0) : -1.0;
+        char text[32];
+        std::snprintf(text, sizeof(text), "%.7g", speed);
+        return std::string(text);
+    });
 }
 
 void GUIController::DiscardFrame()
@@ -711,6 +1269,7 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
         bool built = false;
         bool detailed = false;
         decltype(Entity::type) type{};
+        bool debugText = false;
         float fontSize = 0.0f;
         std::string lines[2];
         float widths[2]{};
@@ -742,11 +1301,14 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
     float fontSize = ImGui::GetFontSize();
     auto now = std::chrono::steady_clock::now();
     int32_t localId = state->localEntityId.load();
+    bool occlusionCulling = std::get<bool>(state->config->Get("Graphics.EntityOcclusionCulling", false));
+    // Debug.EntityTags: every entity gets its type and coordinates. Otherwise only players are tagged, by name.
+    bool debugTags = std::get<bool>(state->config->Get("Debug.EntityTags", false));
 
     // Cheap tests only; text is built afterward for the nearest few.
     auto consider = [&](const Entity& entity, const std::string* name)
     {
-        if (static_cast<int32_t>(entity.id) == localId || !entity.visible) return;
+        if (!entity.visible) return;
 
         glm::vec3 offset = entity.position - scene.cameraPosition;
         float distanceSquared = glm::dot(offset, offset);
@@ -762,16 +1324,46 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
         if (std::abs(ndcX) > SCREEN_MARGIN || std::abs(ndcY) > SCREEN_MARGIN) return;
 
         // Hi-Z: tags of non-players behind terrain are skipped, like the models.
-        if (name == nullptr && occlusionSnapshot.IsEntityOccluded(feet, entity.boundingBox.x, entity.boundingBox.y)) return;
+        if (name == nullptr && occlusionCulling && occlusionSnapshot.IsEntityOccluded(feet, entity.boundingBox.x, entity.boundingBox.y)) return;
 
         candidates.push_back({ distanceSquared, &entity, name,
             ImVec2((ndcX * 0.5f + 0.5f) * display.x, (ndcY * 0.5f + 0.5f) * display.y) });
     };
 
+    // We have no entity of our own; stand one in while the camera is off our head.
+    PlayerEntity selfEntity;
+    if (!state->player->camera.IsFirstPerson() && localId >= 0)
+    {
+        static const uint16_t playerType = []
+        {
+            for (uint16_t id = 0; id < 512; id++)
+            {
+                const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(id);
+                if (info != nullptr && info->entityKind == "player") return id;
+            }
+            return uint16_t{0};
+        }();
+
+        selfEntity.id = static_cast<uint32_t>(localId);
+        selfEntity.type = playerType;
+        selfEntity.position = selfEntity.previousPosition = state->tickLoop->GetRenderPosition();
+        {
+            std::lock_guard<std::mutex> lock(state->localUsernameMutex);
+            selfEntity.username = state->localUsername;
+        }
+        consider(selfEntity, &selfEntity.username);
+    }
+
     {
         std::lock_guard<std::mutex> lock(state->entitiesMutex);
-        for (const auto& [id, entity] : state->entities) consider(entity, nullptr);
-        for (const auto& [id, player] : state->playerEntities) consider(player, &player.username);
+        for (const auto& [id, entity] : state->entities)
+        {
+            if (debugTags && static_cast<int32_t>(id) != localId) consider(entity, nullptr);
+        }
+        for (const auto& [id, player] : state->playerEntities)
+        {
+            if (static_cast<int32_t>(id) != localId) consider(player, &player.username);
+        }
 
         if (candidates.size() > MAX_TAGS)
         {
@@ -783,14 +1375,15 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
         for (const Candidate& candidate : candidates)
         {
             const Entity& entity = *candidate.entity;
-            bool detailed = candidate.distanceSquared <= DETAIL_DISTANCE_SQUARED;
+            bool detailed = debugTags && candidate.distanceSquared <= DETAIL_DISTANCE_SQUARED;
 
             TagText& text = cache[entity.id];
             text.lastUsed = frame;
-            if (!text.built || text.type != entity.type || text.detailed != detailed
+            if (!text.built || text.type != entity.type || text.debugText != debugTags || text.detailed != detailed
                 || (detailed && text.shownPosition != entity.position) || text.fontSize != fontSize)
             {
-                bool typeChanged = !text.built || text.type != entity.type;
+                bool typeChanged = !text.built || text.type != entity.type || text.debugText != debugTags;
+                text.debugText = debugTags;
                 text.built = true;
                 text.detailed = detailed;
                 text.shownPosition = entity.position;
@@ -800,8 +1393,15 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
                 if (typeChanged)
                 {
                     const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity.type);
-                    text.lines[0] = info != nullptr ? info->name : "unknown";
-                    if (candidate.name != nullptr && !candidate.name->empty()) text.lines[0] += " '" + *candidate.name + "'";
+                    if (debugTags)
+                    {
+                        text.lines[0] = info != nullptr ? info->name : "unknown";
+                        if (candidate.name != nullptr && !candidate.name->empty()) text.lines[0] += " '" + *candidate.name + "'";
+                    }
+                    else
+                    {
+                        text.lines[0] = candidate.name != nullptr ? *candidate.name : std::string();
+                    }
                     text.widths[0] = ImGui::CalcTextSize(text.lines[0].c_str()).x;
                 }
 
@@ -843,11 +1443,11 @@ void GUIController::Render(VkCommandBuffer commandBuffer, const Engine::SceneVie
 {
     if (!initialized) return;
 
-    // A screen (e.g. the connect screen) takes over the whole frame — it
+    // A screen (e.g. the connect screen) takes over the whole frame - it
     // hides every other window, including the debug HUD, while it's open.
     if (activeScreen != nullptr)
     {
-        RenderScreen(*activeScreen);
+        if (!IsDrawnByPincel(*activeScreen)) RenderScreen(*activeScreen);
     }
     else
     {
@@ -866,25 +1466,6 @@ void GUIController::Render(VkCommandBuffer commandBuffer, const Engine::SceneVie
                 ImGuiWindowFlags_NoResize |
                 ImGuiWindowFlags_NoCollapse;
 
-            // Debug overlay only, deliberately: 2x width / 3x height of
-            // whatever it'd naturally auto-fit to — a dev-only convenience
-            // (easier to read/screenshot while this is being built out) on
-            // top of the real content, not a real layout choice, and not
-            // something any other window here should inherit. AlwaysAutoResize
-            // would just override any size given to it, so this computes
-            // the natural fit itself (CalcTextSize + the style's own window
-            // padding — the same thing AlwaysAutoResize would land on) and
-            // multiplies THAT instead of guessing a fixed pixel size.
-            if (window == debugWindow && debugText != nullptr)
-            {
-                ImVec2 natural = ImGui::CalcTextSize(debugText->GetLabel().c_str());
-                const ImGuiStyle& style = ImGui::GetStyle();
-                natural.x += style.WindowPadding.x * 2.0f;
-                natural.y += style.WindowPadding.y * 2.0f;
-                size = ImVec2(natural.x, natural.y);
-                flags &= ~ImGuiWindowFlags_AlwaysAutoResize;
-            }
-
             ImGui::SetNextWindowPos(ResolveAnchor(window->anchor, size, ImVec2(window->offsetX, window->offsetY)), ImGuiCond_Always);
             ImGui::SetNextWindowSize(size, ImGuiCond_Always);
             ImGui::Begin(window->name.c_str(), nullptr, flags);
@@ -893,19 +1474,13 @@ void GUIController::Render(VkCommandBuffer commandBuffer, const Engine::SceneVie
             {
                 RenderComponent(component);
             }
+            if (window->customContent) window->customContent();
 
             ImGui::End();
         }
 
-        RenderChatWindow();
-        if (chatInputOpen) RenderChatInputBox();
-        if (state->input->IsKeyDown(GLFW_KEY_TAB)) RenderPlayerListWindow();
-
-        // Hotbar/armor first — they define HotbarOrigin(), which the status
-        // bars and movement-state panel both position themselves off of.
-        RenderHotbarAndArmor();
-        RenderPlayerStatusBars();
-        RenderMovementStatePanel();
+        RenderDebugOverlay();
+        if (state->input->IsActive("PlayerList")) RenderPlayerListWindow();
         RenderCrosshair();
 
         if (scene != nullptr && state->connectionPhase.load() == ConnectionPhase::Playing
@@ -913,11 +1488,34 @@ void GUIController::Render(VkCommandBuffer commandBuffer, const Engine::SceneVie
         {
             RenderNametags(*scene);
         }
+
+        RenderHudElements();
+        if (state->modLoader != nullptr) state->modLoader->Fire(EventType::HUD_RENDER);
     }
 
     ImGui::Render();
     AddTextShadows(ImGui::GetDrawData());
     ImGuiVulkan::RenderDrawData(imguiContext, commandBuffer);
+
+    // Only a screen Update() has drawn: one opened since then waits a frame.
+    if (activeScreen != nullptr && activeScreen == pincelScreen) controlRenderer->Record(commandBuffer);
+
+    // The HUD (hotbar, status, chat) is Pincel's, over everything ImGui drew.
+    if (activeScreen == nullptr && hudDrawn) hudRenderer->Record(commandBuffer);
+}
+
+// Sends what was typed in the chat box (a command if it starts with "/") and closes it.
+void GUIController::SubmitChatInput(const std::string& text)
+{
+    Log::Info(std::string("Chat input submitted: '") + text + "'");
+    if (!text.empty() && text[0] == '/') SendChatCommand(state, text.substr(1));
+    else if (!text.empty()) SendChatMessage(state, text);
+    CloseChatInput();
+}
+
+bool GUIController::IsDrawnByPincel(const GUI::Screen& screen)
+{
+    return controlRenderer != nullptr && GUI::ControlRenderer::Draws(screen);
 }
 
 // Vanilla-style text shadow on all UI text: a black copy 2 px down-right,
@@ -966,10 +1564,12 @@ void GUIController::AddTextShadows(ImDrawData* drawData)
             {
                 // A run of consecutive text triangles: shadows first, then the text.
                 unsigned int runEnd = i;
+                bool runDark = fontCmd && i + 3 <= cmd.ElemCount && IsDarkText(cmdVertices[indices[i]].col);
                 while (fontCmd && runEnd + 3 <= cmd.ElemCount
                     && isText(cmdVertices[indices[runEnd]])
                     && isText(cmdVertices[indices[runEnd + 1]])
-                    && isText(cmdVertices[indices[runEnd + 2]]))
+                    && isText(cmdVertices[indices[runEnd + 2]])
+                    && IsDarkText(cmdVertices[indices[runEnd]].col) == runDark)
                 {
                     runEnd += 3;
                 }
@@ -990,7 +1590,7 @@ void GUIController::AddTextShadows(ImDrawData* drawData)
                 }
                 int blockSize = static_cast<int>(last - first) + 1;
 
-                if (vertexCount + blockSize <= vertexCapacity)
+                if (!runDark && vertexCount + blockSize <= vertexCapacity)
                 {
                     ImDrawIdx shadowBase = static_cast<ImDrawIdx>(vertexCount - static_cast<int>(cmd.VtxOffset));
                     for (int v = 0; v < blockSize; v++)
@@ -1075,9 +1675,8 @@ void GUIController::RenderComponent(GUI::GUIComponent* component, float width, f
 {
     if (component == nullptr || !component->IsVisible()) return;
 
-    // Taller frames to match DrawStyledButton's height.
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-        ImVec2(ImGui::GetStyle().FramePadding.x, ImGui::GetStyle().FramePadding.y + 4.0f));
+    // Taller frames, so every control matches the standard control height.
+    ControlStyle controlStyle;
 
     bool labeled = labelWidth > 0.0f && IsLabeledControl(component);
     float controlWidth = width;
@@ -1177,17 +1776,15 @@ void GUIController::RenderComponent(GUI::GUIComponent* component, float width, f
             break;
         }
     }
-
-    ImGui::PopStyleVar();
 }
 
 // Draw the active Screen fullscreen, title first, then its components
-// stacked and centered — the ImGui equivalent of Minecraft's GuiScreen.
+// stacked and centered - the ImGui equivalent of Minecraft's GuiScreen.
 void GUIController::RenderScreen(GUI::Screen& screen)
 {
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
     // The live display size (kept in sync with the real framebuffer every
-    // frame), not the launch-time Window.Width/Height config — otherwise a
+    // frame), not the launch-time Window.Width/Height config - otherwise a
     // resize or F11 fullscreen leaves this covering only the old size.
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
     // Keyboard/gamepad navigation only works in the focused window, so a
@@ -1196,7 +1793,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     bool screenJustOpened = lastScreen != &screen;
     lastScreen = &screen;
     if (screenJustOpened) ImGui::SetNextWindowFocus();
-    // No window background — the engine's world passes draw the 3D scene
+    // No window background - the engine's world passes draw the 3D scene
     // into this same render pass before GUIController::Render runs, so the
     // world shows through behind the screen's own components.
     ImGui::Begin("##screen", nullptr,
@@ -1218,7 +1815,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
         ImVec2(0.0f, 0.0f), ImGui::GetIO().DisplaySize, IM_COL32(0, 0, 0, 140));
 
     // Vertically centered: title + content as one block, using the height
-    // that block measured last frame (ImGui only knows it after drawing) —
+    // that block measured last frame (ImGui only knows it after drawing) -
     // a newly opened screen sits at the top for its first frame only.
     static std::unordered_map<const GUI::Screen*, float> lastContentHeight;
     float contentTop = std::max(24.0f, (ImGui::GetWindowHeight() - lastContentHeight[&screen]) * 0.5f);
@@ -1248,7 +1845,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
 
     // customContent (see Screen::customContent's own comment) replaces the
     // generic centered TEXT/BUTTON/INPUT stack entirely for a screen that
-    // needs its own layout — the inventory screen's slot grid, so far.
+    // needs its own layout - the inventory screen's slot grid, so far.
     if (screen.customContent)
     {
         screen.customContent();
@@ -1333,120 +1930,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     ImGui::End();
 }
 
-// Read-only, always-on chat/log scrollback — top-left, mostly transparent
-// (unlike every other panel — see the SetNextWindowBgAlpha override below),
-// no input capture (there's no chat box to type into yet, just the
-// incoming-message + debug-log display). Drawn as a plain ImGui window
-// rather than through the GUIComponent/GUIWindow system since it needs
-// per-segment colored runs and auto-scroll that GUIWindow's generic
-// TEXT/BUTTON/INPUT rendering doesn't support.
-// Shared with RenderChatInputBox so the two stay lined up: the scrollback
-// sits fixed at the top margin, and the input box (when chatInputOpen)
-// appends directly below it rather than the two ever overlapping.
-namespace {
-    constexpr float CHAT_WIDTH = 480.0f, CHAT_INPUT_HEIGHT = 32.0f;
-    constexpr float CHAT_HEIGHT = 220.0f, CHAT_MARGIN = 8.0f, CHAT_GAP = 4.0f;
-}
-
-void GUIController::RenderChatWindow()
-{
-    std::vector<GUI::ChatLine> lines = GUI::Chat::GetLines();
-
-    // Anchored to the top-left of the *current* display, not a stale
-    // Window.Height config value — previously this used the configured
-    // launch resolution regardless of the actual window size, so toggling
-    // F11 into fullscreen (a much taller real display) left the chat
-    // window positioned according to the wrong height.
-    ImVec2 pos = ResolveAnchor(GUI::ScreenAnchor::TOP_LEFT, ImVec2(CHAT_WIDTH, CHAT_HEIGHT), ImVec2(CHAT_MARGIN, CHAT_MARGIN));
-    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(CHAT_WIDTH, CHAT_HEIGHT), ImGuiCond_Always);
-    // Explicit low alpha override — chat should stay mostly see-through so
-    // it doesn't block the world behind it, unlike every other panel, which
-    // all inherit ApplyVolcanoTheme's far more opaque ImGuiCol_WindowBg
-    // (panelDark, alpha 0.96 — see the debug window for that default).
-    ImGui::SetNextWindowBgAlpha(0.25f);
-    // NoBringToFrontOnFocus pins this to draw-call order (called first in
-    // Render(), before the hotbar/status/movement-state HUD) rather than
-    // letting ImGui's own window stack reorder it to the top — without this
-    // the scrollback could end up drawn OVER the center HUD instead of
-    // staying behind it.
-    ImGui::Begin("##chat", nullptr,
-        ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoNav |
-        ImGuiWindowFlags_NoInputs |
-        ImGuiWindowFlags_NoBringToFrontOnFocus);
-
-    for (const GUI::ChatLine& line : lines)
-    {
-        bool first = true;
-        for (const ChatSegment& segment : line.segments)
-        {
-            if (!first) ImGui::SameLine(0.0f, 0.0f);
-            first = false;
-
-            ImVec4 color(
-                static_cast<float>((segment.colorRGB >> 16) & 0xFF) / 255.0f,
-                static_cast<float>((segment.colorRGB >> 8) & 0xFF) / 255.0f,
-                static_cast<float>(segment.colorRGB & 0xFF) / 255.0f,
-                1.0f);
-            ImGui::TextColored(color, "%s", segment.text.c_str());
-        }
-    }
-
-    ImGui::SetScrollHereY(1.0f); // keep pinned to the newest line
-
-    ImGui::End();
-}
-
-// The actual typeable box, only drawn while chatInputOpen — sits directly
-// below RenderChatWindow's scrollback, which stays fixed in place rather
-// than moving to make room for it. Enter sends the typed text (see
-// GUIController.hpp's own comment on IsChatInputOpen) and closes the box.
-void GUIController::RenderChatInputBox()
-{
-    ImVec2 pos = ResolveAnchor(GUI::ScreenAnchor::TOP_LEFT, ImVec2(CHAT_WIDTH, CHAT_INPUT_HEIGHT),
-        ImVec2(CHAT_MARGIN, CHAT_MARGIN + CHAT_HEIGHT + CHAT_GAP));
-    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(CHAT_WIDTH, CHAT_INPUT_HEIGHT), ImGuiCond_Always);
-    ImGui::Begin("##chatinput", nullptr,
-        ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoScrollbar);
-
-    if (chatInputJustOpened)
-    {
-        // The same "T" keypress that opened this box would otherwise still
-        // be sitting in ImGui's character queue and land as literal text
-        // the instant this InputText below gains focus.
-        ImGui::GetIO().InputQueueCharacters.resize(0);
-        ImGui::SetKeyboardFocusHere();
-        chatInputJustOpened = false;
-    }
-
-    ImGui::SetNextItemWidth(CHAT_WIDTH - 16.0f);
-    if (ImGui::InputText("##chatinputtext", chatInputBuffer, sizeof(chatInputBuffer), ImGuiInputTextFlags_EnterReturnsTrue))
-    {
-        // Confirms Enter/InputText itself fired, separate from whether the
-        // network layer then actually queued anything (see SendChatMessage/
-        // SendChatCommand's own new logging) — closes the last gap in
-        // "chat does nothing and nothing logs" being fully undiagnosable.
-        Log::Info(std::string("Chat input submitted: '") + chatInputBuffer + "'");
-        if (chatInputBuffer[0] == '/') SendChatCommand(state, chatInputBuffer + 1);
-        else if (chatInputBuffer[0] != '\0') SendChatMessage(state, chatInputBuffer);
-        CloseChatInput();
-    }
-
-    ImGui::End();
-}
-
-// Vanilla-style Tab-list overlay — just names, no ping/gamemode columns (see
+// Vanilla-style Tab-list overlay - just names, no ping/gamemode columns (see
 // GlobalState::playerList's own comment for where the data comes from).
 // Only called while Tab is held (see Render()); NoInputs so it never steals
 // mouse focus from whatever's under it.
@@ -1480,7 +1964,7 @@ void GUIController::RenderPlayerListWindow()
     ImGui::End();
 }
 
-// Hotbar/armor/status-bar/movement-state geometry — kept together so the
+// Hotbar/armor/status-bar/movement-state geometry - kept together so the
 // four HUD pieces that key off "where's the hotbar" (RenderHotbarAndArmor,
 // RenderPlayerStatusBars, RenderMovementStatePanel, via HotbarOrigin below)
 // can't drift out of sync with each other the way four independently
@@ -1488,28 +1972,10 @@ void GUIController::RenderPlayerListWindow()
 namespace {
     // Vanilla GUI geometry in GUI units: 1 unit = 1 texture pixel, and
     // Graphics.GUIScale scales the whole thing (see ApplyGUIScale).
-    constexpr int HOTBAR_SLOTS = 9;
-    constexpr int ARMOR_SLOTS = 4;
     constexpr float ITEM_SIZE = 16.0f;          // Item icon area inside a slot.
-    constexpr float HOTBAR_SLOT_STRIDE = 20.0f; // Slot spacing in hud/hotbar.png.
     constexpr float HOTBAR_WIDTH = 182.0f;
     constexpr float HOTBAR_HEIGHT = 22.0f;
-    constexpr float ARMOR_WIDTH = ARMOR_SLOTS * HOTBAR_SLOT_STRIDE + 2.0f; // The hotbar texture cut down to 4 slots.
     constexpr float HUD_BOTTOM_MARGIN = 2.0f; // hotbar's own inset from the bottom edge
-    constexpr float PANEL_GAP = 10.0f;         // hotbar <-> armor / hotbar <-> state-panel spacing
-
-    // Health and hunger side by side (not stacked) spanning the hotbar's own
-    // width; saturation isn't a third row — vanilla treats it as a "buffer"
-    // layered on top of the hunger value rather than its own stat, so it's
-    // drawn as a semi-transparent overlay on the hunger bar instead (see
-    // DrawStatBar's overlayFrac).
-    constexpr float BAR_HEIGHT = 22.0f;
-    constexpr float BAR_GAP = 4.0f;
-    constexpr float BAR_WIDTH = 130.0f; // Wide enough for the "Health  20.0 / 20" text; wider than half the hotbar.
-    constexpr float BAR_PADDING = 8.0f;
-    constexpr float STATUS_PANEL_WIDTH = BAR_WIDTH * 2.0f + BAR_GAP + BAR_PADDING * 2.0f;
-    constexpr float STATUS_PANEL_HEIGHT = BAR_HEIGHT + BAR_PADDING * 2.0f;
-    constexpr float STATUS_PANEL_GAP = 12.0f;  // status panel <-> hotbar spacing (6 extra for the future XP bar)
 
     // Draws one item's icon plus (when > 1) its stack count at `pos` (the
     // top-left of the 16x16 item area; the slot art itself comes from the
@@ -1528,56 +1994,71 @@ namespace {
         {
             // Vanilla's count: 8 units tall, right-aligned to the slot's
             // bottom-right, with a gray shadow.
-            const float COUNT_FONT_SIZE = Art(8.0f);
+            const float COUNT_FONT_SIZE = Art(9.0f);
             char text[8];
             std::snprintf(text, sizeof(text), "%u", static_cast<unsigned>(count));
             ImVec2 textSize = ImGui::GetFont()->CalcTextSizeA(COUNT_FONT_SIZE, FLT_MAX, 0.0f, text);
-            ImVec2 textPos(pos.x + Art(ITEM_SIZE + 1.0f) - textSize.x, pos.y + Art(ITEM_SIZE + 1.0f) - COUNT_FONT_SIZE);
+            ImVec2 textPos(pos.x + Art(ITEM_SIZE + 1.0f) - textSize.x, pos.y + Art(ITEM_SIZE + 1.0f) - Art(8.0f));
             drawList->AddText(ImGui::GetFont(), COUNT_FONT_SIZE, ImVec2(textPos.x + Art(1.0f), textPos.y + Art(1.0f)),
                 IM_COL32(63, 63, 63, 255), text);
             drawList->AddText(ImGui::GetFont(), COUNT_FONT_SIZE, textPos, IM_COL32(255, 255, 255, 255), text);
         }
     }
-    // One labeled, proportionally-filled bar — health and hunger both share
-    // this, only the fill color and current/max differ. `overlayFrac` (0
-    // when unused) draws a second, low-alpha fill on top spanning that
-    // fraction of the bar's width — hunger's saturation "buffer" uses this;
-    // health doesn't pass one. Values are drawn (not just the bar) since
-    // without an icon font there's otherwise no way to read the exact
-    // number at a glance. Fill colors are deliberately muted/dark rather
-    // than vivid — a first pass used bright red/orange, which made the
-    // centered white label text hard to read against them.
-    void DrawStatBar(ImDrawList* drawList, ImVec2 pos, float width, float height,
-                      const char* label, float current, float max, ImU32 fillColor,
-                      float overlayFrac = 0.0f)
-    {
-        ImVec2 rectMax(pos.x + width, pos.y + height);
-        drawList->AddRectFilled(pos, rectMax, IM_COL32(12, 32, 40, 235), 4.0f);
-
-        float frac = max > 0.0f ? std::clamp(current / max, 0.0f, 1.0f) : 0.0f;
-        if (frac > 0.0f)
-        {
-            drawList->AddRectFilled(pos, ImVec2(pos.x + width * frac, rectMax.y), fillColor, 4.0f);
-        }
-
-        if (overlayFrac > 0.0f)
-        {
-            float clamped = std::clamp(overlayFrac, 0.0f, 1.0f);
-            drawList->AddRectFilled(pos, ImVec2(pos.x + width * clamped, rectMax.y),
-                                     IM_COL32(255, 250, 210, 60), 4.0f);
-        }
-
-        drawList->AddRect(pos, rectMax, IM_COL32(60, 170, 190, 160), 4.0f, 0, 1.5f);
-
-        char text[64];
-        std::snprintf(text, sizeof(text), "%s  %.1f / %.0f", label, current, max);
-        ImVec2 textSize = ImGui::CalcTextSize(text);
-        ImVec2 textPos(pos.x + (width - textSize.x) * 0.5f, pos.y + (height - textSize.y) * 0.5f);
-        drawList->AddText(textPos, IM_COL32(235, 248, 255, 255), text);
-    }
 }
 
-// Top-left of the hotbar — see the header comment on why every other HUD
+namespace {
+    struct HudElement {
+        std::string name;
+        std::function<void()> draw;
+    };
+    std::mutex hudElementsMutex; // Guards hudElements; held only to edit or copy the list.
+    std::vector<HudElement> hudElements;
+}
+
+void GUIController::AddHudElement(const std::string& name, std::function<void()> draw)
+{
+    std::lock_guard<std::mutex> lock(hudElementsMutex);
+    hudElements.erase(std::remove_if(hudElements.begin(), hudElements.end(),
+        [&](const HudElement& element) { return element.name == name; }), hudElements.end());
+    if (draw) hudElements.push_back(HudElement{ name, std::move(draw) });
+}
+
+void GUIController::RemoveHudElement(const std::string& name)
+{
+    AddHudElement(name, nullptr);
+}
+
+void GUIController::RenderHudElements()
+{
+    std::vector<HudElement> elements;
+    {
+        std::lock_guard<std::mutex> lock(hudElementsMutex);
+        elements = hudElements;
+    }
+    for (const HudElement& element : elements) element.draw();
+}
+
+void GUIController::DrawItem(ImDrawList* drawList, ImVec2 pos, const ItemStack& item)
+{
+    DrawItemIcon(drawList, pos, IconForItem(item), item.count);
+}
+
+ImTextureID GUIController::GetItemIconTexture(const ItemStack& item)
+{
+    return IconForItem(item);
+}
+
+float GUIController::GetArtScale()
+{
+    return g_artScale;
+}
+
+ImVec2 GUIController::GetHotbarOrigin()
+{
+    return HotbarOrigin();
+}
+
+// Top-left of the hotbar - see the header comment on why every other HUD
 // piece in this group derives its position from this single call rather
 // than each re-deriving "bottom center" independently.
 ImVec2 GUIController::HotbarOrigin()
@@ -1585,469 +2066,8 @@ ImVec2 GUIController::HotbarOrigin()
     return ResolveAnchor(GUI::ScreenAnchor::BOTTOM, ImVec2(Art(HOTBAR_WIDTH), Art(HOTBAR_HEIGHT)), ImVec2(0.0f, Art(HUD_BOTTOM_MARGIN)));
 }
 
-// Hotbar (9 slots, held slot highlighted — see selectedSlot below) + armor
-// row (4 slots, sideways like uku's Armor HUD — see ARMOR_WIDTH's comment),
-// immediately left of it and sharing its row height. Draws real item icons
-// (IconForItem/DrawItemIcon) now that GlobalState::inventory is actually
-// populated by NetworkClient's Set Container Content/Slot handlers — a slot
-// this client has no icon texture for (see IconForItem's own comment) still
-// falls back to an empty-looking slot rect rather than nothing/garbage.
-// Drawn with raw ImDrawList calls in one NoBackground window rather than
-// through GUIWindow/GUIComponent, which has no notion of an icon-slot grid,
-// and rather than two separate windows, since a shared draw list means
-// there's no z-order question between the two groups of rects.
-void GUIController::RenderHotbarAndArmor()
-{
-    ImVec2 hotbarPos = HotbarOrigin();
-
-    // Read straight from the data model rather than keeping a GUIController-
-    // local copy — see InventoryManager::selectedHotbarSlot's own comment.
-    // NetworkClient's Set Held Item handler writes here (under
-    // inventory.mutex, matching every other cross-thread field in
-    // GlobalState) and the HUD picks it up automatically, with no second
-    // call site to remember. Hotbar/armor items are copied out under the
-    // same lock, rather than held while drawing, so this window's own
-    // (potentially slow, first-icon-of-a-frame) Vulkan calls below never
-    // run with inventory.mutex held.
-    uint8_t selectedSlot;
-    std::array<ItemStack, HOTBAR_SLOTS> hotbarItems;
-    std::array<ItemStack, ARMOR_SLOTS> armorItems;
-    {
-        std::lock_guard<std::mutex> lock(state->inventory.mutex);
-        selectedSlot = state->inventory.selectedHotbarSlot;
-        for (int i = 0; i < HOTBAR_SLOTS; i++) hotbarItems[static_cast<size_t>(i)] = state->inventory.hotbar.Get(static_cast<size_t>(i));
-        for (int i = 0; i < ARMOR_SLOTS; i++) armorItems[static_cast<size_t>(i)] = state->inventory.armor.Get(static_cast<size_t>(i));
-    }
-
-    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
-    ImGui::Begin("##hotbar_armor", nullptr,
-        ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoNav |
-        ImGuiWindowFlags_NoInputs |
-        ImGuiWindowFlags_NoBackground |
-        ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoBringToFrontOnFocus);
-
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-
-    // Bar backgrounds first, so no item icon ends up under a later bar.
-    // All vanilla-sized geometry goes through Art() (see g_artScale).
-    ImTextureID hotbarTexture = TextureOf(hotbarIcon);
-    ImVec2 hotbarMax(hotbarPos.x + Art(HOTBAR_WIDTH), hotbarPos.y + Art(HOTBAR_HEIGHT));
-    if (hotbarTexture != 0) AddImageNearest(drawList, hotbarTexture, hotbarPos, hotbarMax);
-    else drawList->AddRectFilled(hotbarPos, hotbarMax, IM_COL32(0, 0, 0, 120));
-
-    // Armor: the hotbar texture cut down to 4 slots (its first 81 columns
-    // plus the 1-column right border).
-    ImVec2 armorPos(hotbarPos.x - PANEL_GAP - Art(ARMOR_WIDTH), hotbarPos.y);
-    if (hotbarTexture != 0)
-    {
-        constexpr float bodyWidth = ARMOR_WIDTH - 1.0f;
-        AddImageNearest(drawList, hotbarTexture, armorPos, ImVec2(armorPos.x + Art(bodyWidth), armorPos.y + Art(HOTBAR_HEIGHT)),
-            ImVec2(0.0f, 0.0f), ImVec2(bodyWidth / HOTBAR_WIDTH, 1.0f));
-        AddImageNearest(drawList, hotbarTexture, ImVec2(armorPos.x + Art(bodyWidth), armorPos.y),
-            ImVec2(armorPos.x + Art(ARMOR_WIDTH), armorPos.y + Art(HOTBAR_HEIGHT)),
-            ImVec2((HOTBAR_WIDTH - 1.0f) / HOTBAR_WIDTH, 0.0f), ImVec2(1.0f, 1.0f));
-    }
-    else
-    {
-        drawList->AddRectFilled(armorPos, ImVec2(armorPos.x + Art(ARMOR_WIDTH), armorPos.y + Art(HOTBAR_HEIGHT)),
-            IM_COL32(0, 0, 0, 120));
-    }
-
-    for (int i = 0; i < HOTBAR_SLOTS; i++)
-    {
-        ImVec2 itemPos(hotbarPos.x + Art(3.0f + i * HOTBAR_SLOT_STRIDE), hotbarPos.y + Art(3.0f));
-        const ItemStack& item = hotbarItems[static_cast<size_t>(i)];
-        DrawItemIcon(drawList, itemPos, IconForItem(item), item.count);
-    }
-
-    for (int i = 0; i < ARMOR_SLOTS; i++)
-    {
-        ImVec2 itemPos(armorPos.x + Art(3.0f + i * HOTBAR_SLOT_STRIDE), armorPos.y + Art(3.0f));
-        const ItemStack& item = armorItems[static_cast<size_t>(i)];
-        DrawItemIcon(drawList, itemPos, IconForItem(item), item.count);
-    }
-
-    // Held-slot frame, drawn over the item.
-    ImTextureID selectionTexture = TextureOf(hotbarSelectionIcon);
-    ImVec2 selectionPos(hotbarPos.x + Art(-1.0f + selectedSlot * HOTBAR_SLOT_STRIDE), hotbarPos.y + Art(-1.0f));
-    ImVec2 selectionMax(selectionPos.x + Art(24.0f), selectionPos.y + Art(23.0f));
-    if (selectionTexture != 0) AddImageNearest(drawList, selectionTexture, selectionPos, selectionMax);
-    else drawList->AddRect(selectionPos, selectionMax, IM_COL32(255, 255, 255, 255));
-
-    ImGui::End();
-}
-
-// Health and hunger, side by side, directly above the hotbar's horizontal
-// span. Vanilla draws two rows of small heart/hunger icons here; there's no
-// icon font/texture yet (see Init()'s TODO on merging one into the atlas
-// later), so this draws labeled proportional bars instead. Saturation isn't
-// a third bar — it's a semi-transparent overlay on top of the hunger bar
-// (see DrawStatBar's overlayFrac), matching vanilla's own treatment of it as
-// a buffer on the hunger value rather than an independently displayed stat.
-// Saturation's real range is 0-20 (it can't exceed the current food level,
-// which itself caps at 20) — not the 0-5 a first pass assumed.
-void GUIController::RenderPlayerStatusBars()
-{
-    float health, saturation;
-    int32_t food;
-    {
-        std::lock_guard<std::mutex> lock(state->healthMutex);
-        health = state->health;
-        food = state->food;
-        saturation = state->saturation;
-    }
-
-    ImVec2 hotbarPos = HotbarOrigin();
-    // Centered over the hotbar (the bars are wider than it).
-    ImVec2 panelPos(
-        hotbarPos.x + (Art(HOTBAR_WIDTH) - STATUS_PANEL_WIDTH) * 0.5f,
-        hotbarPos.y - STATUS_PANEL_GAP - STATUS_PANEL_HEIGHT);
-
-    ImGui::SetNextWindowPos(panelPos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(STATUS_PANEL_WIDTH, STATUS_PANEL_HEIGHT), ImGuiCond_Always);
-    // NoBackground — each bar already draws its own dark backing rect (see
-    // DrawStatBar), so the panel's own window chrome was a second,
-    // redundant dark rounded box sitting behind that; removing it lets
-    // whatever's behind (world, chat) show through the gap between the two
-    // bars instead of a solid panel.
-    ImGui::Begin("##status_bars", nullptr,
-        ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoNav |
-        ImGuiWindowFlags_NoInputs |
-        ImGuiWindowFlags_NoBackground |
-        ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoBringToFrontOnFocus);
-
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    float barY = panelPos.y + BAR_PADDING;
-    float healthX = panelPos.x + BAR_PADDING;
-    float hungerX = healthX + BAR_WIDTH + BAR_GAP;
-
-    DrawStatBar(drawList, ImVec2(healthX, barY), BAR_WIDTH, BAR_HEIGHT,
-                "Health", health, 20.0f, IM_COL32(140, 45, 45, 255));
-    DrawStatBar(drawList, ImVec2(hungerX, barY), BAR_WIDTH, BAR_HEIGHT,
-                "Hunger", static_cast<float>(food), 20.0f, IM_COL32(140, 95, 45, 255),
-                saturation / 20.0f);
-
-    ImGui::End();
-}
-
-// Current movement state, immediately right of the hotbar and vertically
-// centered on it — priority order Flying > Swimming > Sneaking > Sprinting
-// > Walking, showing only the highest-priority one that applies (falls
-// back to "Idle" when grounded and stationary).
-void GUIController::RenderMovementStatePanel()
-{
-    ImVec2 hotbarPos = HotbarOrigin();
-    constexpr float panelWidth = 140.0f;
-    ImVec2 panelPos(hotbarPos.x + Art(HOTBAR_WIDTH) + PANEL_GAP, hotbarPos.y);
-
-    ImGui::SetNextWindowPos(panelPos, ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(panelWidth, Art(HOTBAR_HEIGHT)), ImGuiCond_Always);
-    ImGui::Begin("##movement_state", nullptr,
-        ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoNav |
-        ImGuiWindowFlags_NoInputs);
-
-    // Flying/Swimming are hardcoded false rather than guessed at: this
-    // client has no fly toggle (no ability to leave the ground under its
-    // own control yet) and no fluid collision (BlockRegistry explicitly
-    // excludes fluid blockstates from collision, so there's no "in water"
-    // signal to read) — whoever implements either feature flips the
-    // matching bool here without touching the priority logic below.
-    constexpr bool isFlying = false;
-    constexpr bool isSwimming = false;
-    bool sneaking = state->input->IsActive("Sneak");
-    // TickLoop's real sprint state, not the key: a sprint keeps going after
-    // the key is released, and ends on a sprint hit/wall/low food with it
-    // still held.
-    bool sprinting = state->tickLoop->GetMovementSnapshot().sprinting;
-    bool hasMoveInput =
-        std::fabs(state->input->GetAxis("Move.Forward")) > 0.01f ||
-        std::fabs(state->input->GetAxis("Move.Right")) > 0.01f;
-
-    const char* label = "Idle";
-    if (isFlying) label = "Flying";
-    else if (isSwimming) label = "Swimming";
-    else if (sneaking) label = "Sneaking";
-    else if (sprinting) label = "Sprinting";
-    else if (hasMoveInput) label = "Walking";
-
-    ImVec2 textSize = ImGui::CalcTextSize(label);
-    ImGui::SetCursorPos(ImVec2((panelWidth - textSize.x) * 0.5f, (Art(HOTBAR_HEIGHT) - textSize.y) * 0.5f));
-    ImGui::TextColored(ImVec4(0.35f, 0.92f, 1.00f, 1.00f), "%s", label);
-
-    ImGui::End();
-}
-
-void GUIController::RenderInventoryScreen()
-{
-    std::array<ItemStack, InventoryManager::ARMOR_SIZE> armorItems;
-    std::array<ItemStack, 5> craftingItems; // 0 = result, 1-4 = 2x2 grid.
-    ItemStack offhandItem;
-    std::array<ItemStack, InventoryManager::MAIN_INVENTORY_SIZE> mainItems;
-    std::array<ItemStack, HOTBAR_SLOTS> hotbarItems;
-    std::vector<ItemStack> containerItems;
-    int32_t activeWindowId;
-    int32_t activeWindowType;
-    ItemStack carriedItem;
-    {
-        std::lock_guard<std::mutex> lock(state->inventory.mutex);
-        for (size_t i = 0; i < armorItems.size(); i++) armorItems[i] = state->inventory.armor.Get(i);
-        offhandItem = state->inventory.offhand.Get(0);
-        for (size_t i = 0; i < craftingItems.size(); i++) craftingItems[i] = state->inventory.crafting.Get(i);
-        for (size_t i = 0; i < mainItems.size(); i++) mainItems[i] = state->inventory.mainInventory.Get(i);
-        for (size_t i = 0; i < hotbarItems.size(); i++) hotbarItems[i] = state->inventory.hotbar.Get(i);
-        containerItems = state->inventory.containerSlots;
-        activeWindowId = state->inventory.activeWindowId;
-        activeWindowType = state->inventory.activeWindowType;
-        carriedItem = state->inventory.carriedItem;
-    }
-
-    // Vanilla layout, in GUI units (1 unit = 1 texture pixel; Graphics.GUIScale
-    // multiplies it). Slot coordinates are the top-left of the 16x16 item
-    // area, relative to the panel — the background texture already has the
-    // 18x18 slot art drawn behind them.
-    struct SlotDef { int32_t index; float x; float y; };
-    std::vector<SlotDef> slots;
-
-    constexpr float PANEL_WIDTH = 176.0f;
-    constexpr float TEXTURE_SIZE = 256.0f;
-    float panelHeight = 166.0f;
-    const StandaloneIcon* background = &inventoryBackground;
-    int genericRows = 0; // > 0 selects generic_54's split top/bottom drawing.
-    float titleX = 8.0f;
-    bool drawTitle = activeWindowId != 0;
-
-    // Player inventory + hotbar, placed by their first protocol index.
-    auto addPlayerSlots = [&](int32_t firstMain, float mainY, int32_t firstHotbar, float hotbarY)
-    {
-        for (int row = 0; row < 3; row++)
-        {
-            for (int col = 0; col < 9; col++)
-            {
-                slots.push_back({ firstMain + row * 9 + col, 8.0f + col * 18.0f, mainY + row * 18.0f });
-            }
-        }
-        for (int col = 0; col < 9; col++) slots.push_back({ firstHotbar + col, 8.0f + col * 18.0f, hotbarY });
-    };
-
-    int32_t containerCount = static_cast<int32_t>(containerItems.size());
-    if (activeWindowId == 0)
-    {
-        for (int i = 0; i < 4; i++) slots.push_back({ 5 + i, 8.0f, 8.0f + i * 18.0f });
-        slots.push_back({ 45, 77.0f, 62.0f });
-        for (int row = 0; row < 2; row++)
-        {
-            for (int col = 0; col < 2; col++) slots.push_back({ 1 + row * 2 + col, 98.0f + col * 18.0f, 18.0f + row * 18.0f });
-        }
-        slots.push_back({ 0, 154.0f, 28.0f });
-        addPlayerSlots(9, 84.0f, 36, 142.0f);
-    }
-    else if (activeWindowType == InventoryManager::CRAFTING_MENU_TYPE && containerCount >= 10)
-    {
-        background = &craftingBackground;
-        titleX = 29.0f;
-        slots.push_back({ 0, 124.0f, 35.0f });
-        for (int row = 0; row < 3; row++)
-        {
-            for (int col = 0; col < 3; col++) slots.push_back({ 1 + row * 3 + col, 30.0f + col * 18.0f, 17.0f + row * 18.0f });
-        }
-        addPlayerSlots(containerCount, 84.0f, containerCount + 27, 142.0f);
-    }
-    else if (activeWindowType == InventoryManager::FURNACE_MENU_TYPE && containerCount >= 3)
-    {
-        background = &furnaceBackground;
-        slots.push_back({ 0, 56.0f, 17.0f });
-        slots.push_back({ 1, 56.0f, 53.0f });
-        slots.push_back({ 2, 116.0f, 35.0f });
-        addPlayerSlots(containerCount, 84.0f, containerCount + 27, 142.0f);
-    }
-    else
-    {
-        // Chest-style grid: also the fallback for any menu without its own layout.
-        background = &genericBackground;
-        genericRows = std::max(1, (containerCount + 8) / 9);
-        panelHeight = 114.0f + genericRows * 18.0f;
-        for (int32_t i = 0; i < containerCount; i++) slots.push_back({ i, 8.0f + (i % 9) * 18.0f, 18.0f + (i / 9) * 18.0f });
-        addPlayerSlots(containerCount, panelHeight - 82.0f, containerCount + 27, panelHeight - 24.0f);
-    }
-
-    // The item at a protocol slot index in the layout above.
-    static const ItemStack emptyItem{};
-    auto itemAt = [&](int32_t index) -> const ItemStack&
-    {
-        if (activeWindowId == 0)
-        {
-            if (index >= 0 && index <= 4) return craftingItems[static_cast<size_t>(index)];
-            if (index >= 5 && index <= 8) return armorItems[static_cast<size_t>(index - 5)];
-            if (index >= 9 && index <= 35) return mainItems[static_cast<size_t>(index - 9)];
-            if (index >= 36 && index <= 44) return hotbarItems[static_cast<size_t>(index - 36)];
-            if (index == 45) return offhandItem;
-            return emptyItem;
-        }
-        if (index < 0) return emptyItem;
-        if (index < containerCount) return containerItems[static_cast<size_t>(index)];
-        int32_t playerSlot = index - containerCount;
-        if (playerSlot < 27) return mainItems[static_cast<size_t>(playerSlot)];
-        if (playerSlot < 36) return hotbarItems[static_cast<size_t>(playerSlot - 27)];
-        return emptyItem;
-    };
-
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    float panelX = std::floor(ImGui::GetWindowPos().x + (ImGui::GetWindowWidth() - Art(PANEL_WIDTH)) * 0.5f);
-    float panelY = std::floor(ImGui::GetCursorScreenPos().y);
-
-    // Background texture.
-    ImTextureID backgroundTexture = TextureOf(*background);
-    if (backgroundTexture == 0)
-    {
-        drawList->AddRectFilled(ImVec2(panelX, panelY), ImVec2(panelX + Art(PANEL_WIDTH), panelY + Art(panelHeight)),
-            IM_COL32(198, 198, 198, 255));
-    }
-    else if (genericRows > 0)
-    {
-        float topHeight = 17.0f + genericRows * 18.0f;
-        AddImageNearest(drawList, backgroundTexture, ImVec2(panelX, panelY), ImVec2(panelX + Art(PANEL_WIDTH), panelY + Art(topHeight)),
-            ImVec2(0.0f, 0.0f), ImVec2(PANEL_WIDTH / TEXTURE_SIZE, topHeight / TEXTURE_SIZE));
-        AddImageNearest(drawList, backgroundTexture, ImVec2(panelX, panelY + Art(topHeight)),
-            ImVec2(panelX + Art(PANEL_WIDTH), panelY + Art(panelHeight)),
-            ImVec2(0.0f, 126.0f / TEXTURE_SIZE), ImVec2(PANEL_WIDTH / TEXTURE_SIZE, 222.0f / TEXTURE_SIZE));
-    }
-    else
-    {
-        AddImageNearest(drawList, backgroundTexture, ImVec2(panelX, panelY), ImVec2(panelX + Art(PANEL_WIDTH), panelY + Art(panelHeight)),
-            ImVec2(0.0f, 0.0f), ImVec2(PANEL_WIDTH / TEXTURE_SIZE, panelHeight / TEXTURE_SIZE));
-    }
-
-    const float LABEL_FONT_SIZE = Art(8.0f);
-    constexpr ImU32 LABEL_COLOR = IM_COL32(64, 64, 64, 255);
-    if (drawTitle)
-    {
-        drawList->AddText(ImGui::GetFont(), LABEL_FONT_SIZE, ImVec2(panelX + Art(titleX), panelY + Art(6.0f)), LABEL_COLOR,
-            inventoryScreen->title.c_str());
-        drawList->AddText(ImGui::GetFont(), LABEL_FONT_SIZE, ImVec2(panelX + Art(8.0f), panelY + Art(panelHeight - 94.0f)),
-            LABEL_COLOR, "Inventory");
-    }
-
-    bool hasMouseClick = ImGui::IsMouseClicked(ImGuiMouseButton_Left)
-        || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
-    uint8_t clickedButton = ImGui::IsMouseClicked(ImGuiMouseButton_Right) ? 1 : 0;
-    bool clickHandled = false;
-    ImVec2 mouse = ImGui::GetIO().MousePos;
-
-    auto handleSlotClick = [&](int32_t protocolIndex)
-    {
-        clickHandled = true;
-
-        int32_t windowId;
-        int32_t stateId;
-        {
-            std::lock_guard<std::mutex> lock(state->inventory.mutex);
-            windowId = state->inventory.activeWindowId;
-            stateId = windowId == 0 ? state->inventory.playerStateId : state->inventory.activeWindowStateId;
-        }
-        state->inventory.HandleSlotClick(protocolIndex, clickedButton);
-
-        ItemStack slotItem;
-        ItemStack cursorItem;
-        {
-            std::lock_guard<std::mutex> lock(state->inventory.mutex);
-            ItemStack* slot = state->inventory.GetWindowSlot(protocolIndex);
-            if (slot != nullptr) slotItem = *slot;
-            cursorItem = state->inventory.carriedItem;
-        }
-        SendInventoryClick(state, windowId, stateId, protocolIndex, clickedButton, slotItem, cursorItem);
-    };
-
-    // Hovered slot: highlight behind the item, plus a click.
-    const SlotDef* hovered = nullptr;
-    for (const SlotDef& slot : slots)
-    {
-        float x = panelX + Art(slot.x);
-        float y = panelY + Art(slot.y);
-        if (mouse.x >= x && mouse.x < x + Art(ITEM_SIZE) && mouse.y >= y && mouse.y < y + Art(ITEM_SIZE))
-        {
-            hovered = &slot;
-            break;
-        }
-    }
-    if (hovered != nullptr && hasMouseClick) handleSlotClick(hovered->index);
-
-    ImTextureID highlightBack = TextureOf(slotHighlightBackIcon);
-    ImTextureID highlightFront = TextureOf(slotHighlightFrontIcon);
-    constexpr float HIGHLIGHT_SIZE = 24.0f;
-    auto drawHighlight = [&](ImTextureID texture, ImU32 fallback)
-    {
-        if (hovered == nullptr) return;
-        ImVec2 min(panelX + Art(hovered->x - 4.0f), panelY + Art(hovered->y - 4.0f));
-        if (texture != 0) AddImageNearest(drawList, texture, min, ImVec2(min.x + Art(HIGHLIGHT_SIZE), min.y + Art(HIGHLIGHT_SIZE)));
-        else if (fallback != 0)
-        {
-            drawList->AddRectFilled(ImVec2(min.x + Art(4.0f), min.y + Art(4.0f)),
-                ImVec2(min.x + Art(20.0f), min.y + Art(20.0f)), fallback);
-        }
-    };
-
-    drawHighlight(highlightBack, IM_COL32(255, 255, 255, 90));
-    for (const SlotDef& slot : slots)
-    {
-        const ItemStack& item = itemAt(slot.index);
-        DrawItemIcon(drawList, ImVec2(panelX + Art(slot.x), panelY + Art(slot.y)), IconForItem(item), item.count);
-    }
-    drawHighlight(highlightFront, 0);
-
-    if (hasMouseClick && !clickHandled && !carriedItem.IsEmpty())
-    {
-        int32_t windowId;
-        int32_t stateId;
-        {
-            std::lock_guard<std::mutex> lock(state->inventory.mutex);
-            windowId = state->inventory.activeWindowId;
-            stateId = windowId == 0 ? state->inventory.playerStateId : state->inventory.activeWindowStateId;
-        }
-        state->inventory.HandleSlotClick(-999, clickedButton);
-        ItemStack cursorItem;
-        {
-            std::lock_guard<std::mutex> lock(state->inventory.mutex);
-            cursorItem = state->inventory.carriedItem;
-        }
-        SendInventoryClick(state, windowId, stateId, -999, clickedButton, ItemStack{}, cursorItem);
-    }
-
-    // The carried stack follows the cursor, drawn last so it sits on top.
-    if (!carriedItem.IsEmpty())
-    {
-        DrawItemIcon(drawList, ImVec2(mouse.x - Art(ITEM_SIZE) * 0.5f, mouse.y - Art(ITEM_SIZE) * 0.5f),
-                     IconForItem(carriedItem), carriedItem.count);
-    }
-
-    // Claim the panel's space — raw ImDrawList calls don't move ImGui's
-    // layout cursor, and ImGui asserts if a window's extent grows without a
-    // real item (see git history for the original assert text).
-    ImGui::Dummy(ImVec2(Art(PANEL_WIDTH), Art(panelHeight)));
-}
-
 // Dark navy panels with a orange border tint, laid on top of StyleColorsDark.
-// Called once at Init — component-level drawing (DrawStyledButton) pulls
+// Called once at Init - component-level drawing (DrawStyledButton) pulls
 // its own hand-picked colors rather than reading these back, since ImGui's
 // built-in widget colors don't cover custom-drawn glow/border fills.
 void GUIController::ApplyVolcanoTheme()
@@ -2096,10 +2116,87 @@ void GUIController::ApplyVolcanoTheme()
 // See header: flat-glow button drawn with ImDrawList so it doesn't depend
 // on ImGui's built-in button skin. An InvisibleButton underneath handles
 // click/hover/active state; everything visible is drawn manually on top.
+float GUIController::GetControlHeight()
+{
+    ControlStyle controlStyle;
+    return ImGui::GetFrameHeight();
+}
+
+bool GUIController::DrawButton(const std::string& label, float width)
+{
+    ControlStyle controlStyle;
+    return DrawStyledButton(label, ImVec2(width, ImGui::GetFrameHeight()));
+}
+
+bool GUIController::DrawMenuButton(const std::string& label, float width)
+{
+    if (width <= 0.0f) width = ImGui::CalcTextSize(label.c_str(), nullptr, true).x + 32.0f;
+    CenterNextControl(width);
+    return DrawButton(label, width);
+}
+
+bool GUIController::DrawInput(const std::string& id, char* buffer, size_t capacity, float width, const char* hint)
+{
+    ControlStyle controlStyle;
+    ImGui::SetNextItemWidth(width > 0.0f ? width : ImGui::GetContentRegionAvail().x);
+    std::string widgetId = id.rfind("##", 0) == 0 ? id : "##" + id;
+    return ImGui::InputTextWithHint(widgetId.c_str(), hint != nullptr ? hint : "", buffer, capacity,
+        ImGuiInputTextFlags_EnterReturnsTrue);
+}
+
+bool GUIController::DrawInput(const std::string& id, std::string& value, float width, const char* hint)
+{
+    // ImGui edits a fixed buffer; the text is copied out every frame, so `value`
+    // always holds what is shown.
+    constexpr size_t CAPACITY = 512;
+    char buffer[CAPACITY];
+    std::snprintf(buffer, CAPACITY, "%s", value.c_str());
+    bool submitted = DrawInput(id, buffer, CAPACITY, width, hint);
+    value = buffer;
+    return submitted;
+}
+
+bool GUIController::DrawDropdown(const std::string& id, const std::vector<std::string>& options, size_t& selected,
+                                 float width)
+{
+    ControlStyle controlStyle;
+    ImGui::SetNextItemWidth(width > 0.0f ? width : ImGui::GetContentRegionAvail().x);
+    std::string widgetId = id.rfind("##", 0) == 0 ? id : "##" + id;
+    const char* preview = selected < options.size() ? options[selected].c_str() : "";
+
+    bool changed = false;
+    if (ImGui::BeginCombo(widgetId.c_str(), preview, ImGuiComboFlags_HeightLarge))
+    {
+        for (size_t i = 0; i < options.size(); i++)
+        {
+            bool isSelected = i == selected;
+            if (ImGui::Selectable((options[i] + "##" + std::to_string(i)).c_str(), isSelected) && !isSelected)
+            {
+                selected = i;
+                changed = true;
+            }
+            if (isSelected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+void GUIController::CenterNextControl(float width)
+{
+    ImGui::SetCursorPosX((ImGui::GetWindowWidth() - width) * 0.5f);
+}
+
+void GUIController::AlignTextToControl()
+{
+    ControlStyle controlStyle;
+    ImGui::AlignTextToFramePadding();
+}
+
 bool GUIController::DrawStyledButton(const std::string& label, ImVec2 size)
 {
     if (size.x <= 0.0f) size.x = ImGui::CalcTextSize(label.c_str(), nullptr, true).x + 32.0f;
-    if (size.y <= 0.0f) size.y = ImGui::GetFrameHeight() + 8.0f;
+    if (size.y <= 0.0f) size.y = GetControlHeight();
 
     ImVec2 pos = ImGui::GetCursorScreenPos();
     // InvisibleButton's own return covers keyboard/gamepad activation too;
@@ -2138,7 +2235,7 @@ bool GUIController::DrawStyledButton(const std::string& label, ImVec2 size)
 }
 
 // Create a new GUI window, pinned to a screen anchor + offset rather than
-// an absolute position — see GUI::ScreenAnchor and ResolveAnchor().
+// an absolute position - see GUI::ScreenAnchor and ResolveAnchor().
 GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, GUI::ScreenAnchor anchor,
                                              float offsetX, float offsetY)
 {
@@ -2157,7 +2254,7 @@ GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, GUI::Screen
 }
 
 // Resolves anchor + inward pixel offset into an absolute top-left position
-// against the current ImGui display size — see the header comment.
+// against the current ImGui display size - see the header comment.
 ImVec2 GUIController::ResolveAnchor(GUI::ScreenAnchor anchor, ImVec2 size, ImVec2 offset)
 {
     ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -2239,7 +2336,7 @@ void GUIController::CloseInventoryWindow()
 // Show a screen fullscreen, hiding the HUD and releasing the mouse cursor
 // so ImGui (rather than the fly-cam) drives it. GUIController runs on the
 // render thread, but GLFW only guarantees glfwSetInputMode is safe from the
-// main (window-owning) thread — see GlobalState::pendingCursorMode, applied
+// main (window-owning) thread - see GlobalState::pendingCursorMode, applied
 // by VolcanoClient.cpp's main loop.
 void GUIController::OpenScreen(GUI::Screen* screen)
 {
@@ -2274,22 +2371,22 @@ void GUIController::CloseScreen()
 }
 
 // Raise the chat input box and free the cursor, same reasoning OpenScreen
-// gives for doing so — mouse-look shouldn't fight with typing, and
+// gives for doing so - mouse-look shouldn't fight with typing, and
 // RenderThread::PollInputs is the piece that actually stops reading
 // movement/camera input while this is open (see its own IsChatInputOpen()
 // check, right alongside the existing IsScreenOpen() one).
-void GUIController::OpenChatInput()
+void GUIController::OpenChatInput(const char* initialText)
 {
     chatInputOpen = true;
     chatInputJustOpened = true;
-    chatInputBuffer[0] = '\0';
+    std::snprintf(chatInputBuffer, sizeof(chatInputBuffer), "%s", initialText);
     if (windowHandle != nullptr)
     {
         state->pendingCursorMode.store(GLFW_CURSOR_NORMAL);
     }
 }
 
-// Close the chat input box and re-capture the cursor for the fly-cam —
+// Close the chat input box and re-capture the cursor for the fly-cam -
 // same focus caveat CloseScreen's own comment explains (only re-lock if
 // the window is actually focused right now).
 void GUIController::CloseChatInput()

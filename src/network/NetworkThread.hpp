@@ -15,14 +15,14 @@
 namespace Volcano {
 
 // Mirrors RenderThread's shape (owns its own jthread, started via Start())
-// rather than introducing a separate abstraction. Runs on its own thread —
-// deliberately NOT sharing one with glfwPollEvents() — so a burst of packet
+// rather than introducing a separate abstraction. Runs on its own thread -
+// deliberately NOT sharing one with glfwPollEvents() - so a burst of packet
 // handling (e.g. a wave of chunk data right after login) can't stall input
 // dispatch. See the networking plan for the full rationale.
 class NetworkThread {
 public:
     // localServerDir: non-empty for a singleplayer session (one of
-    // settings.json's Network.LocalServerDirs entries) — ThreadEntry then
+    // settings.json's Network.LocalServerDirs entries) - ThreadEntry then
     // launches that server.jar and waits for host:port to come up before
     // connecting to it exactly like any other server. Empty for a normal
     // multiplayer connection, the default.
@@ -31,7 +31,7 @@ public:
     ~NetworkThread();
     void Start();
 
-    // Signals ThreadEntry to stop WITHOUT waiting for it — unlike
+    // Signals ThreadEntry to stop WITHOUT waiting for it - unlike
     // destroying/replacing this object (which joins, and so blocks the
     // caller for as long as shutdown takes, up to LocalServer::Stop()'s own
     // 30s grace period), this is safe to call from the render thread even
@@ -41,7 +41,7 @@ public:
     void RequestStop();
 
     // True once the connection is closed and (for singleplayer) the local
-    // server process has fully stopped — i.e. after RequestStop(), when it's
+    // server process has fully stopped - i.e. after RequestStop(), when it's
     // safe to reset world state without packets still arriving. The thread
     // itself stays alive/joinable after this, see ThreadEntry.
     bool HasSessionEnded() const { return sessionEnded.load(); }
@@ -62,8 +62,8 @@ private:
     // which is what guarantees ThreadEntry has actually exited before
     // ioContext (which the thread uses the whole time it runs) gets torn
     // down below it. Declared before ioContext, as it originally was here,
-    // meant reconnecting — destroying the previous NetworkThread instance
-    // via the connect button's unique_ptr reassignment — destroyed
+    // meant reconnecting - destroying the previous NetworkThread instance
+    // via the connect button's unique_ptr reassignment - destroyed
     // ioContext out from under a worker thread that could still be using
     // it, which is undefined behavior for asio and hung the app
     // indefinitely instead of crashing outright.

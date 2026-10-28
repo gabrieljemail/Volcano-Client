@@ -12,14 +12,14 @@ namespace Volcano::ItemRegistry {
 namespace {
 
 // Kept in sync with BlockRegistry/EntityRegistry's pinned minecraft-data
-// version and PROTOCOL_VERSION (NetworkClient.hpp) — all must agree.
+// version and PROTOCOL_VERSION (NetworkClient.hpp) - all must agree.
 constexpr const char* MC_DATA_VERSION = "26.1";
 const std::string ITEMS_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/items.json";
 const std::string FOODS_JSON_PATH = std::string("resources/minecraft-data/data/pc/") + MC_DATA_VERSION + "/foods.json";
 
 std::unordered_map<int32_t, ItemTypeInfo> g_itemsById;
 
-// Split out so the public Init() below can wrap it in a catch-all — a
+// Split out so the public Init() below can wrap it in a catch-all - a
 // single malformed item entry must never be able to crash the whole app.
 void InitImpl(const TextureManager& textureManager) {
     g_itemsById.clear();
@@ -29,7 +29,7 @@ void InitImpl(const TextureManager& textureManager) {
     std::ifstream file(ITEMS_JSON_PATH);
     if (!file) {
         Log::Error("ItemRegistry: couldn't open " + ITEMS_JSON_PATH
-            + " — item lookups will find nothing this run.");
+            + " - item lookups will find nothing this run.");
         return;
     }
 
@@ -48,22 +48,23 @@ void InitImpl(const TextureManager& textureManager) {
         try {
             if (!i.contains("id") || !i["id"].is_number()) continue;
             int32_t id = i["id"].get<int32_t>();
-            if (id == 0) continue; // "air" — ItemStack's own empty-slot id, see Lookup()'s comment; nothing to resolve.
+            if (id == 0) continue; // "air" - ItemStack's own empty-slot id, see Lookup()'s comment; nothing to resolve.
 
             ItemTypeInfo info;
             info.name = i.value("name", std::string());
             info.displayName = i.value("displayName", std::string());
+            info.maxDurability = i.value("maxDurability", 0);
 
             // TextureManager's layerLookup is a single flat, bare-stem-keyed
             // table spanning both textures/block/ and textures/item/ (see
-            // TextureManager::LoadResourcePack) — vanilla's own item/block
+            // TextureManager::LoadResourcePack) - vanilla's own item/block
             // registry names don't collide between those two folders, so
             // looking the item's own name up directly (no item-model JSON
             // parsing to chase down which block texture a block-item
             // secretly reuses) resolves the common case correctly. A miss
             // just means this particular item has no exact-name 16x16
             // texture (an unusual icon shape, a name that doesn't match its
-            // texture file, ...) — GetLayerIndex() already logs that case,
+            // texture file, ...) - GetLayerIndex() already logs that case,
             // hasTexture just lets a caller skip drawing an icon instead of
             // drawing whatever GetLayerIndex()'s own fallback layer 0 is.
             info.hasTexture = textureManager.HasLayer(info.name);
@@ -89,13 +90,14 @@ void InitImpl(const TextureManager& textureManager) {
                 if (it == g_itemsById.end()) continue;
                 it->second.edible = true;
                 it->second.foodPoints = static_cast<int32_t>(f.value("foodPoints", 0.0));
+                it->second.saturation = static_cast<float>(f.value("saturation", 0.0));
             }
         } catch (const std::exception& e) {
             Log::Error(std::string("ItemRegistry: failed to parse foods.json: ") + e.what());
         }
     }
 
-    Log::Info("ItemRegistry: loaded minecraft-data " + std::string(MC_DATA_VERSION) + " — "
+    Log::Info("ItemRegistry: loaded minecraft-data " + std::string(MC_DATA_VERSION) + " - "
         + std::to_string(g_itemsById.size()) + " item types, " + std::to_string(resolvedIcons)
         + " with a resolved icon texture.");
 }

@@ -4,6 +4,7 @@
 #include <psapi.h>
 #include <dbghelp.h>
 #include <timeapi.h>
+#include <winhttp.h>
 #include <intrin.h>
 #include <cstdio>
 #include <cstdlib>
@@ -123,6 +124,11 @@ std::vector<std::string> OS::GetFallbackFontPaths()
 bool OS::IsDebuggerAttached()
 {
     return IsDebuggerPresent() != FALSE;
+}
+
+bool OS::SetAboveNormalPriority()
+{
+    return SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS) != FALSE;
 }
 
 void OS::PreciseSleep(int64_t microseconds)
@@ -275,6 +281,131 @@ void OS::ReadBufferedRawMouse(double& dx, double& dy)
 const char* OS::GetObjectExtension()
 {
     return ".dll";
+}
+
+namespace
+{
+std::wstring ToWide(const std::string& text)
+{
+    if (text.empty()) return {};
+    int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0);
+    std::wstring wide(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), wide.data(), size);
+    return wide;
+}
+
+struct WinHttpHandle
+{
+    HINTERNET handle = nullptr;
+    explicit WinHttpHandle(HINTERNET h) : handle(h) {}
+    ~WinHttpHandle() { if (handle != nullptr) WinHttpCloseHandle(handle); }
+    WinHttpHandle(const WinHttpHandle&) = delete;
+    WinHttpHandle& operator=(const WinHttpHandle&) = delete;
+};
+} // namespace
+
+bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string& error,
+    const std::function<void(uint64_t, uint64_t)>& progress)
+{
+    body.clear();
+    std::wstring wideUrl = ToWide(url);
+
+    URL_COMPONENTS parts{};
+    parts.dwStructSize = sizeof(parts);
+    parts.dwSchemeLength = parts.dwHostNameLength = parts.dwUrlPathLength = parts.dwExtraInfoLength = static_cast<DWORD>(-1);
+    if (!WinHttpCrackUrl(wideUrl.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS)
+    {
+        error = "Not a valid https address: " + url;
+        return false;
+    }
+    std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
+    std::wstring path(parts.lpszUrlPath, parts.dwUrlPathLength + parts.dwExtraInfoLength);
+
+    WinHttpHandle session(WinHttpOpen(L"VolcanoClient", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, nullptr, nullptr, 0));
+    if (session.handle == nullptr)
+    {
+        error = "Couldn't start the network session.";
+        return false;
+    }
+    WinHttpHandle connection(WinHttpConnect(session.handle, host.c_str(), parts.nPort, 0));
+    if (connection.handle == nullptr)
+    {
+        error = "Couldn't connect to the server.";
+        return false;
+    }
+    WinHttpHandle request(WinHttpOpenRequest(connection.handle, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
+    if (request.handle == nullptr
+        || !WinHttpSendRequest(request.handle, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+        || !WinHttpReceiveResponse(request.handle, nullptr))
+    {
+        error = "The request failed (error " + std::to_string(GetLastError()) + ").";
+        return false;
+    }
+
+    DWORD status = 0;
+    DWORD statusSize = sizeof(status);
+    WinHttpQueryHeaders(request.handle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
+    if (status != 200)
+    {
+        error = "The server answered " + std::to_string(status) + ".";
+        return false;
+    }
+
+    DWORD length = 0;
+    DWORD lengthSize = sizeof(length);
+    uint64_t total = 0;
+    if (WinHttpQueryHeaders(request.handle, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX, &length, &lengthSize, WINHTTP_NO_HEADER_INDEX))
+    {
+        total = length;
+        body.reserve(total);
+    }
+
+    for (;;)
+    {
+        DWORD available = 0;
+        if (!WinHttpQueryDataAvailable(request.handle, &available))
+        {
+            error = "The download was interrupted.";
+            return false;
+        }
+        if (available == 0) break;
+
+        size_t at = body.size();
+        body.resize(at + available);
+        DWORD read = 0;
+        if (!WinHttpReadData(request.handle, body.data() + at, available, &read))
+        {
+            error = "The download was interrupted.";
+            return false;
+        }
+        body.resize(at + read);
+        if (progress) progress(body.size(), total);
+    }
+    return true;
+}
+
+bool OS::ShowConsentDialog(const std::string& title, const std::string& message, const std::string& agreeLabel)
+{
+    std::string text = message + "\n\nChoose Yes to \"" + agreeLabel + "\", or No to quit.";
+    int answer = MessageBoxW(nullptr, ToWide(text).c_str(), ToWide(title).c_str(), MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
+    return answer == IDYES;
+}
+
+void OS::AttachParentConsole()
+{
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out != nullptr && out != INVALID_HANDLE_VALUE && GetFileType(out) != FILE_TYPE_UNKNOWN) return; // Redirected or already attached.
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
+
+    FILE* stream = nullptr;
+    freopen_s(&stream, "CONOUT$", "w", stdout);
+    freopen_s(&stream, "CONOUT$", "w", stderr);
+    HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (GetConsoleMode(console, &mode)) SetConsoleMode(console, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING); // The log colors.
 }
 
 void* OS::LoadObject(const std::string& path)

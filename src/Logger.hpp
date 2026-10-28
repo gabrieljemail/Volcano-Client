@@ -8,10 +8,10 @@ namespace Volcano {
 
 namespace Log {
 
-// Replaces plain std::cout usage — unconditional console output.
+// Replaces plain std::cout usage - unconditional console output.
 void Info(const std::string& message);
 
-// Replaces plain std::cerr usage — unconditional console output.
+// Replaces plain std::cerr usage - unconditional console output.
 void Error(const std::string& message);
 
 // Always printed to the console like Info(); additionally mirrored into

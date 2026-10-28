@@ -7,7 +7,7 @@
 namespace Volcano::Engine {
 
 // Everything the client decides about a frame, handed to the engine in one
-// piece — RenderThread builds this from camera/config/world state (FOV
+// piece - RenderThread builds this from camera/config/world state (FOV
 // easing, day/night sky, debug toggles) and never touches the backend's own
 // objects to do it. Plain glm/POD only, so nothing on the client side of
 // the RenderEngine boundary needs a graphics API header to fill it in.
@@ -15,14 +15,18 @@ struct SceneView {
     glm::mat4 view{1.0f};
     glm::mat4 proj{1.0f};
 
-    // Eye position in world space — the same point view was built from,
+    // Eye position in world space - the same point view was built from,
     // passed separately so passes that sort or cull by distance (non-cubic,
     // entities) don't have to invert the view matrix to recover it.
     glm::vec3 cameraPosition{0.0f};
 
+    // The walk's sway, already in `view` (identity without view bobbing). The
+    // held hand applies it too, since it is drawn with a projection of its own.
+    glm::mat4 viewBob{1.0f};
+
     // Clear color for the main pass (already gamma-corrected by
-    // Graphics.Brightness — see RenderThread::BuildSceneView), and the raw
-    // linear 0 (midnight) .. 1 (noon) brightness it was mixed from — see
+    // Graphics.Brightness - see RenderThread::BuildSceneView), and the raw
+    // linear 0 (midnight) .. 1 (noon) brightness it was mixed from - see
     // RenderThread's DayBrightness(). CameraUBO's skyLightFactor reads this
     // raw value directly, not skyColor's gamma-corrected one.
     glm::vec3 skyColor{0.0f};
@@ -43,13 +47,16 @@ struct SceneView {
     float fogEnd = 0.0f;
 
     // Vanilla's per-face diffuse shading (Graphics.Shading.*), forwarded
-    // into CameraUBO — see that struct's own comment.
+    // into CameraUBO - see that struct's own comment.
     float shadeTop = 1.0f;
     float shadeBottom = 0.4f;
     float shadeNorthSouth = 0.8f;
     float shadeEastWest = 0.6f;
 
-    // Seconds since the client started, and since the previous frame —
+    // Terrain specular strength, 0 (off) to 1 (Graphics.Specular).
+    float specularStrength = 0.5f;
+
+    // Seconds since the client started, and since the previous frame -
     // mostly for shader pack overlays that animate.
     float time = 0.0f;
     float deltaTime = 0.0f;
@@ -59,9 +66,15 @@ struct SceneView {
     // of leaving the plain sky-colored clear.
     bool menuBackground = false;
 
-    // Graphics.Lighting ("G") and the F3 wireframe debug view.
+    // Graphics.Lighting ("G") and the F3+Z wireframe debug view.
     bool lightingEnabled = true;
     bool wireframe = false;
+
+    // Graphics.IndirectDraw: draw chunk sections with one multi-draw indirect
+    // call per list instead of a draw per section. Ignored (per-section draws)
+    // where the device or shader pack can't do it - see VulkanInit's
+    // *IndirectPipeline handles.
+    bool indirectDraw = true;
 };
 
 } // namespace Volcano::Engine

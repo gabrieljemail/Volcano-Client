@@ -1,3 +1,4 @@
+#include <chrono>
 #include <exception>
 #include "RenderEngine.hpp"
 #include "../../GlobalState.hpp"
@@ -67,11 +68,19 @@ std::vector<std::string> RenderEngine::GetPassNames() const
     return names;
 }
 
+std::vector<std::pair<std::string, float>> RenderEngine::GetPassRecordTimes() const
+{
+    std::vector<std::pair<std::string, float>> times;
+    times.reserve(passes.size());
+    for (const auto& pass : passes) times.emplace_back(pass->GetName(), pass->GetRecordMs());
+    return times;
+}
+
 void RenderEngine::SetShaderPack(const std::string& packName)
 {
     shaders.SetActivePack(packName);
 
-    // Persist what actually took effect — a pack that doesn't exist falls
+    // Persist what actually took effect - a pack that doesn't exist falls
     // back to "" rather than being saved and failing again next launch.
     state->config->Set("Graphics.ShaderPack", shaders.GetActivePack());
     state->config->Save();
@@ -90,7 +99,7 @@ void RenderEngine::CreatePasses()
         if (!shaders.HasActivePack()) throw;
 
         Log::Error("[ERROR] Shader pack \"" + shaders.GetActivePack() + "\" failed to build (" + e.what()
-            + ") — falling back to built-in shaders.");
+            + ") - falling back to built-in shaders.");
         DestroyPasses();
         shaders.SetActivePack("");
         for (auto& pass : passes) pass->Create(shaders);
@@ -109,7 +118,7 @@ void RenderEngine::ReloadPassShaders()
     if (!passesCreated) return;
 
     WaitIdle();
-    Log::Info("[INFO] Reloading shaders" + (shaders.HasActivePack() ? " (pack \"" + shaders.GetActivePack() + "\")" : std::string()) + "...");
+    Log::Info("Reloading shaders" + (shaders.HasActivePack() ? " (pack \"" + shaders.GetActivePack() + "\")" : std::string()) + "...");
 
     try
     {
@@ -120,23 +129,75 @@ void RenderEngine::ReloadPassShaders()
         if (!shaders.HasActivePack()) throw;
 
         Log::Error("[ERROR] Shader pack \"" + shaders.GetActivePack() + "\" failed to build (" + e.what()
-            + ") — falling back to built-in shaders.");
+            + ") - falling back to built-in shaders.");
         shaders.SetActivePack("");
         for (auto& pass : passes) pass->ReloadShaders(shaders);
     }
 
-    Log::Info("[INFO] Shader reload complete.");
+    Log::Info("Shader reload complete.");
 }
 
-void RenderEngine::RecordPasses(FrameContext& frame)
+void RenderEngine::ReloadPassTextures()
 {
-    // See GlobalState::trianglesDrawn's own comment — each pass adds to this
-    // as it records its own draw calls.
-    if (frame.state) frame.state->trianglesDrawn = 0;
+    if (!passesCreated) return;
 
+    WaitIdle();
     for (auto& pass : passes)
     {
-        if (pass->IsEnabled()) pass->Record(frame);
+        try
+        {
+            pass->ReloadTextures(shaders);
+        }
+        catch (const std::exception& e)
+        {
+            Log::Error("[ERROR] Pass \"" + pass->GetName() + "\" failed to reload textures: " + e.what());
+        }
+    }
+}
+
+bool RenderEngine::HasEnabledPass(PassStage stage) const
+{
+    for (const auto& pass : passes)
+    {
+        if (pass->IsEnabled() && pass->GetStage() == stage) return true;
+    }
+    return false;
+}
+
+void RenderEngine::RecordPasses(FrameContext& frame, PassStage stage)
+{
+    // See GlobalState::trianglesDrawn's own comment - each pass adds to this
+    // as it records its own draw calls.
+    if (stage == PassStage::PRE_MAIN && frame.state && frame.state->debugHudVisible)
+    {
+        for (uint64_t& count : frame.state->trianglesDrawn) count = 0;
+        for (float& ms : frame.state->chunkPhaseFrameMs) ms = 0.0f;
+    }
+
+    const bool profile = frame.state && frame.state->debugHudVisible;
+    frame.stage = stage;
+    for (auto& pass : passes)
+    {
+        if (!pass->IsEnabled() || pass->GetStage() != stage) continue;
+        if (!profile)
+        {
+            pass->Record(frame);
+            continue;
+        }
+
+        auto start = std::chrono::steady_clock::now();
+        pass->Record(frame);
+        float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - start).count();
+        pass->SetRecordMs(pass->GetRecordMs() + (ms - pass->GetRecordMs()) * 0.05f);
+    }
+
+    if (profile && stage == PassStage::OVERLAY)
+    {
+        GlobalState* s = frame.state;
+        for (int i = 0; i < GlobalState::CHUNK_PHASE_COUNT; i++)
+        {
+            s->chunkPhaseMs[i] += (s->chunkPhaseFrameMs[i] - s->chunkPhaseMs[i]) * 0.05f;
+        }
     }
 }
 

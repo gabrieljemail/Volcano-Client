@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -11,13 +12,14 @@
 #include "../ShaderLibrary.hpp"
 #include "../../VulkanInit.hpp"
 #include "../../../Logger.hpp"
+#include "../../../resources/ImageLoad.hpp"
 
 namespace Volcano::Engine::Passes {
 
 namespace {
 
-constexpr const char* PANORAMA_DIR = "resources/minecraft/assets/minecraft/textures/gui/title/background/";
-constexpr const char* CELESTIAL_DIR = "resources/minecraft/assets/minecraft/textures/environment/celestial/";
+constexpr const char* PANORAMA_DIR = "assets/minecraft/textures/gui/title/background/"; // Logical pack paths.
+constexpr const char* CELESTIAL_DIR = "assets/minecraft/textures/environment/celestial/";
 
 // Moon phases in vanilla order (phase 0 = full moon).
 constexpr std::array<const char*, 8> MOON_PHASES = {
@@ -66,7 +68,7 @@ void SkyboxPass::Create(const ShaderLibrary& shaders)
         Destroy();
         throw;
     }
-    Log::Info("[INFO] Skybox pass active.");
+    Log::Info("Skybox pass active.");
 }
 
 void SkyboxPass::ReloadShaders(const ShaderLibrary& shaders)
@@ -74,6 +76,12 @@ void SkyboxPass::ReloadShaders(const ShaderLibrary& shaders)
     if (cubeView == VK_NULL_HANDLE) return;
     DestroyPipeline();
     CreatePipeline(shaders);
+}
+
+void SkyboxPass::ReloadTextures(const ShaderLibrary& shaders)
+{
+    Destroy();
+    Create(shaders);
 }
 
 bool SkyboxPass::UploadLayers(const std::vector<const uint8_t*>& layers, uint32_t size, bool cube,
@@ -166,8 +174,8 @@ bool SkyboxPass::LoadCubemap()
     for (int layer = 0; layer < 6 && ok; layer++)
     {
         std::string path = std::string(PANORAMA_DIR) + "panorama_" + std::to_string(FACE_FILE[layer]) + ".png";
-        int w, h, channels;
-        faces[layer] = stbi_load(path.c_str(), &w, &h, &channels, STBI_rgb_alpha);
+        int w = 0, h = 0;
+        faces[layer] = LoadImageRGBA(path, w, h);
         if (!faces[layer])
         {
             Log::Error("[ERROR] Skybox: failed to load " + path);
@@ -247,22 +255,43 @@ bool SkyboxPass::LoadCelestial()
     std::vector<std::string> paths{ std::string(CELESTIAL_DIR) + "sun.png" };
     for (const char* phase : MOON_PHASES) paths.push_back(std::string(CELESTIAL_DIR) + "moon/" + phase + ".png");
 
-    // A missing texture becomes a transparent layer rather than failing the sky.
-    constexpr uint32_t SIZE = 32;
-    std::vector<std::vector<uint8_t>> pixels(paths.size(), std::vector<uint8_t>(SIZE * SIZE * 4, 0));
+    // A missing texture becomes a transparent layer rather than failing the
+    // sky. Every layer shares one size: the largest square texture (32 for
+    // vanilla, more for high-resolution packs), smaller ones scaled up nearest.
+    std::vector<stbi_uc*> images(paths.size(), nullptr);
+    std::vector<int> widths(paths.size(), 0);
+    uint32_t SIZE = 32;
     for (size_t i = 0; i < paths.size(); i++)
     {
-        int w, h, channels;
-        stbi_uc* data = stbi_load(paths[i].c_str(), &w, &h, &channels, STBI_rgb_alpha);
-        if (data && w == static_cast<int>(SIZE) && h == static_cast<int>(SIZE))
+        int w = 0, h = 0;
+        images[i] = LoadImageRGBA(paths[i], w, h);
+        if (images[i] && w == h && w > 0)
         {
-            std::memcpy(pixels[i].data(), data, pixels[i].size());
+            widths[i] = w;
+            SIZE = std::max(SIZE, static_cast<uint32_t>(w));
         }
         else
         {
-            Log::Error("[ERROR] Skybox: couldn't use " + paths[i] + " (missing, or not 32x32).");
+            Log::Error("[ERROR] Skybox: couldn't use " + paths[i] + " (missing, or not square).");
         }
-        if (data) stbi_image_free(data);
+    }
+
+    std::vector<std::vector<uint8_t>> pixels(paths.size(), std::vector<uint8_t>(static_cast<size_t>(SIZE) * SIZE * 4, 0));
+    for (size_t i = 0; i < paths.size(); i++)
+    {
+        if (images[i] && widths[i] > 0)
+        {
+            const uint32_t srcSize = static_cast<uint32_t>(widths[i]);
+            for (uint32_t y = 0; y < SIZE; y++)
+            {
+                for (uint32_t x = 0; x < SIZE; x++)
+                {
+                    const uint8_t* src = images[i] + (static_cast<size_t>(y * srcSize / SIZE) * srcSize + x * srcSize / SIZE) * 4;
+                    std::memcpy(pixels[i].data() + (static_cast<size_t>(y) * SIZE + x) * 4, src, 4);
+                }
+            }
+        }
+        if (images[i]) stbi_image_free(images[i]);
     }
 
     std::vector<const uint8_t*> layers;

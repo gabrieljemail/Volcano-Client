@@ -1,4 +1,3 @@
-#define VOLCANO_CLIENT_BUILD
 #include "ModLoader.hpp"
 
 #include <algorithm>
@@ -15,10 +14,28 @@ using Platform::OS;
 // the loader through this; set only while a mod's VC_InitMod runs.
 static ModLoader* initializingLoader = nullptr;
 
+// The loader mods unregister through: set in Init, cleared on destruction.
+static ModLoader* activeLoader = nullptr;
+
 ModLoader::~ModLoader()
 {
-    for (ModFile& mod : mods)
+    activeLoader = nullptr;
+
+    // Latest-loaded first, so a mod that builds on an earlier one goes first.
+    for (auto it = mods.rbegin(); it != mods.rend(); ++it)
     {
+        ModFile& mod = *it;
+        if (mod.loaded && mod.shutdown != nullptr)
+        {
+            try
+            {
+                mod.shutdown(state);
+            }
+            catch (...)
+            {
+                Log::Error("Mod " + mod.filename + " threw in VC_ShutdownMod.");
+            }
+        }
         if (mod.handle != nullptr) OS::UnloadObject(mod.handle);
     }
 }
@@ -26,6 +43,7 @@ ModLoader::~ModLoader()
 void ModLoader::Init()
 {
     namespace fs = std::filesystem;
+    activeLoader = this;
 
     std::error_code error;
     fs::create_directories(modsDir, error);
@@ -64,6 +82,24 @@ void ModLoader::Init()
             continue;
         }
 
+        // Optional: refuse a mod built for another API generation.
+        auto getInfo = reinterpret_cast<VC_GetModInfo_T>(OS::GetObjectSymbol(mod.handle, "VC_GetModInfo"));
+        const VC_ModInfo* info = getInfo != nullptr ? getInfo() : nullptr;
+        if (info == nullptr)
+        {
+            Log::Info("Mod " + mod.filename + " has no VC_GetModInfo; loading it without a version check.");
+        }
+        else if (info->apiMajor != VC_API_VERSION_MAJOR || info->apiMinor > VC_API_VERSION_MINOR)
+        {
+            Log::Error("Mod " + mod.filename + " was built for mod API " + std::to_string(info->apiMajor) + "."
+                + std::to_string(info->apiMinor) + " but this client provides " + std::to_string(VC_API_VERSION_MAJOR)
+                + "." + std::to_string(VC_API_VERSION_MINOR) + "; skipped.");
+            OS::UnloadObject(mod.handle);
+            mod.handle = nullptr;
+            continue;
+        }
+        mod.shutdown = reinterpret_cast<VC_ShutdownMod_T>(OS::GetObjectSymbol(mod.handle, "VC_ShutdownMod"));
+
         initializing = &mod;
         initializingLoader = this;
         try
@@ -75,11 +111,17 @@ void ModLoader::Init()
         {
             Log::Error("Mod " + mod.filename + " threw in VC_InitMod: " + e.what());
         }
+        catch (...)
+        {
+            Log::Error("Mod " + mod.filename + " threw in VC_InitMod.");
+        }
         initializing = nullptr;
         initializingLoader = nullptr;
 
         if (!mod.loaded)
         {
+            std::lock_guard<std::mutex> lock(handlersMutex);
+            for (const ModHandler& handler : mod.eventHandlers) handlerCounts[static_cast<size_t>(handler.type)]--;
             mod.eventHandlers.clear();
             OS::UnloadObject(mod.handle);
             mod.handle = nullptr;
@@ -94,36 +136,90 @@ void ModLoader::Init()
     }
 }
 
-void ModLoader::Fire(EventType type)
+void ModLoader::Fire(EventType type, const VC_EventData* data)
 {
-    for (ModFile& mod : mods)
+    if (!HasHandlers(type)) return;
+
+    static const VC_EventData EMPTY{ sizeof(VC_EventData), nullptr, 0, 0, 0, 0 };
+    if (data == nullptr) data = &EMPTY;
+
+    // Copy the lists so a handler may unregister while the event runs.
+    std::vector<std::pair<const ModFile*, ModHandler>> calls;
     {
-        if (!mod.loaded) continue;
-
-        auto it = mod.eventHandlers.find(type);
-        if (it == mod.eventHandlers.end()) continue;
-
-        for (VC_EventCallback_T callback : it->second)
+        std::lock_guard<std::mutex> lock(handlersMutex);
+        for (const ModFile& mod : mods)
         {
-            try
+            if (!mod.loaded) continue;
+            for (const ModHandler& handler : mod.eventHandlers)
             {
-                callback(state);
+                if (handler.type == type) calls.emplace_back(&mod, handler);
             }
-            catch (const std::exception& e)
-            {
-                Log::Error("Mod " + mod.filename + " threw in an event handler: " + e.what());
-            }
+        }
+    }
+
+    for (const auto& [mod, handler] : calls)
+    {
+        try
+        {
+            if (handler.extended != nullptr) handler.extended(state, data, handler.userData);
+            else handler.plain(state);
+        }
+        catch (const std::exception& e)
+        {
+            Log::Error("Mod " + mod->filename + " threw in an event handler: " + e.what());
+        }
+        catch (...)
+        {
+            Log::Error("Mod " + mod->filename + " threw in an event handler.");
         }
     }
 }
 
-bool ModLoader::AddHandler(EventType type, VC_EventCallback_T callback)
+uint32_t ModLoader::Register(ModHandler handler)
 {
-    if (initializing == nullptr || callback == nullptr) return false;
-    if (type >= EventType::COUNT) return false;
+    if (initializing == nullptr) return 0;
+    if (handler.type >= EventType::COUNT) return 0;
 
-    initializing->eventHandlers[type].push_back(callback);
-    return true;
+    std::lock_guard<std::mutex> lock(handlersMutex);
+    handler.handle = nextHandle++;
+    initializing->eventHandlers.push_back(handler);
+    handlerCounts[static_cast<size_t>(handler.type)]++;
+    return handler.handle;
+}
+
+uint32_t ModLoader::AddHandler(EventType type, VC_EventCallback_T callback)
+{
+    if (callback == nullptr) return 0;
+    ModHandler handler;
+    handler.type = type;
+    handler.plain = callback;
+    return Register(handler);
+}
+
+uint32_t ModLoader::AddHandler(EventType type, VC_EventCallbackEx_T callback, void* userData)
+{
+    if (callback == nullptr) return 0;
+    ModHandler handler;
+    handler.type = type;
+    handler.extended = callback;
+    handler.userData = userData;
+    return Register(handler);
+}
+
+bool ModLoader::RemoveHandler(uint32_t handle)
+{
+    std::lock_guard<std::mutex> lock(handlersMutex);
+    for (ModFile& mod : mods)
+    {
+        auto it = std::find_if(mod.eventHandlers.begin(), mod.eventHandlers.end(),
+            [handle](const ModHandler& h) { return h.handle == handle; });
+        if (it == mod.eventHandlers.end()) continue;
+
+        handlerCounts[static_cast<size_t>(it->type)]--;
+        mod.eventHandlers.erase(it);
+        return true;
+    }
+    return false;
 }
 
 std::vector<std::string> ModLoader::GetLoadedMods() const
@@ -141,5 +237,16 @@ std::vector<std::string> ModLoader::GetLoadedMods() const
 bool VC_EventHandler(uint8_t eventID, VC_EventCallback_T callback)
 {
     if (Volcano::initializingLoader == nullptr) return false;
-    return Volcano::initializingLoader->AddHandler(static_cast<Volcano::EventType>(eventID), callback);
+    return Volcano::initializingLoader->AddHandler(static_cast<Volcano::EventType>(eventID), callback) != 0;
+}
+
+uint32_t VC_EventHandlerEx(uint8_t eventID, VC_EventCallbackEx_T callback, void* userData)
+{
+    if (Volcano::initializingLoader == nullptr) return 0;
+    return Volcano::initializingLoader->AddHandler(static_cast<Volcano::EventType>(eventID), callback, userData);
+}
+
+bool VC_UnregisterEventHandler(uint32_t handle)
+{
+    return Volcano::activeLoader != nullptr && Volcano::activeLoader->RemoveHandler(handle);
 }

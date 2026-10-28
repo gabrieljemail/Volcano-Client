@@ -13,8 +13,8 @@ namespace Volcano::Engine {
 // resources/shaderpacks/), any "<name>.spv" it contains replaces the
 // built-in one from resources/shaders/, and anything it doesn't contain
 // falls back to the built-in. A pack can also provide shaders that have no
-// built-in at all — the "overlay.vert"/"overlay.frag" pair ShaderPackPass
-// draws — which simply don't run without one.
+// built-in at all - the "overlay.vert"/"overlay.frag" pair ShaderPackPass
+// draws - which simply don't run without one.
 //
 // Holds no graphics API objects: it only finds and validates bytes, so
 // passes on any backend share it, and it's safe to call SetActivePack()
@@ -37,12 +37,12 @@ public:
     // skipped. Empty if neither location has a usable file.
     std::vector<char> Load(const std::string& shaderName) const;
 
-    // The active pack's copy only, never the built-in — for pack-only slots
+    // The active pack's copy only, never the built-in - for pack-only slots
     // like the overlay. Empty when there's no pack or it lacks the file.
     std::vector<char> LoadFromPack(const std::string& shaderName) const;
     bool PackProvides(const std::string& shaderName) const;
 
-    // Folder names directly under PACK_ROOT, sorted — for a settings UI.
+    // Folder names directly under PACK_ROOT, sorted - for a settings UI.
     std::vector<std::string> ListPacks() const;
 
     // Magic number + word alignment only: enough to reject a GLSL source

@@ -7,12 +7,21 @@
 #include <GLFW/glfw3.h>
 #include "CrashReporter.hpp"
 #include "GlobalState.hpp"
+#include "RideController.hpp"
 #include "ModLoader.hpp"
 #include "InputHandler.hpp"
 #include "Logger.hpp"
+#include "resources/BaseAssets.hpp"
+#include "resources/ResourceManager.hpp"
+#include "resources/ResourceReloader.hpp"
+#include "platform/OS.hpp"
 #include "audio/SoundRegistry.hpp"
+#include "audio/BlockSounds.hpp"
+#include "audio/EntitySounds.hpp"
+#include "renderer/terrain/LightEngine.hpp"
 #include "audio/MusicController.hpp"
 #include "renderer/misc/ItemRenderer.hpp"
+#include "renderer/particle/ParticleSystem.hpp"
 #include "renderer/RenderThread.hpp"
 #include "renderer/engine/vulkan/VulkanRenderEngine.hpp"
 #include "renderer/SplashScreen.hpp"
@@ -26,9 +35,12 @@
 #include "renderer/terrain/MeshingThread.hpp"
 #include "renderer/gui/GUIController.hpp"
 #include "renderer/gui/models/Screen.hpp"
+#include "KeyBindings.hpp"
+#include "Onboarding.hpp"
 #include "renderer/gui/screens/LoadingScreen.hpp"
 #include "renderer/gui/screens/MainMenuScreen.hpp"
 #include "renderer/gui/screens/PauseScreen.hpp"
+#include "renderer/gui/screens/ServerList.hpp"
 #include "renderer/gui/screens/SettingsScreen.hpp"
 #include "renderer/gui/models/TextInput.hpp"
 #include "renderer/gui/models/Button.hpp"
@@ -37,13 +49,14 @@
 #include "TickLoop.hpp"
 #include "TickThread.hpp"
 #include "interaction/InteractionManager.hpp"
+#include "interaction/CombatSounds.hpp"
 #include "audio/AudioManager.hpp"
 #include <filesystem>
 #include <vector>
 using namespace std;
 
 // Defaults for the connect screen's fields are read from Network.DevServerHost/
-// Network.DevServerPort/Network.DevUsername (settings.json) — this is the
+// Network.DevServerPort/Network.DevUsername (settings.json) - this is the
 // developer's own test server, prefilled purely for convenience; both
 // fields stay editable in the UI.
 
@@ -69,6 +82,7 @@ static void ParseServerAddress(const std::string& address, std::string& outHost,
 
 int main(int argc, char** argv)
 {
+    Volcano::Platform::OS::AttachParentConsole();
     Volcano::CrashReporter::Install();
     if (Volcano::CrashReporter::HandleReportMode(argc, argv)) return 0;
 
@@ -82,6 +96,21 @@ int main(int argc, char** argv)
     // Initialize global state.
     Volcano::GlobalState state{};
     state.LoadSettings();
+
+    // Resource packs must exist before any asset read.
+    Volcano::ResourceManager resourceManager(&state);
+    state.resourceManager = &resourceManager;
+
+    // Performance.HighPriority: run one step above normal so other apps
+    // compete less with the render thread on low-core machines. Set before
+    // any thread is created so every thread inherits it.
+    if (std::get<bool>(state.config->Get("Performance.HighPriority", true)))
+    {
+        if (!Volcano::Platform::OS::SetAboveNormalPriority())
+        {
+            Volcano::Log::Info("Couldn't raise process priority; running at normal priority.");
+        }
+    }
 
     Volcano::ModLoader modLoader(&state);
     state.modLoader = &modLoader;
@@ -100,6 +129,27 @@ int main(int argc, char** argv)
     Volcano::SplashScreen::Show();
     modLoader.Fire(Volcano::EventType::SPLASH_SCREEN);
 
+    // First run: the game's own assets aren't shipped, so ask, then fetch them from Mojang before anything reads them.
+    if (!Volcano::BaseAssets::Installed())
+    {
+        std::string failure;
+        bool agreed = Volcano::Platform::OS::ShowConsentDialog("Download game assets", Volcano::BaseAssets::NOTICE,
+            Volcano::BaseAssets::AGREE_LABEL);
+        bool ready = agreed && Volcano::BaseAssets::Download(
+            [](float progress, const std::string&)
+            {
+                Volcano::SplashScreen::SetProgress(progress * 0.98f);
+            },
+            failure);
+        if (!ready)
+        {
+            if (agreed) Volcano::Platform::OS::ShowErrorDialog("Download failed", failure);
+            Volcano::SplashScreen::Hide();
+            return 1;
+        }
+        resourceManager.Reload();
+    }
+
     // Each init step below reports progress, which also pumps the window's
     // event queue so the OS doesn't mark the client "Not Responding".
     Volcano::SplashScreen::SetProgress(0.02f);
@@ -111,9 +161,19 @@ int main(int argc, char** argv)
     audioManager.Init();
     Volcano::SplashScreen::SetProgress(0.05f);
 
-    Volcano::SoundRegistry soundRegistry("resources/minecraft/assets/minecraft/sounds");
+    Volcano::ParticleSystem particleSystem;
+    state.particles = &particleSystem;
+    particleSystem.Init();
+
+    Volcano::SoundRegistry soundRegistry("assets/minecraft/sounds");
     soundRegistry.IndexSounds();
     state.soundRegistry = &soundRegistry;
+    Volcano::BlockSounds blockSounds(&state);
+    state.blockSounds = &blockSounds;
+    Volcano::EntitySounds entitySounds(&state);
+    state.entitySounds = &entitySounds;
+    Volcano::CombatSounds combatSounds(&state);
+    state.combatSounds = &combatSounds;
     modLoader.Fire(Volcano::EventType::AUDIO_LOADED);
     Volcano::SplashScreen::SetProgress(0.10f);
 
@@ -130,49 +190,23 @@ int main(int argc, char** argv)
     if (std::get<bool>(state.config->Get("Controls.Mouse.RawInput", true))) input.EnableRawMouse();
 
     // Register camera inputs. Sensitivity (degrees per pixel of mouse motion)
-    // is the ONLY scaling applied to mouse look — RenderThread::PollInputs
+    // is the ONLY scaling applied to mouse look - RenderThread::PollInputs
     // passes 1.0f into Camera::ApplyMouseDelta so there's a single knob here,
     // not two multiplied together.
     input.RegisterAxis("Camera.X", InputAxis{ -1.0f, 1.0f, 0.0f, 0.15f, 0, 0, AxisSourceType::MouseX, false });
     input.RegisterAxis("Camera.Y", InputAxis{ -1.0f, 1.0f, 0.0f, 0.15f, 0, 0, AxisSourceType::MouseY, false });
 
-    // Register movement inputs (client-side movement, matching how Minecraft
-    // handles player movement — the server only reconciles/corrects it).
-    // KeyPair axes: value is +1 while the positive key is held, -1 for the
-    // negative key, 0 if neither/both are held.
-    input.RegisterAxis("Move.Forward", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, GLFW_KEY_W, GLFW_KEY_S, AxisSourceType::KeyPair, false });
-    input.RegisterAxis("Move.Right", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, GLFW_KEY_D, GLFW_KEY_A, AxisSourceType::KeyPair, false });
-    // Space is now a real jump (TickLoop applies gravity/collision) instead
-    // of the old fly-cam's continuous vertical axis. Two actions on the same
-    // key: "Jump" (PRESS) drives TickLoop's edge-latch so a tap landing
-    // between fixed ticks is never lost, and "JumpHold" (HOLD) lets it also
-    // re-queue a jump on every frame the key is still down, which is what
-    // gives holding Space vanilla's repeat-jump-on-landing behavior.
-    input.RegisterAction("Jump", InputActionTriggerType::PRESS, {GLFW_KEY_SPACE});
-    input.RegisterAction("JumpHold", InputActionTriggerType::HOLD, {GLFW_KEY_SPACE});
-    input.RegisterAction("Sprint", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_CONTROL});
-    input.RegisterAction("Sneak", InputActionTriggerType::HOLD, {GLFW_KEY_LEFT_SHIFT});
-    input.RegisterAction("OpenChat", InputActionTriggerType::PRESS, {GLFW_KEY_T});
-    input.RegisterAction("ToggleInventory", InputActionTriggerType::PRESS, {GLFW_KEY_E});
-    input.RegisterAction("ToggleWireframe", InputActionTriggerType::PRESS, {GLFW_KEY_F3});
-    input.RegisterAction("ToggleLighting", InputActionTriggerType::PRESS, {GLFW_KEY_G});
-    input.RegisterAction("ReloadShaders", InputActionTriggerType::PRESS, {GLFW_KEY_F9});
+    // Movement, actions and hotbar keys are rebindable (see KeyBindings.hpp):
+    // the Move.* axes start with no keys and Apply fills them in from
+    // settings.json's Controls.Keys.*, as it does every action. Movement is
+    // client-side, matching Minecraft - the server only reconciles it.
+    input.RegisterAxis("Move.Forward", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, 0, 0, AxisSourceType::KeyPair, false });
+    input.RegisterAxis("Move.Right", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, 0, 0, AxisSourceType::KeyPair, false });
+    Volcano::KeyBindings::Apply(*state.config, input);
 
-    // Hotbar slot selection.
-    for (int slot = 0; slot < 9; slot++)
-    {
-        input.RegisterAction("Hotbar." + std::to_string(slot),
-            InputActionTriggerType::PRESS, {static_cast<uint16_t>(GLFW_KEY_1 + slot)});
-    }
-
-    // Mainhand/offhand interaction.
-    input.RegisterAction("PrimaryActionPress", InputActionTriggerType::PRESS, {MOUSE_BUTTON_LEFT});
-    input.RegisterAction("PrimaryAction", InputActionTriggerType::HOLD, {MOUSE_BUTTON_LEFT});
-
-    // Secondary gets three actions on the same button.
-    input.RegisterAction("SecondaryAction", InputActionTriggerType::PRESS, {MOUSE_BUTTON_RIGHT});
-    input.RegisterAction("SecondaryActionHold", InputActionTriggerType::HOLD, {MOUSE_BUTTON_RIGHT});
-    input.RegisterAction("SecondaryActionRelease", InputActionTriggerType::RELEASE, {MOUSE_BUTTON_RIGHT});
+    // Fixed: RELEASE so F3+Z (wireframe, see RenderThread::PollInputs) can
+    // cancel it, which only works with F3 itself.
+    input.RegisterAction("ToggleDebugHud", InputActionTriggerType::RELEASE, {GLFW_KEY_F3});
 
     // Builds the protocol block-state-id -> texture mapping from
     // minecraft-data + the vanilla blockstate/model JSON.
@@ -186,7 +220,7 @@ int main(int argc, char** argv)
     // step, so it reports per-texture progress across 0.22 -> 0.85.
     Volcano::Log::Info("Loading textures... (this may take a moment)");
     Volcano::TextureManager textureManager;
-    textureManager.LoadResourcePack("resources/minecraft", [](float fraction) {
+    textureManager.LoadResourcePack([](float fraction) {
         Volcano::SplashScreen::SetProgress(0.22f + fraction * 0.63f);
     });
     Volcano::SplashScreen::SetProgress(0.85f);
@@ -194,7 +228,7 @@ int main(int argc, char** argv)
     modLoader.Fire(Volcano::EventType::TEXTURES_LOADED);
 
     // Resolves item icon texture layers against the array textureManager
-    // just built — must run after LoadResourcePack(), not alongside
+    // just built - must run after LoadResourcePack(), not alongside
     // BlockRegistry/EntityRegistry::Init() above (which only need JSON,
     // not the texture array).
     Volcano::ItemRegistry::Init(textureManager);
@@ -215,10 +249,12 @@ int main(int argc, char** argv)
     state.itemRenderer = &itemRenderer;
     Volcano::SplashScreen::SetProgress(0.97f);
 
-    // World (placeholder — see the tick-loop plan) and attributes must exist
+    // World (placeholder - see the tick-loop plan) and attributes must exist
     // before GenerateChunks/TickLoop touch them.
     Volcano::World world;
     state.world = &world;
+    Volcano::LightEngine lightEngine(&world);
+    state.lightEngine = &lightEngine;
 
     Volcano::PlayerAttributes attributes = Volcano::PlayerAttributes::Defaults();
     state.attributes = &attributes;
@@ -226,56 +262,38 @@ int main(int argc, char** argv)
     Volcano::InteractionManager interaction(&state);
     state.interaction = &interaction;
 
-    // The world now loads from whatever server the player connects to (see
-    // the "Connect" screen below) instead of a hardcoded grid. GenerateChunks
-    // is kept above, unused, in case an offline/no-server mode is wanted
-    // later.
-
     // Constructed after player/input/world/attributes so its constructor
     // (which reads the player's starting position) has everything it needs.
     Volcano::TickLoop tickLoop(&state);
     state.tickLoop = &tickLoop;
+    Volcano::RideController rideController(&state);
+    state.rideController = &rideController;
 
-    // No renderer.Start() anymore — the frame loop runs inline in this
-    // thread's own loop below (see the tick-loop plan's thread-merge step).
-
-    // Meshing runs on its own thread too — greedy-meshing a full 16x384x16
-    // chunk is real CPU work, and doing it inline on this thread (as it used
-    // to) meant a burst of incoming chunks could stall the network thread's
-    // own packet loop. See MeshingThread's header for why the work itself
-    // doesn't need to run on any particular thread. Started immediately
-    // (unlike NetworkThread) since it just idles until there's a connection.
     Volcano::MeshingThread meshingThread(&state, &textureManager);
     meshingThread.Start();
 
-    // Drives TickLoop::Tick() and the per-tick position/rotation report on
-    // its own steady cadence — see TickThread's own class comment for why
-    // this can't just run inline on NetworkThread the way it used to.
-    // Started immediately, same as MeshingThread just above: it idles
-    // (worldReady stays false, GlobalState::activeConnection stays null)
-    // until there's an actual connection to report to.
+    // F3+T / settings GUI reload (see ResourceReloader.hpp). Startup above
+    // keeps calling the same per-subsystem Init functions in its own order.
+    Volcano::ResourceReloader::Attach(&textureManager, &meshingThread);
+
     Volcano::TickThread tickThread(&state);
     tickThread.Start();
 
-    // Network runs on its own thread, deliberately separate from this
-    // (GLFW-owning) main thread — see the networking plan for why. It's
-    // only created once the player submits the connect screen below, since
-    // the host/port/username aren't known until then.
     std::unique_ptr<Volcano::NetworkThread> network;
 
     // Singleplayer screen: one button per settings.json's
     // Network.LocalServerDirs entry, each launching that directory's
     // server.jar on Network.LoopbackPort and connecting to it exactly like
-    // any other server — see NetworkThread's localServerDir constructor
+    // any other server - see NetworkThread's localServerDir constructor
     // argument. Its buttons are filled in further down.
     Volcano::GUI::Screen* singleplayerScreen = Volcano::GUIController::CreateScreen("Singleplayer", /* closable */ false);
 
     // Shown from the moment a connection attempt starts (singleplayer or
-    // multiplayer) until the world is ready — the main loop below closes it
+    // multiplayer) until the world is ready - the main loop below closes it
     // once GlobalState::worldReady flips. See LoadingScreen.hpp; what it
     // says follows GlobalState::connectionPhase. Cancel (only offered while
     // a local server is starting) doesn't block on the server shutting down
-    // — see RequestStop's own comment. The old NetworkThread (and its
+    // - see RequestStop's own comment. The old NetworkThread (and its
     // still-shutting-down LocalServer) gets joined for real whenever
     // `network` is next reassigned, not here, so this can't freeze the
     // render thread waiting on LocalServer::Stop()'s up-to-30s grace period.
@@ -305,10 +323,12 @@ int main(int argc, char** argv)
     auto* disconnectReasonText = new Volcano::GUI::GUIComponent(Volcano::GUI::GUIComponentType::TEXT, "");
     disconnectReasonText->SetVisibile(false);
 
-    connectButton->AddClickHandler(new std::function<void()>([&state, &network, addressInput, usernameInput, loadingScreen, devServerPort] {
+    // Starts a connection to "host[:port]" as the username on the connect
+    // screen: shared by its Connect button and the server list's Join.
+    auto connectToServer = [&state, &network, usernameInput, loadingScreen, devServerPort](const std::string& address) {
         std::string host;
         uint16_t port;
-        ParseServerAddress(addressInput->GetValue(), host, port, devServerPort);
+        ParseServerAddress(address, host, port, devServerPort);
         std::string username = usernameInput->GetValue();
         if (host.empty() || username.empty()) return;
 
@@ -317,6 +337,9 @@ int main(int argc, char** argv)
         network->Start();
 
         Volcano::GUIController::OpenScreen(loadingScreen);
+    };
+    connectButton->AddClickHandler(new std::function<void()>([connectToServer, addressInput] {
+        connectToServer(addressInput->GetValue());
     }));
 
     // Built once here (the LocalServerDirs list isn't expected to change at
@@ -352,17 +375,25 @@ int main(int argc, char** argv)
     connectScreen->components.push_back(usernameInput);
     connectScreen->components.push_back(connectButton);
 
-    // Main menu: the actual startup screen and navigation hub now — see
+    // Main menu: the actual startup screen and navigation hub now - see
     // MainMenuScreen.hpp. Built after singleplayerScreen/connectScreen
     // (its Singleplayer/Multiplayer buttons open them directly), so their
     // own Back buttons (added right after, below) can close the loop back
     // to it instead of each other.
     Volcano::GUI::Screen* settingsScreen = Volcano::GUI::CreateSettingsScreen(&state);
-    Volcano::GUI::Screen* mainMenuScreen =
-        Volcano::GUI::CreateMainMenuScreen(&state, singleplayerScreen, connectScreen, settingsScreen);
+    // Multiplayer opens the saved-server list; Direct Connect from there opens
+    // connectScreen. Its Back needs the main menu, which is built just after.
+    Volcano::GUI::Screen* mainMenuScreen = nullptr;
+    Volcano::GUI::ServerListActions serverListActions;
+    serverListActions.join = [connectToServer](const Volcano::GUI::ServerEntry& server) { connectToServer(server.address); };
+    serverListActions.directConnect = [connectScreen] { Volcano::GUIController::OpenScreen(connectScreen); };
+    serverListActions.back = [&mainMenuScreen] { Volcano::GUIController::OpenScreen(mainMenuScreen); };
+    Volcano::GUI::Screen* serverListScreen = Volcano::GUI::CreateServerList(serverListActions);
+
+    mainMenuScreen = Volcano::GUI::CreateMainMenuScreen(&state, singleplayerScreen, serverListScreen, settingsScreen);
 
     // Pause menu (Esc in a world). Servers and Disconnect both leave the
-    // current session the same way — RequestStop, show the loading screen
+    // current session the same way - RequestStop, show the loading screen
     // as "Disconnecting...", and let the main loop below finish the job once
     // the network thread (and, in singleplayer, the local server, which can
     // take a while to save and exit) has actually wound down; resetting the
@@ -376,7 +407,7 @@ int main(int argc, char** argv)
         Volcano::GUIController::OpenScreen(loadingScreen);
     };
     Volcano::GUIController::SetPauseScreen(Volcano::GUI::CreatePauseScreen(
-        [beginDisconnect, connectScreen] { beginDisconnect(connectScreen); },
+        [beginDisconnect, serverListScreen] { beginDisconnect(serverListScreen); },
         [settingsScreen] { Volcano::GUI::OpenSettingsScreen(settingsScreen, Volcano::GUIController::GetPauseScreen()); },
         [beginDisconnect, mainMenuScreen] { beginDisconnect(mainMenuScreen); }));
 
@@ -387,7 +418,7 @@ int main(int argc, char** argv)
 
     auto* connectBackButton = new Volcano::GUI::Button("Back");
     connectBackButton->AddClickHandler(new std::function<void()>(
-        [mainMenuScreen] { Volcano::GUIController::OpenScreen(mainMenuScreen); }));
+        [serverListScreen] { Volcano::GUIController::OpenScreen(serverListScreen); }));
     connectScreen->components.push_back(connectBackButton);
 
     // Loading is done: show a full bar for one frame, then free the
@@ -395,10 +426,12 @@ int main(int argc, char** argv)
     Volcano::SplashScreen::SetProgress(1.0f);
     Volcano::SplashScreen::Hide();
 
-    Volcano::GUIController::OpenScreen(mainMenuScreen);
+    // Onboarding screen: Shown when the user launches the client for the first time.
+    // This class will show the main menu once onboarding is done or it shouldn't be shown.
+    Volcano::Onboarding onboarding(&state, mainMenuScreen);
     modLoader.Fire(Volcano::EventType::RENDER_START);
 
-    // This is now the frame loop itself (see RenderThread::RunFrame — it
+    // This is now the frame loop itself (see RenderThread::RunFrame - it
     // calls glfwPollEvents() internally as the first step of PollInputs)
     // rather than a separate 1ms message-pump loop alongside a dedicated
     // render thread. Chunk/spawn handoff still happens entirely on
@@ -407,16 +440,30 @@ int main(int argc, char** argv)
     {
         // GUIController and NotifyFramePresented run in this same loop now,
         // but GLFW still only guarantees glfwSetInputMode is safe from the
-        // thread that created the window — this one, same as before, just
+        // thread that created the window - this one, same as before, just
         // no longer a *different* thread than the one that just ran
-        // PollInputs/DrawFrame — see GlobalState::pendingCursorMode.
+        // PollInputs/DrawFrame - see GlobalState::pendingCursorMode.
         if (int mode = state.pendingCursorMode.exchange(-1); mode != -1)
         {
             glfwSetInputMode(state.window, GLFW_CURSOR, mode);
         }
 
+        // The focus callback only fires on a change, so a window that was already focused when it appeared (or
+        // when a screen closed) could be left with a free cursor until the user clicked away and back. Trust
+        // GLFW's own answer: in game, focused, with no screen or chat open, the cursor is captured.
+        {
+            bool focused = glfwGetWindowAttrib(state.window, GLFW_FOCUSED) != 0;
+            state.windowFocused.store(focused);
+            if (focused && state.connectionPhase.load() == Volcano::ConnectionPhase::Playing
+                && !Volcano::GUIController::IsScreenOpen() && !Volcano::GUIController::IsChatInputOpen()
+                && glfwGetInputMode(state.window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+            {
+                glfwSetInputMode(state.window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            }
+        }
+
         // NetworkThread flags this when a session ends unexpectedly (kicked,
-        // dropped, login failure) — see GlobalState::ReportDisconnect. Reset
+        // dropped, login failure) - see GlobalState::ReportDisconnect. Reset
         // world/session state so the next connection starts clean instead of
         // layering onto the previous one's leftovers, then show the connect
         // screen again with the reason.
@@ -430,7 +477,7 @@ int main(int argc, char** argv)
             Volcano::Log::Info("Returned to connect screen: " + reason);
             modLoader.Fire(Volcano::EventType::LEAVE_PLAY_STATE);
 
-            // See GlobalState::ResetWorldState's own comment — same reset a
+            // See GlobalState::ResetWorldState's own comment - same reset a
             // mid-session dimension change (PlayS2C::Respawn) uses, just
             // followed here by actually reopening the connect screen.
             state.SetConnectionPhase(Volcano::ConnectionPhase::Idle);
@@ -443,7 +490,7 @@ int main(int argc, char** argv)
         }
 
         // Finishes a player-requested leave (pause menu's Servers/Disconnect
-        // — see beginDisconnect above) once nothing can repopulate the world.
+        // - see beginDisconnect above) once nothing can repopulate the world.
         if (disconnectDestination != nullptr && (!network || network->HasSessionEnded()))
         {
             Volcano::GUI::Screen* destination = disconnectDestination;
@@ -458,7 +505,7 @@ int main(int argc, char** argv)
         }
 
         // The world actually streamed in (singleplayer or multiplayer alike)
-        // — swap the loading screen out for the game itself. Checked after
+        // - swap the loading screen out for the game itself. Checked after
         // the disconnect branch above (which already covers the failure
         // case: a connection dying before this ever becomes true reports
         // its own reason and reopens connectScreen instead, with the phase
@@ -482,13 +529,13 @@ int main(int argc, char** argv)
     // Tear down the GUI and every render pass (waits for the GPU to finish
     // with them first) before renderEngine.Shutdown() below destroys the
     // device/window out from under them. No thread hand-off needed for this
-    // anymore — RunFrame() above already stopped being called the moment
+    // anymore - RunFrame() above already stopped being called the moment
     // state.shouldClose went true, so nothing is still touching Vulkan/GLFW
     // by the time we get here. Previously nothing ever called
     // VulkanInit::Cleanup() at all: the process just exited with the Vulkan
     // device, swapchain, surface, instance and GLFW window all still alive,
     // which is what was hanging the graphics driver on shutdown (observed
-    // on Windows/Intel Gen9) — the message-pump-while-stopping dance this
+    // on Windows/Intel Gen9) - the message-pump-while-stopping dance this
     // used to require was specifically to avoid that while a second thread
     // wound down; ThreadArchitecture.mdx's merge removes the second thread
     // instead of working around it.
@@ -496,7 +543,7 @@ int main(int argc, char** argv)
     renderer.Shutdown();
 
     // MeshingThread must be fully joined before renderEngine.Shutdown()
-    // below — it calls ChunkMesher::Shutdown(), which destroys the slab
+    // below - it calls ChunkMesher::Shutdown(), which destroys the slab
     // buffers MeshingThread writes into.
     meshingThread.Stop();
 

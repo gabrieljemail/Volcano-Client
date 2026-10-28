@@ -10,7 +10,7 @@
 namespace Volcano::GUI {
 
 // Integer slider bound through a getter/setter pair (e.g. a Config key).
-// Commits once on release, not per drag step — a setting that rebuilds the
+// Commits once on release, not per drag step - a setting that rebuilds the
 // swapchain would otherwise rebuild it every frame while dragging.
 class Slider : public GUIComponent
 {

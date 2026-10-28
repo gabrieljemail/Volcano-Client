@@ -16,7 +16,7 @@ namespace Volcano::Engine::Passes {
 
 // Builds this frame's Hi-Z occlusion pyramid (VulkanInit's hizImage) from
 // the just-finished depth buffer: a same-resolution copy into mip 0, then a
-// max-reduction mip chain above it — see hiz_copy.comp/hiz_downsample.comp
+// max-reduction mip chain above it - see hiz_copy.comp/hiz_downsample.comp
 // for the per-texel math, and VulkanInit.hpp's own comment on the pyramid
 // itself.
 //

@@ -4,6 +4,8 @@
 
 #include <array>
 #include <cstdint>
+#include <shared_mutex>
+#include <unordered_map>
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
@@ -20,12 +22,36 @@ namespace Volcano::BlockRegistry {
 // Init() returns and safe to call from any thread.
 void Init();
 
+// Held shared by threads that read the tables off the render thread (the
+// network thread's chunk parsing / Block Updates) so Reload() can swap them
+// safely. Render/tick/meshing-thread readers need no lock: Reload() runs on
+// the render thread with the meshing thread paused.
+std::shared_lock<std::shared_mutex> ReadLock();
+
+// Old -> new visual ids after a re-Init (pairs of visualId/nonCubeVisualId).
+struct VisualRemap {
+    std::unordered_map<uint32_t, uint32_t> pairs; // (visual << 16 | nonCube) -> same for the new tables.
+    // Returns the block with its visual ids translated; unknown pairs (incl.
+    // the ambiguous 0/0) are left alone.
+    Block Apply(const Block& block) const;
+};
+
+// Re-runs Init() (picking up changed resource packs) under the exclusive
+// lock and returns the translation for blocks already stored in loaded
+// chunks, derived per protocol state id. Blocks whose old and new visuals
+// can't be told apart (one old visual split into several, or a block that
+// was unresolved before) keep their old ids until the chunk is re-sent.
+VisualRemap Reload();
+
+// Same as ResolveStateId but the caller holds ReadLock() (batch use).
+Block ResolveStateIdUnlocked(int32_t stateId);
+
 // Maps a protocol block-state id (as sent in a Chunk Data and Update Light
-// packet's paletted containers) to a visual id — an index into an interned
+// packet's paletted containers) to a visual id - an index into an interned
 // table of face-texture-name tuples. 0 means "nothing to draw here": true
 // air, a block Init() couldn't resolve to a full single-cube model (stairs,
 // slabs, fences, plants, fluids, ...), or a state id outside every loaded
-// block's range (logged once per id — a real version/protocol mismatch
+// block's range (logged once per id - a real version/protocol mismatch
 // signal, unlike the other two cases which are expected).
 uint16_t MapStateId(int32_t stateId);
 
@@ -43,18 +69,18 @@ const std::string& GetFaceTextureName(uint16_t visualId, int faceIndex);
 uint16_t VisualIdForName(const std::string& blockName);
 
 // How a NonCubeVisual should be drawn by NonCubicMesher. (Collision no longer
-// comes from these visuals — see MapStateIdCollisionShape.)
+// comes from these visuals - see MapStateIdCollisionShape.)
 enum class NonCubeShape : uint8_t {
     Cross,           // Two (or more) intersecting billboard planes: grass, flowers, saplings, ...
     Partial,         // One or more axis-aligned boxes smaller than a full block: slabs, carpets, snow layers, ...
     TransparentCube, // A full unit cube, but not opaque: glass, slime, ice, ...
     Liquid,          // A flat-topped box whose height depends on the block's fluid "level" state: water. Drawn
-                      // genuinely alpha-blended (depth write off) rather than cutout — see NonCubicMesher.
+                      // genuinely alpha-blended (depth write off) rather than cutout - see NonCubicMesher.
 };
 
 // One axis-aligned box within a Partial/TransparentCube visual, in the same
 // model-space units as the resource-pack JSON (0..16 per axis, 1 unit =
-// 1/16 block) — NonCubicMesher divides by 16 itself. An empty faceTextures
+// 1/16 block) - NonCubicMesher divides by 16 itself. An empty faceTextures
 // entry means that face isn't part of the model (nothing drawn there),
 // same convention BlockRegistry::GetFaceTextureName uses for full cubes.
 struct NonCubeElement {
@@ -62,10 +88,10 @@ struct NonCubeElement {
     glm::vec3 to{0.0f};
     std::array<std::string, 6> faceTextures; // ChunkMesher's face order: 0=Up, 1=Down, 2=North, 3=South, 4=East, 5=West.
     // Per-face texture-space rectangle (u1,v1,u2,v2), same 0..16 units as
-    // from/to — the model JSON's own "uv", or a full 0,0,16,16 tile when a
+    // from/to - the model JSON's own "uv", or a full 0,0,16,16 tile when a
     // face doesn't specify one. Needed because a sub-full-block element
     // (a torch's 2x10x2 stick, a slab's 16x8x16 half) samples only part of
-    // its texture, not the whole thing stretched across the smaller face —
+    // its texture, not the whole thing stretched across the smaller face -
     // see NonCubicMesher's EmitQuad.
     std::array<glm::vec4, 6> faceUVs;
 };
@@ -74,14 +100,19 @@ struct NonCubeVisual {
     NonCubeShape shape = NonCubeShape::Partial;
     std::vector<NonCubeElement> elements; // Populated for Partial/TransparentCube; empty for Cross.
     std::string crossTexture;             // Populated for Cross only.
+
+    // Liquid only: 1 = water, 2 = lava, and the block's own surface height as a
+    // fraction of a block (amount / 9; the mesher raises it to 1 under more fluid).
+    uint8_t fluidKind = 0;
+    float fluidHeight = 0.0f;
 };
 
-// Maps a protocol block-state id to a non-cube visual id — an index into an
-// interned table of NonCubeVisuals — for any block that didn't resolve to an
+// Maps a protocol block-state id to a non-cube visual id - an index into an
+// interned table of NonCubeVisuals - for any block that didn't resolve to an
 // opaque full-cube visual via MapStateId. 0 means nothing to draw this way
 // either (true air, an out-of-range id, or a shape this pass still doesn't
-// handle — lava and multipart blockstates like fences/walls/redstone). Water
-// is the one fluid resolved this pass (NonCubeShape::Liquid, static —
+// handle - lava and multipart blockstates like fences/walls/redstone). Water
+// is the one fluid resolved this pass (NonCubeShape::Liquid, static -
 // flow/waterlogged interaction still isn't modeled).
 uint16_t MapStateIdNonCube(int32_t stateId);
 
@@ -90,7 +121,7 @@ uint16_t MapStateIdNonCube(int32_t stateId);
 // for id 0 or any id outside the interned table.
 const NonCubeVisual& GetNonCubeVisual(uint16_t nonCubeVisualId);
 
-// One axis-aligned collision box in LOCAL block-space, 0..1 per axis — add
+// One axis-aligned collision box in LOCAL block-space, 0..1 per axis - add
 // directly to a block's integer world origin to place it. May extend past 1
 // on Y: fences, walls and fence gates collide up to 1.5 (see TickLoop's scan
 // ranges, which look one cell below the player's AABB for exactly this).
@@ -111,12 +142,12 @@ struct CollisionBoxes {
 };
 
 // Maps a protocol block-state id to its collision-shape id in minecraft-data's
-// blockCollisionShapes.json — the same per-state shapes the server collides
+// blockCollisionShapes.json - the same per-state shapes the server collides
 // against. 0 means no collision. Returns Block::UNKNOWN_COLLISION_SHAPE for
 // an out-of-range id, or if that file failed to load.
 uint16_t MapStateIdCollisionShape(int32_t stateId);
 
-// Real collision geometry for one block, from its collisionShapeId — NOT from
+// Real collision geometry for one block, from its collisionShapeId - NOT from
 // its render model. Deriving it from the model (as this used to) left every
 // block without drawable model elements with no collision: shulker boxes,
 // chests, beds, signs, skulls, and anything else a block-entity renderer
@@ -157,7 +188,7 @@ struct BreakInfo {
 const BreakInfo& GetBreakInfo(uint16_t breakInfoId);
 
 // Fully-resolved Block for a protocol state id (visual, non-cube visual,
-// collision shape and break ticks) — what chunk parsing and Block Update use.
+// collision shape and break ticks) - what chunk parsing and Block Update use.
 Block ResolveStateId(int32_t stateId);
 
 // A block's default state id by name (e.g. "stone"), or -1 if unknown. Used

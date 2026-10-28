@@ -4,6 +4,8 @@
 #include <vector>
 #include <GLFW/glfw3.h>
 #include "SettingsScreen.hpp"
+#include "KeyBindsScreen.hpp"
+#include "ResourcePacksScreen.hpp"
 #include "../GUIController.hpp"
 #include "../models/Button.hpp"
 #include "../models/GUIComponent.hpp"
@@ -124,29 +126,86 @@ OptionButton* MakeFullscreenModeOption(Config* config)
     return option;
 }
 
+// Video is a hub of categories, each its own screen; Done returns to the hub.
+Screen* CreateVideoCategory(const std::string& title)
+{
+    Screen* screen = GUIController::CreateScreen(title, false);
+    screen->columns = 2;
+    return screen;
+}
+
 Screen* CreateVideoScreen(GlobalState* state, Screen* settingsScreen)
 {
     Config* config = state->config;
-    Screen* screen = GUIController::CreateScreen("Video Settings", false);
-    screen->columns = 2;
+    Screen* hub = GUIController::CreateScreen("Video Settings", false);
+
+    Screen* display = CreateVideoCategory("Display");
+    {
+        Screen* screen = display;
     screen->components.push_back(WithTooltip(new OptionButton("GUI Scale", { "Auto", "1x", "2x", "3x", "4x" },
         [config] { return static_cast<size_t>(std::min<uint32_t>(std::get<uint32_t>(config->Get("Graphics.GUIScale", uint32_t{0})), 4)); },
         [config](size_t index) { config->Set("Graphics.GUIScale", static_cast<uint32_t>(index)); }),
         "Size of menus and the HUD. Auto picks the largest size that fits the window."));
-    screen->components.push_back(WithTooltip(MakeSlider(config, "Render Distance", "Graphics.RenderDistance", 2, 32, 8, " chunks"),
-        "How far away chunks load. Higher costs more memory and FPS. Applies when you next join a world."));
     screen->components.push_back(WithTooltip(MakeSlider(config, "FOV", "Graphics.FOV", 30, 110, 100),
         "Field of view in degrees. Higher shows more around you; lower zooms in."));
     screen->components.push_back(WithTooltip(MakeSlider(config, "FOV Effects", "Graphics.FOVEffects", 0, 20, 5),
         "How many degrees the view widens while sprinting. 0 turns the effect off."));
+    screen->components.push_back(WithTooltip(MakeToggle(config, "View Bobbing", "Graphics.ViewBobbing", true),
+        "Sways the view and your hand with each step as you walk."));
+    screen->components.push_back(WithTooltip(MakeToggle(config, "Body View (Experimental)", "Graphics.BodyView", false),
+        "Shows your own animated body and arms in first person, as others see you in third person, instead of the floating hand."));
     screen->components.push_back(WithTooltip(MakeSlider(config, "Hand Scale", "Graphics.HandScale", 25, 200, 100, "%"),
         "Size of the held item and hand in first person."));
     screen->components.push_back(WithTooltip(MakeToggle(config, "Left Handed", "Graphics.LeftHanded", false),
         "Swaps your main hand and off hand. The held item and hand move to the left side."));
     screen->components.push_back(WithTooltip(MakeSlider(config, "Brightness", "Graphics.Brightness", 0, 100, 50, "%"),
         "Brightens dark areas like caves and night without washing out daylight."));
+        screen->components.push_back(MakeNavButton("Done", [hub] { GUIController::OpenScreen(hub); }));
+    }
+
+    Screen* quality = CreateVideoCategory("Quality");
+    {
+        Screen* screen = quality;
+    screen->components.push_back(WithTooltip(MakeSlider(config, "Render Distance", "Graphics.RenderDistance", 2, 32, 8, " chunks"),
+        "How far away chunks load. Higher costs more memory and FPS. Applies when you next join a world."));
+    screen->components.push_back(WithTooltip(new OptionButton("Clouds", { "Off", "Fast", "Fancy" },
+        [config] { return static_cast<size_t>(std::min<uint32_t>(std::get<uint32_t>(config->Get("Graphics.Clouds", uint32_t{2})), 2)); },
+        [config](size_t index) { config->Set("Graphics.Clouds", static_cast<uint32_t>(index)); }),
+        "Fast draws flat clouds, Fancy draws them with thickness."));
+    screen->components.push_back(WithTooltip(new OptionButton("Particles", { "All", "Decreased", "Minimal" },
+        [config] { return static_cast<size_t>(std::min<uint32_t>(std::get<uint32_t>(config->Get("Graphics.Particles", uint32_t{0})), 2)); },
+        [config](size_t index) { config->Set("Graphics.Particles", static_cast<uint32_t>(index)); }),
+        "How many particles are drawn. The server is told too, and sends fewer. Decreased keeps about a third, Minimal about a tenth."));
+    screen->components.push_back(WithTooltip(MakeToggle(config, "Smooth Lighting", "Graphics.SmoothLighting", true),
+        "Blends light across block corners instead of lighting each face flat. Applies to chunks as they re-mesh."));
+    screen->components.push_back(WithTooltip(MakeSlider(config, "Specular", "Graphics.Specular", 0, 100, 50, "%"),
+        "Sun and moon glints on shiny blocks like glass, ice, metal blocks and obsidian. 0 turns it off."));
     screen->components.push_back(WithTooltip(MakeToggle(config, "Lighting", "Graphics.Lighting", true),
         "Off renders everything fully lit, ignoring light levels."));
+        screen->components.push_back(MakeNavButton("Done", [hub] { GUIController::OpenScreen(hub); }));
+    }
+
+    Screen* shadows = CreateVideoCategory("Shadows");
+    {
+        Screen* screen = shadows;
+    screen->components.push_back(WithTooltip(MakeToggle(config, "Shadows (Experimental)", "Graphics.Shadows.Enabled", false),
+        "Casts the sun's shadows from terrain, plants, mobs and players. Experimental: costs GPU time."));
+    screen->components.push_back(WithTooltip(new OptionButton("Shadow Resolution", { "512", "1024", "2048", "4096" },
+        [config] { return static_cast<size_t>(std::min<uint32_t>(std::get<uint32_t>(config->Get("Graphics.Shadows.Resolution", uint32_t{1})), 3)); },
+        [config](size_t index) { config->Set("Graphics.Shadows.Resolution", static_cast<uint32_t>(index)); }),
+        "Shadow map size in pixels. Higher is sharper and costs more memory and time."));
+    screen->components.push_back(WithTooltip(MakeSlider(config, "Shadow Distance", "Graphics.Shadows.Distance", 16, 512, 128, " blocks"),
+        "How far from you shadows are drawn."));
+    screen->components.push_back(WithTooltip(new OptionButton("Shadow Updates", { "Every Frame", "Client Tick", "Server Tick" },
+        [config] { return static_cast<size_t>(std::min<uint32_t>(std::get<uint32_t>(config->Get("Graphics.Shadows.RecomputeOn", uint32_t{0})), 2)); },
+        [config](size_t index) { config->Set("Graphics.Shadows.RecomputeOn", static_cast<uint32_t>(index)); }),
+        "How often the shadow map is redrawn. Every Frame is smoothest. Client Tick (20 a second) costs far less GPU time, but moving shadows update in small steps. Server Tick follows the server's tick rate."));
+        screen->components.push_back(MakeNavButton("Done", [hub] { GUIController::OpenScreen(hub); }));
+    }
+
+    Screen* performance = CreateVideoCategory("Performance");
+    {
+        Screen* screen = performance;
     screen->components.push_back(WithTooltip(MakeSlider(config, "Max FPS", "Graphics.TargetFPS", 30, 360, 60, "",
         [state](int32_t value) { state->targetFPS = static_cast<uint16_t>(value); }),
         "Frame rate limit. With VSync on, your monitor's refresh rate also caps it."));
@@ -156,8 +215,21 @@ Screen* CreateVideoScreen(GlobalState* state, Screen* settingsScreen)
         [config] { return std::get<uint32_t>(config->Get("Graphics.BufferCount", uint32_t{2})) >= 3 ? size_t{1} : size_t{0}; },
         [config](size_t index) { config->Set("Graphics.BufferCount", static_cast<uint32_t>(index + 2)); }),
         "Triple can smooth out frame pacing at the cost of slightly more input lag."));
-    screen->components.push_back(MakeNavButton("Done", [settingsScreen] { GUIController::OpenScreen(settingsScreen); }));
-    return screen;
+    screen->components.push_back(WithTooltip(MakeToggle(config, "Indirect Draw", "Graphics.IndirectDraw", true),
+        "Draws the world with far fewer GPU commands, which cuts CPU use. Turn off if you see missing or glitched terrain."));
+    screen->components.push_back(WithTooltip(MakeToggle(config, "Debug Entity Tags", "Debug.EntityTags", false),
+        "Shows a tag with the type and coordinates above every entity. Off shows only player names, like vanilla."));
+    screen->components.push_back(WithTooltip(MakeToggle(config, "Entity Occlusion", "Graphics.EntityOcclusionCulling", false),
+        "Skips mobs, items and nametags hidden behind terrain, which saves GPU time. Off by default while mobs vanishing is investigated."));
+        screen->components.push_back(MakeNavButton("Done", [hub] { GUIController::OpenScreen(hub); }));
+    }
+
+    hub->components.push_back(MakeNavButton("Display", [display] { GUIController::OpenScreen(display); }));
+    hub->components.push_back(MakeNavButton("Quality", [quality] { GUIController::OpenScreen(quality); }));
+    hub->components.push_back(MakeNavButton("Shadows", [shadows] { GUIController::OpenScreen(shadows); }));
+    hub->components.push_back(MakeNavButton("Performance", [performance] { GUIController::OpenScreen(performance); }));
+    hub->components.push_back(MakeNavButton("Done", [settingsScreen] { GUIController::OpenScreen(settingsScreen); }));
+    return hub;
 }
 
 Screen* CreateWindowScreen(GlobalState* state, Screen* settingsScreen)
@@ -194,12 +266,16 @@ Screen* CreateControlsScreen(GlobalState* state, Screen* settingsScreen)
 {
     Config* config = state->config;
     Screen* screen = GUIController::CreateScreen("Controls", false);
+    Screen* keyBindsScreen = nullptr;
     screen->components.push_back(WithTooltip(MakeSlider(config, "Mouse Sensitivity", "Controls.Mouse.Sensitivity", 10, 300, 100, "%"),
         "How far the camera turns per mouse movement."));
     screen->components.push_back(WithTooltip(MakeToggle(config, "Raw Input", "Controls.Mouse.RawInput", true),
         "Reads the mouse directly, skipping Windows pointer acceleration, in one batch per frame. Takes effect after a restart."));
     screen->components.push_back(WithTooltip(MakeToggle(config, "Toggle Sprint", "Controls.ToggleSprint", false),
         "Press sprint once to start sprinting instead of holding it."));
+    keyBindsScreen = CreateKeyBindsScreen(state, [screen] { GUIController::OpenScreen(screen); });
+    screen->components.push_back(WithTooltip(MakeNavButton("Key Binds", [keyBindsScreen] { GUIController::OpenScreen(keyBindsScreen); }),
+        "Change the key or mouse button for movement, hotbar slots, dropping items and more."));
     screen->components.push_back(MakeNavButton("Done", [settingsScreen] { GUIController::OpenScreen(settingsScreen); }));
     return screen;
 }
@@ -213,11 +289,13 @@ Screen* CreateSettingsScreen(GlobalState* state)
     Screen* windowScreen = CreateWindowScreen(state, screen);
     Screen* audioScreen = CreateAudioScreen(state, screen);
     Screen* controlsScreen = CreateControlsScreen(state, screen);
+    Screen* resourcePacksScreen = CreateResourcePacksScreen(state, [screen] { GUIController::OpenScreen(screen); });
 
     screen->components.push_back(MakeNavButton("Video", [videoScreen] { GUIController::OpenScreen(videoScreen); }));
     screen->components.push_back(MakeNavButton("Window", [windowScreen] { GUIController::OpenScreen(windowScreen); }));
     screen->components.push_back(MakeNavButton("Audio", [audioScreen] { GUIController::OpenScreen(audioScreen); }));
     screen->components.push_back(MakeNavButton("Controls", [controlsScreen] { GUIController::OpenScreen(controlsScreen); }));
+    screen->components.push_back(MakeNavButton("Resource Packs", [resourcePacksScreen] { GUIController::OpenScreen(resourcePacksScreen); }));
     screen->components.push_back(MakeNavButton("Back", []
     {
         if (returnScreen != nullptr) GUIController::OpenScreen(returnScreen);

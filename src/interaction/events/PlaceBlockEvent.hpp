@@ -6,6 +6,8 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include "../../GlobalState.hpp"
+#include "../../audio/BlockSounds.hpp"
+#include "../../renderer/terrain/LightEngine.hpp"
 #include "../../network/NetworkClient.hpp"
 #include "../../renderer/terrain/models/BlockRegistry.hpp"
 #include "../InteractionTypes.hpp"
@@ -13,11 +15,11 @@
 namespace Volcano {
 
 // A secondary-trigger click that landed on a block while holding something
-// placeable (see InteractionManager::SecondaryTriggerStart) — placing a
+// placeable (see InteractionManager::SecondaryTriggerStart) - placing a
 // block, or using a bucket/bonemeal/dye/etc. against one.
 //
 // `position`/`face` are the EXISTING block being clicked and which of its
-// faces (straight off TargetedBlock — see RaycastBlocks), not the new cell
+// faces (straight off TargetedBlock - see RaycastBlocks), not the new cell
 // the placed block will occupy; the server derives that from position+face
 // itself.
 //
@@ -37,7 +39,7 @@ struct PlaceBlockEvent {
         // Cursor: where within `face` the click landed, 0..1 on each axis.
         // RaycastBlocks doesn't track the exact 3D hit point (only the
         // distance along the ray), so this approximates "dead center of the
-        // clicked face" instead of real per-pixel precision — fine for
+        // clicked face" instead of real per-pixel precision - fine for
         // which-cell-does-the-new-block-go-in (position+face already answer
         // that), only actually imprecise for the handful of blocks whose
         // placement orientation reads the cursor sub-position too (e.g. a
@@ -74,11 +76,16 @@ private:
         }
 
         std::vector<SectionKey> dirty = state->world->SetBlock(target, block);
+        if (state->lightEngine != nullptr)
+        {
+            for (const SectionKey& key : state->lightEngine->OnBlockChanged(target, Block{}, block)) dirty.push_back(key);
+        }
         if (!dirty.empty())
         {
             std::lock_guard<std::mutex> lock(state->networkInbox.mutex);
             for (const SectionKey& key : dirty) state->networkInbox.dirtySections.push_back(key);
         }
+        if (state->blockSounds != nullptr) state->blockSounds->PlayPlace(block);
     }
 };
 

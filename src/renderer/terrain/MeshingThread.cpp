@@ -1,14 +1,17 @@
 #include "MeshingThread.hpp"
 #include "../../CrashReporter.hpp"
 #include "ChunkMesher.hpp"
+#include "LightEngine.hpp"
 #include "models/ChunkSection.hpp"
 #include "../misc/NonCubicMesher.hpp"
 #include "Logger.hpp"
 #include "TickLoop.hpp"
+#include "ModLoader.hpp"
 #include <chrono>
 #include <cmath>
 #include <mutex>
 #include <optional>
+#include <unordered_set>
 #include <utility>
 
 namespace Volcano {
@@ -16,12 +19,14 @@ namespace Volcano {
 namespace {
 
 // Meshes one section (both the cube and non-cubic passes) and upserts the
-// three render-list maps by SectionKey — shared by both the dirty-remesh
+// three render-list maps by SectionKey - shared by both the dirty-remesh
 // path and the initial chunk-load path below, which differ only in how they
 // get their Chunk& (already in World vs. not yet inserted) and whether they
 // skip an empty section. Returns the two timings for the caller's own log
 // line.
-struct SectionMeshTiming { double cubeMs; double nonCubicMs; };
+// `retry` means a slab allocation failed for at least one of the section's meshes: its
+// old meshes were left in place, and the caller should remesh it again shortly.
+struct SectionMeshTiming { double cubeMs; double nonCubicMs; bool retry; };
 
 SectionMeshTiming MeshAndUpsertSection(GlobalState* state, const TextureManager* textureManager,
     const Chunk& chunk, const SectionKey& key)
@@ -37,42 +42,47 @@ SectionMeshTiming MeshAndUpsertSection(GlobalState* state, const TextureManager*
     auto meshDone = std::chrono::steady_clock::now();
 
     // A section that came back with nothing to draw (e.g. the last block in
-    // it was just broken) gets its map entry erased instead of replaced —
+    // it was just broken) gets its map entry erased instead of replaced -
     // otherwise a zero-count Mesh would sit in the render list forever
     // (harmless to draw, but never cleaned up, and would look like a stale
     // slab allocation if anyone went looking).
     //
     // Whatever mesh this replaces or erases hands its slab regions back
     // (SlabBuffer::Free delays actual reuse until no in-flight frame can
-    // still be drawing it) — without this every remesh leaked its old
+    // still be drawing it) - without this every remesh leaked its old
     // region and the slabs filled up from edits/light updates alone.
     auto upsert = [&](std::mutex& mutex, std::unordered_map<SectionKey, Mesh, SectionKeyHash>& list, const Mesh& m)
     {
+        // Out of slab space: leave the section's current mesh drawing (stale but
+        // present) rather than erasing it - the caller retries.
+        if (m.allocationFailed) return;
         std::lock_guard<std::mutex> lock(mutex);
         auto existing = list.find(key);
         if (existing != list.end()) ReleaseMeshSlabs(existing->second);
         if (m.vertexCount > 0) list.insert_or_assign(key, m);
         else if (existing != list.end()) list.erase(existing);
+        state->meshListGeneration++;
     };
     upsert(state->renderListMutex, state->renderList, mesh);
     upsert(state->nonCubicRenderListMutex, state->nonCubicRenderList, nonCubicMeshes.cutout);
     upsert(state->translucentRenderListMutex, state->translucentRenderList, nonCubicMeshes.translucent);
 
-    // A slab-allocation failure (see ChunkMesher/NonCubicMesher's own
-    // Log::Error at the Allocate() call site) already logged which section
-    // it happened to and is otherwise indistinguishable here from a
-    // genuinely empty one (both end up with vertexCount 0) — nothing more
-    // to do with it at this level.
+    const bool retry = mesh.allocationFailed || nonCubicMeshes.cutout.allocationFailed
+        || nonCubicMeshes.translucent.allocationFailed;
 
     SectionMeshTiming timing{
         std::chrono::duration<double, std::milli>(cubeDone - meshStart).count(),
-        std::chrono::duration<double, std::milli>(meshDone - cubeDone).count()
+        std::chrono::duration<double, std::milli>(meshDone - cubeDone).count(),
+        retry
     };
 
-    // Smoothed for the debug HUD.
-    float total = static_cast<float>(timing.cubeMs + timing.nonCubicMs);
-    float previous = state->timings.meshMs.load();
-    state->timings.meshMs.store(previous + (total - previous) * 0.05f);
+    // Smoothed for the debug HUD, which is the only reader - skipped while hidden.
+    if (state->debugHudVisible)
+    {
+        float total = static_cast<float>(timing.cubeMs + timing.nonCubicMs);
+        float previous = state->timings.meshMs.load();
+        state->timings.meshMs.store(previous + (total - previous) * 0.05f);
+    }
     return timing;
 }
 
@@ -109,6 +119,26 @@ void MeshingThread::Stop()
     if (worker.joinable()) worker.join();
 }
 
+void MeshingThread::Pause()
+{
+    if (!worker.joinable()) return;
+    pauseRequested.store(true);
+    while (!paused.load() && worker.joinable() && !state->shouldClose)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+void MeshingThread::Resume()
+{
+    pauseRequested.store(false);
+    // Let the worker leave its parked state so an immediate Pause() waits properly.
+    while (paused.load() && worker.joinable() && !state->shouldClose)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
 void MeshingThread::ThreadEntry(std::stop_token stopToken)
 {
     Log::Info("Meshing thread created.");
@@ -116,27 +146,52 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
     // Local to this connection attempt (mirrors what used to be
     // DrainNetworkInbox's static locals). Tracks which chunk the player is
     // actually spawning into, so worldReady only flips once *that* chunk has
-    // been meshed and inserted — not just whichever chunk happens to arrive
+    // been meshed and inserted - not just whichever chunk happens to arrive
     // first. The server has no obligation to send the spawn column first,
     // and gating on "any chunk" let the player fall through empty space
     // until it showed up.
     bool seenSpawn = false;
     std::optional<std::pair<int, int>> spawnChunk;
 
+    // Sections whose last mesh couldn't get slab space (see SectionMeshTiming::
+    // retry), with when to try again. A short delay lets frees land and keeps a
+    // full slab from turning into a busy loop. Moved back into
+    // NetworkInbox::dirtySections below once due.
+    constexpr auto RETRY_DELAY = std::chrono::milliseconds(250);
+    std::vector<std::pair<SectionKey, std::chrono::steady_clock::time_point>> retryQueue;
+
+    // Neighbor sections queued for a seam remesh and not yet popped, so a burst
+    // of chunk loads doesn't queue the same section repeatedly. Only touched
+    // by this thread.
+    std::unordered_set<SectionKey, SectionKeyHash> queuedSeamSections;
+
     while (!stopToken.stop_requested() && !state->shouldClose)
     {
+        // Pause() handshake: parked here between jobs, never mid-section.
+        if (pauseRequested.load())
+        {
+            paused.store(true);
+            while (pauseRequested.load() && !stopToken.stop_requested() && !state->shouldClose)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            paused.store(false);
+            continue;
+        }
+
         std::unique_ptr<Chunk> chunk;
         std::optional<SectionKey> dirtySection;
         std::optional<glm::vec3> spawnPosition;
-        size_t queueDepth = 0; // Remaining chunk-load backlog after this pop — see the timing log below.
+        size_t queueDepth = 0; // Remaining chunk-load backlog after this pop - see the timing log below.
         std::vector<std::pair<int, int>> pendingUnloads;
+        std::vector<PendingBlockEdit> appliedEdits; // For BLOCK_CHANGED, fired once the inbox lock is dropped.
 
         {
             std::lock_guard<std::mutex> lock(state->networkInbox.mutex);
 
             // Apply every pending server Block Update up front, each turning
             // into more dirtySections entries the same way a local edit
-            // does (see World::SetBlock) — these are rare/bursty (an
+            // does (see World::SetBlock) - these are rare/bursty (an
             // explosion, a correction to a mispredicted local break) rather
             // than a steady stream, so draining all of them here beats
             // leaving a correction sitting unapplied behind whatever else
@@ -147,9 +202,18 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             {
                 PendingBlockEdit edit = state->networkInbox.pendingBlockEdits.front();
                 state->networkInbox.pendingBlockEdits.pop_front();
+                Block oldBlock = state->world->GetBlock(edit.position.x, edit.position.y, edit.position.z);
+                if (state->modLoader != nullptr && state->modLoader->HasHandlers(EventType::BLOCK_CHANGED)) appliedEdits.push_back(edit);
                 for (const SectionKey& key : state->world->SetBlock(edit.position, edit.block))
                 {
                     state->networkInbox.dirtySections.push_back(key);
+                }
+                if (state->lightEngine != nullptr)
+                {
+                    for (const SectionKey& key : state->lightEngine->OnBlockChanged(edit.position, oldBlock, edit.block))
+                    {
+                        state->networkInbox.dirtySections.push_back(key);
+                    }
                 }
             }
 
@@ -178,15 +242,30 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                 state->networkInbox.pendingUnloads.pop_front();
             }
 
+            auto retryNow = std::chrono::steady_clock::now();
+            for (auto it = retryQueue.begin(); it != retryQueue.end();)
+            {
+                if (it->second <= retryNow)
+                {
+                    state->networkInbox.dirtySections.push_back(it->first);
+                    it = retryQueue.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+
             // Dirty sections (a local block edit, or a Block Update just
             // applied above) take priority over ordinary chunk-load
             // traffic, so an edit near the player doesn't sit behind a
-            // backlog of newly-streaming chunks — see NetworkInbox::
+            // backlog of newly-streaming chunks - see NetworkInbox::
             // dirtySections' own comment.
             if (!state->networkInbox.dirtySections.empty())
             {
                 dirtySection = state->networkInbox.dirtySections.front();
                 state->networkInbox.dirtySections.pop_front();
+                queuedSeamSections.erase(*dirtySection);
             }
             else if (!state->networkInbox.chunks.empty())
             {
@@ -194,7 +273,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                 state->networkInbox.chunks.pop();
             }
             queueDepth = state->networkInbox.chunks.size();
-            state->timings.meshQueue.store(static_cast<uint32_t>(queueDepth));
+            if (state->debugHudVisible) state->timings.meshQueue.store(static_cast<uint32_t>(queueDepth));
             if (state->networkInbox.spawnPosition.has_value())
             {
                 spawnPosition = state->networkInbox.spawnPosition;
@@ -202,10 +281,17 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             }
         }
 
+        for (const PendingBlockEdit& edit : appliedEdits)
+        {
+            VC_EventData data{ sizeof(VC_EventData), nullptr, edit.position.x, edit.position.y, edit.position.z,
+                static_cast<int32_t>(edit.block.visualId) };
+            state->modLoader->Fire(EventType::BLOCK_CHANGED, &data);
+        }
+
         // Server-side unloads (walked out of render distance): drop the chunk
         // from World and every section of it from the three render lists,
         // handing their slab regions back. Done here, on the only thread
-        // that inserts chunks, so it's ordered against loads — see
+        // that inserts chunks, so it's ordered against loads - see
         // NetworkInbox::pendingUnloads.
         for (const auto& [unloadX, unloadZ] : pendingUnloads)
         {
@@ -219,6 +305,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                     if (it == list.end()) continue;
                     ReleaseMeshSlabs(it->second);
                     list.erase(it);
+                    state->meshListGeneration++;
                 }
             };
             dropSections(state->renderListMutex, state->renderList);
@@ -233,7 +320,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                 // Initial spawn. Safe against RenderThread's concurrent
                 // Tick() calls only because worldReady is still false
                 // here and these writes precede (in this thread's program
-                // order) the eventual worldReady.store(true) below — see
+                // order) the eventual worldReady.store(true) below - see
                 // that store's comment.
                 state->player->SetPosition(*spawnPosition);
                 state->tickLoop->SyncToPlayerPosition();
@@ -254,7 +341,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
         if (dirtySection.has_value())
         {
             // The chunk already lives in World (it was fully loaded before
-            // any edit could target it) — nothing to insert, just re-mesh
+            // any edit could target it) - nothing to insert, just re-mesh
             // and upsert the one section. If the chunk unloaded/was never
             // there (a stale request racing a disconnect), there's nothing
             // to do.
@@ -262,6 +349,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             if (dirtyChunk != nullptr)
             {
                 SectionMeshTiming timing = MeshAndUpsertSection(state, textureManager, *dirtyChunk, *dirtySection);
+                if (timing.retry) retryQueue.emplace_back(*dirtySection, std::chrono::steady_clock::now() + RETRY_DELAY);
                 if (Log::MeshEventsEnabled())
                 {
                     Log::Info("[MESH] section (" + std::to_string(dirtySection->chunkX) + ","
@@ -277,7 +365,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
             chunk->SetFadeStart(std::chrono::steady_clock::now());
 
             // Meshed section-by-section before InsertChunk below places this
-            // chunk itself into World, but that's fine — ChunkMesher only
+            // chunk itself into World, but that's fine - ChunkMesher only
             // needs World for this chunk's neighbors (see its own comment),
             // not itself. Sections with nothing to draw (common near
             // build-height limits) are skipped entirely rather than
@@ -289,13 +377,41 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                 if (chunk->IsSectionEmpty(sectionY)) continue;
 
                 SectionMeshTiming timing = MeshAndUpsertSection(state, textureManager, *chunk, { chunkX, chunkZ, sectionY });
+                if (timing.retry)
+                {
+                    // The chunk is inserted into World just below, so the retry
+                    // finds it there.
+                    retryQueue.emplace_back(SectionKey{ chunkX, chunkZ, sectionY }, std::chrono::steady_clock::now() + RETRY_DELAY);
+                }
                 totalCubeMs += timing.cubeMs;
                 totalNonCubicMs += timing.nonCubicMs;
                 meshedSections++;
             }
             state->world->InsertChunk(chunkX, chunkZ, std::move(*chunk));
 
-            // Diagnostic timing — see whether a slow-to-appear chunk is
+            // Loaded neighbors meshed this border as air; remesh them now that
+            // the chunk exists. Edges and diagonals both, since fluid corner
+            // heights read diagonals.
+            {
+                std::lock_guard<std::mutex> lock(state->networkInbox.mutex);
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        if (dx == 0 && dz == 0) continue;
+                        const Chunk* neighbor = state->world->GetChunk(chunkX + dx, chunkZ + dz);
+                        if (neighbor == nullptr) continue;
+                        for (int sectionY = 0; sectionY < SECTIONS_PER_CHUNK; sectionY++)
+                        {
+                            if (neighbor->IsSectionEmpty(sectionY)) continue;
+                            SectionKey key{ chunkX + dx, chunkZ + dz, sectionY };
+                            if (queuedSeamSections.insert(key).second) state->networkInbox.dirtySections.push_back(key);
+                        }
+                    }
+                }
+            }
+
+            // Diagnostic timing - see whether a slow-to-appear chunk is
             // actually expensive to mesh, or just backed up behind
             // queueDepth others in this single-threaded queue (see this
             // loop's own comment on why there's no parallelism here yet).
@@ -307,7 +423,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
                     + std::to_string(queueDepth) + " queued");
             }
 
-            // worldReady must be the last write of this transition — see
+            // worldReady must be the last write of this transition - see
             // its comment in GlobalState.hpp for why RenderThread relies on
             // that order.
             if (seenSpawn && spawnChunk.has_value()
@@ -321,7 +437,7 @@ void MeshingThread::ThreadEntry(std::stop_token stopToken)
         if (dirtySection.has_value() || chunk)
         {
             // Checkpoint after every chunk/section, not just once the queue
-            // empties — a big backlog can otherwise hog a core long enough
+            // empties - a big backlog can otherwise hog a core long enough
             // to starve RenderThread, which now drives physics too.
             std::this_thread::yield();
         }

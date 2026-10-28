@@ -1,0 +1,19 @@
+{
+    "_comment": "AbstractEquineModel.createBodyMesh(NONE) (horse), 64x64. Head, mane, mouth and ears are one part pivoted at (0,4,-12) with the vanilla 30 degree tilt; the tail's pivot is body (0,11,5) + (0,-5,2). Donkey and mule reuse this mesh scaled.",
+    "textureWidth": 64,
+    "textureHeight": 64,
+    "boxes": [
+        { "name": "body", "origin": [-5, -8, -17], "size": [10, 10, 22], "uv": [0, 32], "inflate": 0.05, "pivot": [0, 11, 5] },
+        { "name": "head", "origin": [-2.05, -6, -2], "size": [4, 12, 7], "uv": [0, 35], "pivot": [0, 4, -12], "rotation": [30, 0, 0] },
+        { "name": "skull", "part": "head", "origin": [-3, -11, -2], "size": [6, 5, 7], "uv": [0, 13], "pivot": [0, 4, -12], "rotation": [30, 0, 0] },
+        { "name": "mane", "part": "head", "origin": [-1, -11, 5.01], "size": [2, 16, 2], "uv": [56, 36], "pivot": [0, 4, -12], "rotation": [30, 0, 0] },
+        { "name": "upper_mouth", "part": "head", "origin": [-2, -11, -7], "size": [4, 5, 5], "uv": [0, 25], "pivot": [0, 4, -12], "rotation": [30, 0, 0] },
+        { "name": "left_ear", "part": "head", "origin": [0.55, -13, 4], "size": [2, 3, 1], "uv": [19, 16], "inflate": -0.001, "pivot": [0, 4, -12], "rotation": [30, 0, 0] },
+        { "name": "right_ear", "part": "head", "origin": [-2.55, -13, 4], "size": [2, 3, 1], "uv": [19, 16], "inflate": -0.001, "pivot": [0, 4, -12], "rotation": [30, 0, 0] },
+        { "name": "tail", "origin": [-1.5, 0, 0], "size": [3, 14, 4], "uv": [42, 36], "pivot": [0, 6, 7], "rotation": [30, 0, 0] },
+        { "name": "left_hind_leg",   "origin": [-3, -1.01, -1],   "size": [4, 11, 4], "uv": [48, 21], "mirror": true, "pivot": [4, 14, 7] },
+        { "name": "right_hind_leg",  "origin": [-1, -1.01, -1],   "size": [4, 11, 4], "uv": [48, 21], "pivot": [-4, 14, 7] },
+        { "name": "left_front_leg",  "origin": [-3, -1.01, -1.9], "size": [4, 11, 4], "uv": [48, 21], "mirror": true, "pivot": [4, 14, -10] },
+        { "name": "right_front_leg", "origin": [-1, -1.01, -1.9], "size": [4, 11, 4], "uv": [48, 21], "pivot": [-4, 14, -10] }
+    ]
+}
