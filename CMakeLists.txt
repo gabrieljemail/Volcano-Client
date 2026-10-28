@@ -163,12 +163,19 @@ endif()
 # enough; without one it links the static libraries (rebuild the client to pick up changes).
 get_filename_component(PINCEL_DEFAULT_DIR "${CMAKE_SOURCE_DIR}/../Pincel" ABSOLUTE)
 set(PINCEL_DIR "${PINCEL_DEFAULT_DIR}" CACHE PATH "Pincel's source directory")
-set(PINCEL_BUILD_DIR "${PINCEL_DIR}/build" CACHE PATH "Where Pincel's build put pincel.lib and pincel.dll")
-if(NOT EXISTS "${PINCEL_BUILD_DIR}/pincel.lib")
-    message(FATAL_ERROR "Pincel isn't built: ${PINCEL_BUILD_DIR}/pincel.lib is missing. Run ninja in ${PINCEL_DIR}, or set -DPINCEL_DIR=<path>.")
+set(PINCEL_BUILD_DIR "${PINCEL_DIR}/build" CACHE PATH "Where Pincel's build put its library (and pincel.dll)")
+if(WIN32)
+    set(PINCEL_LIB_NAME pincel.lib)
+    set(PINCEL_CORE_LIB_NAME pincel_core.lib)
+else()
+    set(PINCEL_LIB_NAME libpincel.a)
+    set(PINCEL_CORE_LIB_NAME libpincel_core.a)
+endif()
+if(NOT EXISTS "${PINCEL_BUILD_DIR}/${PINCEL_LIB_NAME}")
+    message(FATAL_ERROR "Pincel isn't built: ${PINCEL_BUILD_DIR}/${PINCEL_LIB_NAME} is missing. Build it in ${PINCEL_DIR} (cmake, then ninja), or set -DPINCEL_DIR=<path>.")
 endif()
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE "${PINCEL_DIR}/src/pincel/cpp/include")
-if(EXISTS "${PINCEL_BUILD_DIR}/pincel.dll")
+if(WIN32 AND EXISTS "${PINCEL_BUILD_DIR}/pincel.dll")
     message(STATUS "Pincel: linking ${PINCEL_BUILD_DIR}/pincel.dll")
     target_compile_definitions(${PROJECT_NAME} PRIVATE PINCEL_SHARED)
     target_link_libraries(${PROJECT_NAME} PRIVATE "${PINCEL_BUILD_DIR}/pincel.lib")
@@ -182,10 +189,15 @@ else()
         set(PINCEL_RUST_PROFILE release)
     endif()
     # Rust's std needs these when linked from C++ (see Pincel's CMakeLists.txt).
+    if(WIN32)
+        set(PINCEL_SYSTEM_LIBS advapi32 bcrypt kernel32 ntdll userenv ws2_32 synchronization)
+    else()
+        set(PINCEL_SYSTEM_LIBS ${CMAKE_DL_LIBS} pthread m)
+    endif()
     target_link_libraries(${PROJECT_NAME} PRIVATE
-        "${PINCEL_BUILD_DIR}/pincel.lib"
-        "${PINCEL_DIR}/cargo/${PINCEL_RUST_PROFILE}/pincel_core.lib"
-        advapi32 bcrypt kernel32 ntdll userenv ws2_32 synchronization)
+        "${PINCEL_BUILD_DIR}/${PINCEL_LIB_NAME}"
+        "${PINCEL_DIR}/cargo/${PINCEL_RUST_PROFILE}/${PINCEL_CORE_LIB_NAME}"
+        ${PINCEL_SYSTEM_LIBS})
 endif()
 
 # =============================================================================
