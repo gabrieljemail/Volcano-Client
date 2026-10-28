@@ -54,6 +54,18 @@ void Init();
 // Init() hasn't run or the id isn't in the loaded table.
 const EntityTypeInfo* Lookup(uint32_t protocolTypeId);
 
+// The item a thrown-item entity looks like (vanilla's ThrownItemRenderer draws the item facing the camera), or null for
+// any other entity. ItemPass draws these; EntityRenderer skips them.
+inline const char* ThrownItemName(const std::string& entityName)
+{
+    if (entityName == "ender_pearl") return "ender_pearl";
+    if (entityName == "snowball") return "snowball";
+    if (entityName == "egg") return "egg";
+    if (entityName == "experience_bottle") return "experience_bottle";
+    if (entityName == "eye_of_ender") return "ender_eye";
+    return nullptr;
+}
+
 } // namespace Volcano::EntityRegistry
 
 #endif

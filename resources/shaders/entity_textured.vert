@@ -31,6 +31,7 @@ layout(location = 3) in vec4 inPositionYaw; // xyz: world position (feet), w: ya
 layout(location = 4) in vec4 inHurtColor;   // rgb: hit-flash color, a: blend amount — same as entity.vert.
 layout(location = 5) in vec4 inPartPivot;    // xyz: point the part turns about (model-local), w: tint as 0xRRGGBB (0 for none).
 layout(location = 6) in vec4 inPartOffset;   // xyz: translation added after the turn (model-local), w: light (sky * 16 + block, each 0 to 15).
+layout(location = 8) in vec4 inBodyPose;      // x: the body's pitch in radians, positive nose down.
 layout(location = 7) in vec4 inPartRotation; // xyz: radians, applied Z * Y * X. All zero for a still part. w: the body's death roll.
 
 layout(location = 0) out vec3 fragNormal;
@@ -83,6 +84,16 @@ void main() {
     );
     localPos = deathRotation * localPos;
     localNormal = deathRotation * localNormal;
+
+    // Pitch about the side-to-side axis, nose (the +Z end) down for positive angles.
+    float sp = sin(inBodyPose.x), cp = cos(inBodyPose.x);
+    mat3 pitchRotation = mat3(
+        1.0, 0.0, 0.0,
+        0.0, cp,  sp,
+        0.0, -sp, cp
+    );
+    localPos = pitchRotation * localPos;
+    localNormal = pitchRotation * localNormal;
 
     vec3 worldPos = yawRotation * localPos + inPositionYaw.xyz;
     gl_Position = camera.proj * camera.view * vec4(worldPos, 1.0);

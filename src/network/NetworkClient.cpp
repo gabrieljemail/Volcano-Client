@@ -89,6 +89,12 @@ std::array<uint8_t, 16> OfflineUuidFromUsername(const std::string& username)
 // feeds the whole already-self-consistent rendering pipeline the angle that
 // makes its output match vanilla's real facing direction, without touching
 // the shader or any mesh.
+// A pitch byte in radians, positive looking down as Minecraft's xRot is.
+float PitchByteToRadians(int8_t angleByte)
+{
+    return static_cast<float>(angleByte) * (glm::pi<float>() / 128.0f);
+}
+
 float AngleByteToRadians(int8_t angleByte)
 {
     return static_cast<float>(-angleByte) * (glm::pi<float>() / 128.0f);
@@ -1279,7 +1285,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 // since the overwhelming majority of spawns carry no
                 // velocity at all and are short of a fixed 6-byte skip).
                 glm::vec3 spawnVelocity = ReadLpVec3(reader); // Only dropped items simulate with it.
-                reader.ReadByte(); // pitch, unused.
+                int8_t spawnPitchByte = static_cast<int8_t>(reader.ReadByte());
                 int8_t yawByte = static_cast<int8_t>(reader.ReadByte());
                 reader.ReadByte(); // headYaw, unused.
                 int32_t objectData = reader.ReadVarInt(); // falling_block: block state id.
@@ -1292,6 +1298,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 TraceEntity(state, "SPAWN", packetId, payload, entityId,
                     "type=" + std::to_string(entityType), glm::vec3(0.0f), entity.position);
                 entity.yaw = entity.previousYaw = AngleByteToRadians(yawByte);
+                entity.pitch = entity.previousPitch = PitchByteToRadians(spawnPitchByte);
                 entity.velocity = spawnVelocity;
                 entity.lastUpdateTime = std::chrono::steady_clock::now();
 
@@ -1353,7 +1360,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
                 bool hasRotation = (packetId == PlayS2C::EntityMoveLook);
                 int8_t yawByte = hasRotation ? static_cast<int8_t>(reader.ReadByte()) : 0;
-                if (hasRotation) reader.ReadByte(); // pitch, unused.
+                int8_t pitchByte = hasRotation ? static_cast<int8_t>(reader.ReadByte()) : 0;
                 reader.ReadBool(); // onGround, unused
 
                 std::lock_guard lock(state->entitiesMutex);
@@ -1367,6 +1374,8 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                     if (hasRotation) {
                         entity->previousYaw = entity->yaw;
                         entity->yaw = AngleByteToRadians(yawByte);
+                        entity->previousPitch = entity->pitch;
+                        entity->pitch = PitchByteToRadians(pitchByte);
                     }
                     entity->lastUpdateTime = std::chrono::steady_clock::now();
                 }
@@ -1380,13 +1389,15 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             try {
                 uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
                 int8_t yawByte = static_cast<int8_t>(reader.ReadByte());
-                reader.ReadByte(); // pitch, unused.
+                int8_t lookPitchByte = static_cast<int8_t>(reader.ReadByte());
                 reader.ReadBool(); // onGround, unused.
 
                 std::lock_guard lock(state->entitiesMutex);
                 if (Entity* entity = state->FindEntity(entityId); entity != nullptr && !entity->locallyControlled) {
                     entity->previousYaw = entity->yaw;
                     entity->yaw = AngleByteToRadians(yawByte);
+                    entity->previousPitch = entity->pitch;
+                    entity->pitch = PitchByteToRadians(lookPitchByte);
                     entity->lastUpdateTime = std::chrono::steady_clock::now();
                 }
             } catch (const std::exception& e) {
@@ -1401,7 +1412,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 glm::vec3 newPosition = ReadVec3(reader);
                 glm::vec3 velocity = ReadVec3(reader);
                 float yawDegrees = reader.ReadFloat();
-                reader.ReadFloat(); // pitch, unused.
+                float pitchDegrees = reader.ReadFloat();
                 reader.ReadBool();  // onGround, unused.
 
                 std::lock_guard lock(state->entitiesMutex);
@@ -1414,6 +1425,8 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                         before, entity->position);
                     entity->previousYaw = entity->yaw;
                     entity->yaw = -glm::radians(yawDegrees); // Same turn direction as AngleByteToRadians.
+                    entity->previousPitch = entity->pitch;
+                    entity->pitch = glm::radians(pitchDegrees);
                     entity->lastUpdateTime = std::chrono::steady_clock::now();
                 }
             } catch (const std::exception& e) {
@@ -1432,7 +1445,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 glm::vec3 position = ReadVec3(reader);
                 glm::vec3 velocity = ReadVec3(reader);
                 float yawDegrees = reader.ReadFloat();
-                reader.ReadFloat(); // pitch, unused.
+                float teleportPitchDegrees = reader.ReadFloat();
                 uint32_t relative = static_cast<uint32_t>(reader.ReadInt());
                 reader.ReadBool(); // onGround, unused.
 
@@ -1456,6 +1469,8 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                     float yaw = -glm::radians(yawDegrees); // Same turn direction as AngleByteToRadians.
                     entity->previousYaw = entity->yaw;
                     entity->yaw = (relative & 0x08u) ? entity->yaw + yaw : yaw;
+                    entity->previousPitch = entity->pitch;
+                    entity->pitch = (relative & 0x10u) ? entity->pitch + glm::radians(teleportPitchDegrees) : glm::radians(teleportPitchDegrees);
                     entity->lastUpdateTime = std::chrono::steady_clock::now();
                 }
             } catch (const std::exception& e) {

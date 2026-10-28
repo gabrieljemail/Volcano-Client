@@ -48,6 +48,11 @@ struct Entity {
     std::array<ItemStack, EQUIPMENT_SLOT_COUNT> equipment{};
     const ItemStack& GetEquipment(EquipmentSlot slot) const { return equipment[static_cast<size_t>(slot)]; }
 
+    // Radians, positive looking down (Minecraft's xRot), from the packets' pitch. Phantoms tilt by it and
+    // projectiles point along it.
+    float pitch = 0.0f;
+    float previousPitch = 0.0f;
+
     float yaw = 0.0f;         // Radians around world +Y. Pitch/head rotation aren't
                               // modeled yet since the placeholder box below is
                               // rotationally symmetric about them.
@@ -154,6 +159,11 @@ struct Entity {
     {
         float alpha = InterpolationAlpha(now);
         return Math::InterpolateAngle(previousYaw, yaw, alpha);
+    }
+
+    float InterpolatedPitch(std::chrono::steady_clock::time_point now) const
+    {
+        return Math::InterpolateAngle(previousPitch, pitch, InterpolationAlpha(now));
     }
 
 private:

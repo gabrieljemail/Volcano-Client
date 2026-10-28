@@ -117,6 +117,7 @@ struct TexturedInstance {
     glm::vec4 partPivot;    // xyz: point the part turns about, model-local; w: tint as 0xRRGGBB (0 for none).
     glm::vec4 partOffset;   // xyz: translation added after the turn, model-local; w: light, sky * 16 + block.
     glm::vec4 partRotation; // xyz: radians, applied Z * Y * X; w: death roll of the whole body.
+    glm::vec4 bodyPose;     // x: pitch of the whole body, radians, nose down positive.
 };
 
 // One loaded skin
@@ -162,6 +163,7 @@ struct MobModel {
     // Armor meshes fitted to this body (same parts, same pivots), or null for a mob that wears none.
     const EntityModelMesh* armorOuter = nullptr; // Helmet, chestplate, boots.
     const EntityModelMesh* armorInner = nullptr; // Leggings.
+    int pitchMode = 0; // 1: the entity's look pitch tilts the body (nose down positive); -1: a projectile, pitch up positive.
 };
 
 struct HumanoidDraw {
@@ -175,6 +177,7 @@ struct HumanoidDraw {
     std::array<const std::string*, 4> armor{}; // Head, chest, legs, feet.
     bool hideHead = false; // First-person body view: the camera sits inside the head.
     float deathRoll = 0.0f; // Radians the body has tipped over; 0 while alive.
+    float pitch = 0.0f;     // Radians the whole body tilts nose down.
 };
 
 // Walk cycles per entity, keyed by network id; the local player uses LOCAL_WALK_KEY.
@@ -784,6 +787,8 @@ void LoadMobManifest()
             MobModel mob;
             mob.layers.push_back({ CachedMesh(entry.at("model").get<std::string>(), scale),
                 CachedSkin(entry.at("skin").get<std::string>()) });
+            std::string pitch = entry.value("pitch", std::string());
+            mob.pitchMode = pitch == "look" ? 1 : pitch == "projectile" ? -1 : 0;
             if (entry.value("armor", false))
             {
                 mob.armorOuter = CachedMesh("armor_outer.json", scale);
@@ -1335,7 +1340,7 @@ void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
     bindings[1].stride = sizeof(TexturedInstance);
     bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-    std::array<VkVertexInputAttributeDescription, 8> attributes{};
+    std::array<VkVertexInputAttributeDescription, 9> attributes{};
     attributes[0].binding = 0;
     attributes[0].location = 0;
     attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -1348,11 +1353,11 @@ void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
     attributes[2].location = 2;
     attributes[2].format = VK_FORMAT_R32G32_SFLOAT;
     attributes[2].offset = offsetof(EntityJsonModel::Vertex, uv);
-    const uint32_t instanceOffsets[5] = {
+    const uint32_t instanceOffsets[6] = {
         offsetof(TexturedInstance, positionYaw), offsetof(TexturedInstance, hurtColor),
         offsetof(TexturedInstance, partPivot), offsetof(TexturedInstance, partOffset),
-        offsetof(TexturedInstance, partRotation) };
-    for (uint32_t i = 0; i < 5; i++)
+        offsetof(TexturedInstance, partRotation), offsetof(TexturedInstance, bodyPose) };
+    for (uint32_t i = 0; i < 6; i++)
     {
         attributes[3 + i].binding = 1;
         attributes[3 + i].location = 3 + i;
@@ -2026,6 +2031,9 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity->type);
             EntityRegistry::ShapeKind shape = info ? info->shape : EntityRegistry::ShapeKind::Cube;
 
+            // Thrown items are drawn as their item by ItemPass.
+            if (info != nullptr && EntityRegistry::ThrownItemName(info->name) != nullptr) continue;
+
             // Any type listed in mobs.json takes the textured path, whatever its shape.
             if (info != nullptr)
             {
@@ -2042,6 +2050,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                         for (size_t i = 0; i < 4; i++) draw.armor[i] = HeldItemName(entity->GetEquipment(slots[i]));
                     }
 
+                    draw.pitch = static_cast<float>(mob->second.pitchMode) * entity->InterpolatedPitch(now);
                     if (entity->dead && entity->deathTime != std::chrono::steady_clock::time_point{})
                     {
                         draw.deathRoll = DeathRoll(std::chrono::duration<float>(now - entity->deathTime).count() * 20.0f);
@@ -2315,6 +2324,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             TexturedInstance instance{};
             instance.positionYaw = glm::vec4(draw.position, draw.yaw);
             instance.hurtColor = draw.hurtColor;
+            instance.bodyPose = glm::vec4(draw.pitch, 0.0f, 0.0f, 0.0f);
             const float light = EntityLight(state, draw.position);
             for (const MobLayer& layer : draw.model->layers)
             {

@@ -1,0 +1,234 @@
+{
+    "_comment": "PhantomModel.createBodyLayer, 64x64 (phantom.png), with the part tree flattened into resting poses. Wing tips pivot at the shoulder so they follow a flap. feetY 3 is PhantomRenderer's translate: the body sits 3/16 above the entity origin.",
+    "textureWidth": 64,
+    "textureHeight": 64,
+    "feetY": 3.0,
+    "boxes": [
+        {
+            "name": "body",
+            "part": "body",
+            "origin": [
+                -3,
+                -2,
+                -8
+            ],
+            "size": [
+                5,
+                3,
+                9
+            ],
+            "uv": [
+                0,
+                8
+            ],
+            "pivot": [
+                0,
+                0,
+                0
+            ],
+            "rotation": [
+                -5.73,
+                -0.0,
+                0.0
+            ]
+        },
+        {
+            "name": "tail_base",
+            "part": "tail_base",
+            "origin": [
+                -2,
+                0,
+                0
+            ],
+            "size": [
+                3,
+                2,
+                6
+            ],
+            "uv": [
+                3,
+                20
+            ],
+            "pivot": [
+                0,
+                -1.8902,
+                1.1947
+            ],
+            "rotation": [
+                -5.73,
+                -0.0,
+                0.0
+            ]
+        },
+        {
+            "name": "tail_tip",
+            "part": "tail_tip",
+            "origin": [
+                -1,
+                0,
+                0
+            ],
+            "size": [
+                1,
+                1,
+                6
+            ],
+            "uv": [
+                4,
+                29
+            ],
+            "pivot": [
+                0.0,
+                -0.7937,
+                7.1148
+            ],
+            "rotation": [
+                -5.73,
+                -0.0,
+                0.0
+            ]
+        },
+        {
+            "name": "left_wing_base",
+            "part": "left_wing_base",
+            "origin": [
+                0,
+                0,
+                0
+            ],
+            "size": [
+                6,
+                2,
+                9
+            ],
+            "uv": [
+                23,
+                12
+            ],
+            "pivot": [
+                2,
+                -2.7887,
+                -7.7604
+            ],
+            "rotation": [
+                -5.701,
+                0.571,
+                5.701
+            ]
+        },
+        {
+            "name": "left_wing_tip",
+            "part": "left_wing_tip",
+            "origin": [
+                5.97,
+                -0.599,
+                0.0
+            ],
+            "size": [
+                13,
+                1,
+                9
+            ],
+            "uv": [
+                16,
+                24
+            ],
+            "pivot": [
+                2,
+                -2.7887,
+                -7.7604
+            ],
+            "rotation": [
+                -5.616,
+                1.136,
+                11.403
+            ]
+        },
+        {
+            "name": "right_wing_base",
+            "part": "right_wing_base",
+            "origin": [
+                -6,
+                0,
+                0
+            ],
+            "size": [
+                6,
+                2,
+                9
+            ],
+            "uv": [
+                23,
+                12
+            ],
+            "pivot": [
+                -3,
+                -2.7887,
+                -7.7604
+            ],
+            "rotation": [
+                -5.701,
+                -0.571,
+                -5.701
+            ],
+            "mirror": true
+        },
+        {
+            "name": "right_wing_tip",
+            "part": "right_wing_tip",
+            "origin": [
+                -18.97,
+                -0.599,
+                0.0
+            ],
+            "size": [
+                13,
+                1,
+                9
+            ],
+            "uv": [
+                16,
+                24
+            ],
+            "pivot": [
+                -3,
+                -2.7887,
+                -7.7604
+            ],
+            "rotation": [
+                -5.616,
+                -1.136,
+                -11.403
+            ],
+            "mirror": true
+        },
+        {
+            "name": "head",
+            "part": "head",
+            "origin": [
+                -4,
+                -2,
+                -5
+            ],
+            "size": [
+                7,
+                3,
+                5
+            ],
+            "uv": [
+                0,
+                0
+            ],
+            "pivot": [
+                0,
+                0.2962,
+                -7.0649
+            ],
+            "rotation": [
+                5.73,
+                -0.0,
+                0.0
+            ]
+        }
+    ]
+}
