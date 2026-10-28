@@ -99,6 +99,7 @@ struct Entity {
     // the same way vanilla keeps a dying mob/player tinted through its death
     // animation.
     bool dead = false;
+    std::chrono::steady_clock::time_point deathTime{}; // When EntityEvent reported the death; drives the fall-over.
 
     // When this entity last swung an arm, and when a critical hit last
     // landed on it (PlayS2C::Animate) - recorded for an arm-swing animation

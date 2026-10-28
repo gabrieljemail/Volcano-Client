@@ -17,6 +17,7 @@ constexpr const char* PARTICLES_JSON = "resources/minecraft-data/data/pc/26.1/pa
 constexpr float GRAVITY_PER_TICK = 0.04f;   // What a gravity of 1 pulls by, in blocks per tick squared.
 constexpr size_t MAX_QUEUED = 4096;
 constexpr int32_t MAX_PER_REQUEST = 512;
+constexpr float FADE_TICKS = 5.0f; // 250 ms.
 
 using Velocity = ParticleProfile::Velocity;
 using Shrink = ParticleProfile::Shrink;
@@ -47,7 +48,7 @@ ParticleProfile ProfileFor(const std::string& name)
     if (name == "damage_indicator")
         return { .minLife = 16, .maxLife = 24, .size = 0.15f, .gravity = -0.15f, .friction = 0.9f, .velocity = Velocity::Direct, .fades = true, .bright = true };
     if (name == "heart")
-        return { .minLife = 10, .maxLife = 22, .size = 0.15f, .gravity = -0.03f, .friction = 0.86f, .velocity = Velocity::Direct, .bright = true, .collides = false };
+        return { .minLife = 10, .maxLife = 22, .size = 0.09f, .gravity = -0.03f, .friction = 0.86f, .velocity = Velocity::Direct, .bright = true, .collides = false };
     if (name == "angry_villager")
         return { .minLife = 12, .maxLife = 20, .size = 0.15f, .friction = 0.86f, .velocity = Velocity::Direct, .bright = true, .collides = false };
     if (name == "happy_villager" || name == "composter")
@@ -178,6 +179,7 @@ void ParticleSystem::Emit(const ParticleSpawn& request, float keep)
     }
 
     int32_t count = std::min(request.count, MAX_PER_REQUEST);
+    if (type.name == "heart") count = (count + 2) / 3; // Servers send a lot of them; a third reads the same.
     for (int32_t i = 0; i < count; i++)
     {
         if (!kept()) continue;
@@ -316,9 +318,10 @@ size_t ParticleSystem::BuildInstances(const glm::vec3& camera, float dayBrightne
         }
         const ParticleSprite& sprite = list[index];
 
-        float shrink = 1.0f;
-        if (profile.shrink == Shrink::Linear) shrink = 1.0f - progress;
-        else if (profile.shrink == Shrink::Flame) shrink = 1.0f - 0.5f * progress * progress;
+        // Particles keep their size and fade out over their last 250 ms instead of shrinking away.
+        const float shrink = 1.0f;
+        float remainingTicks = static_cast<float>(particle.lifetime) - (static_cast<float>(particle.age) + partialTick);
+        float fadeTicks = std::min(FADE_TICKS, static_cast<float>(particle.lifetime) * 0.5f);
 
         // The curve vanilla's lightmap uses, with a floor so nothing goes black.
         float brightness = 1.0f;
@@ -327,7 +330,7 @@ size_t ParticleSystem::BuildInstances(const glm::vec3& camera, float dayBrightne
             float level = std::max(particle.skyLight * dayBrightness, particle.blockLight);
             brightness = 0.08f + 0.92f * (level / (4.0f - 3.0f * level));
         }
-        float alpha = profile.fades ? 1.0f - std::clamp((progress - 0.7f) / 0.3f, 0.0f, 1.0f) : 1.0f;
+        float alpha = std::clamp(remainingTicks / std::max(fadeTicks, 1.0f), 0.0f, 1.0f);
 
         glm::vec3 at = glm::vec3(glm::mix(particle.previous, particle.position, static_cast<double>(partialTick)) - eye);
         ParticleInstance& instance = out[count++];

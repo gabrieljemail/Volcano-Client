@@ -218,6 +218,15 @@ struct GlobalState {
     // Written by SendArmAnimation on the render thread; read by HandModel.
     std::atomic<int64_t> localSwingNs{0};
 
+    // When the local player was last hurt (steady_clock ns; 0 = never) and the direction the hit came from, in
+    // degrees relative to where they face. Written by the network thread; read by RenderThread for the camera tilt.
+    std::atomic<int64_t> localHurtNs{0};
+    std::atomic<float> localHurtDirection{0.0f};
+
+    // When the local player's health last reached 0 (steady_clock ns), or 0 while alive. Set by RenderThread from
+    // `health`, so the camera and the player model tip over from the same moment.
+    std::atomic<int64_t> localDeathNs{0};
+
     // Tick counters for things that update "per tick" (shadow recompute): the
     // client's fixed 20 Hz TickLoop step, and the server's
     std::atomic<uint64_t> clientTicks{0};

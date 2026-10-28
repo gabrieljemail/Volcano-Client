@@ -1040,6 +1040,35 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 }
             }
 
+            // The camera tilts away from where the hit came from, which the packet's source position gives.
+            if (static_cast<int32_t>(entityId) == state->localEntityId.load())
+            {
+                float direction = 0.0f;
+                try
+                {
+                    reader.ReadVarInt(); // Source type.
+                    reader.ReadVarInt(); // Cause entity + 1.
+                    reader.ReadVarInt(); // Direct entity + 1.
+                    if (reader.ReadByte() != 0)
+                    {
+                        double x = reader.ReadDouble();
+                        reader.ReadDouble();
+                        double z = reader.ReadDouble();
+                        glm::vec3 at = state->player->GetPosition();
+                        // Vanilla's hurtDir: the bearing of the source minus where the player faces (Minecraft's yaw is
+                        // the negative of this engine's).
+                        float bearing = glm::degrees(std::atan2(static_cast<float>(z - at.z), static_cast<float>(x - at.x)));
+                        direction = bearing + state->player->camera.GetYaw();
+                    }
+                }
+                catch (const std::exception&)
+                {
+                }
+                state->localHurtDirection.store(direction);
+                state->localHurtNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            }
+
             if (state->entitySounds == nullptr) continue;
             if (static_cast<int32_t>(entityId) == state->localEntityId.load())
             {
@@ -1567,7 +1596,11 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 std::lock_guard lock(state->entitiesMutex);
                 if (Entity* entity = state->FindEntity(entityId)) {
                     if (status == LEGACY_HURT) entity->lastHurtTime = std::chrono::steady_clock::now();
-                    else if (status == DEATH) entity->dead = true;
+                    else if (status == DEATH)
+                    {
+                        entity->dead = true;
+                        entity->deathTime = std::chrono::steady_clock::now();
+                    }
                     else if (status == TOTEM_OF_UNDYING) entity->dead = false;
                     // Everything else (shield block/break, eating, taming
                     // hearts, op-level updates, ...) has no visual here yet.

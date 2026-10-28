@@ -32,6 +32,7 @@ namespace {
 
     // Sneak eye-height dip
     constexpr float STANDING_EYE_HEIGHT = 1.62f;
+    constexpr float DEAD_EYE_HEIGHT = 0.2f;
     constexpr float SNEAK_EYE_HEIGHT = STANDING_EYE_HEIGHT - (1.62f - 1.27f) * 0.5f;
     // Exponential ease rate applied per-tick below
     constexpr float EYE_HEIGHT_EASE_RATE = 10.0f;
@@ -731,7 +732,14 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     // AABB. Eased toward the target height each tick (see SNEAK_EYE_HEIGHT's
     // own comment) rather than snapped, so the dip reads as a smooth crouch
     // instead of a jump cut.
-    float targetEyeHeight = collisionHeight < PLAYER_HEIGHT ? SWIM_EYE_HEIGHT : (sneaking ? SNEAK_EYE_HEIGHT : STANDING_EYE_HEIGHT);
+    // Dying: the view drops to the ground, as vanilla's 0.2-block dying pose does.
+    bool dead = false;
+    {
+        std::lock_guard<std::mutex> lock(state->healthMutex);
+        dead = state->health <= 0.0f;
+    }
+    float targetEyeHeight = dead ? DEAD_EYE_HEIGHT
+        : collisionHeight < PLAYER_HEIGHT ? SWIM_EYE_HEIGHT : (sneaking ? SNEAK_EYE_HEIGHT : STANDING_EYE_HEIGHT);
     std::atomic<float>& eyeHeight = state->player->camera.eyeHeight;
     float currentEyeHeight = eyeHeight.load(std::memory_order_relaxed);
     eyeHeight.store(Math::Damp(currentEyeHeight, targetEyeHeight, EYE_HEIGHT_EASE_RATE, FIXED_DT), std::memory_order_relaxed);

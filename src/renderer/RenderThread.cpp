@@ -425,6 +425,39 @@ glm::mat4 ViewBobMatrix(const TickLoop::ViewBob& bob)
     return m;
 }
 
+// Vanilla's GameRenderer.bobHurt: a hit rolls the view away from where it came from (14 degrees, scaled by the
+// Damage Tilt setting), and a dying player's view rolls a few degrees as it settles.
+glm::mat4 CameraTiltMatrix(GlobalState* state)
+{
+    int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    glm::mat4 m(1.0f);
+
+    int64_t deathNs = state->localDeathNs.load();
+    if (deathNs != 0)
+    {
+        float ticks = static_cast<float>(nowNs - deathNs) * 1e-9f * 20.0f;
+        m = glm::rotate(m, glm::radians(40.0f - 8000.0f / (ticks + 200.0f)), glm::vec3(0.0f, 0.0f, 1.0f));
+    }
+
+    int64_t hurtNs = state->localHurtNs.load();
+    float strength = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.DamageTilt", uint32_t{100}))) / 100.0f;
+    if (hurtNs != 0 && strength > 0.0f)
+    {
+        constexpr float HURT_TICKS = 10.0f;
+        float remaining = HURT_TICKS - static_cast<float>(nowNs - hurtNs) * 1e-9f * 20.0f;
+        if (remaining > 0.0f)
+        {
+            float t = remaining / HURT_TICKS;
+            t = std::sin(t * t * t * t * glm::pi<float>());
+            float direction = glm::radians(state->localHurtDirection.load());
+            m = glm::rotate(m, -direction, glm::vec3(0.0f, 1.0f, 0.0f));
+            m = glm::rotate(m, glm::radians(-t * 14.0f * strength), glm::vec3(0.0f, 0.0f, 1.0f));
+            m = glm::rotate(m, direction, glm::vec3(0.0f, 1.0f, 0.0f));
+        }
+    }
+    return m;
+}
+
 } // namespace
 
 Engine::SceneView RenderThread::BuildSceneView()
@@ -462,12 +495,30 @@ Engine::SceneView RenderThread::BuildSceneView()
     // View bobbing, applied in front of the camera as vanilla's bobView does.
     // The camera position then comes from the bobbed view, so passes that draw
     // camera-relative (particles, clouds) stay lined up with the terrain.
-    if (std::get<bool>(state->config->Get("Graphics.ViewBobbing", true)))
+    // The death clock starts when health reaches 0 and stops when it comes back.
     {
-        scene.viewBob = ViewBobMatrix(state->tickLoop->GetViewBob());
-        scene.view = scene.viewBob * scene.view;
-        scene.cameraPosition = glm::vec3(glm::inverse(scene.view)[3]);
+        bool dead = false;
+        {
+            std::lock_guard<std::mutex> lock(state->healthMutex);
+            dead = state->health <= 0.0f;
+        }
+        int64_t started = state->localDeathNs.load();
+        if (dead && started == 0)
+        {
+            state->localDeathNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        }
+        else if (!dead && started != 0)
+        {
+            state->localDeathNs.store(0);
+        }
     }
+
+    // Damage and death tilt, then the walk's sway (vanilla applies them in that order).
+    bool bobbing = std::get<bool>(state->config->Get("Graphics.ViewBobbing", true));
+    scene.viewBob = CameraTiltMatrix(state) * (bobbing ? ViewBobMatrix(state->tickLoop->GetViewBob()) : glm::mat4(1.0f));
+    scene.view = scene.viewBob * scene.view;
+    scene.cameraPosition = glm::vec3(glm::inverse(scene.view)[3]);
 
     // Read once and shared between skyColor below and the UBO fields further
     // down (VulkanRenderEngine::SubmitFrame), rather than two separate config

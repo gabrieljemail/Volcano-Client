@@ -116,7 +116,7 @@ struct TexturedInstance {
     glm::vec4 hurtColor; // Same convention as GPUEntityInstance::hurtColor.
     glm::vec4 partPivot;    // xyz: point the part turns about, model-local; w: tint as 0xRRGGBB (0 for none).
     glm::vec4 partOffset;   // xyz: translation added after the turn, model-local; w: light, sky * 16 + block.
-    glm::vec4 partRotation; // xyz: radians, applied Z * Y * X.
+    glm::vec4 partRotation; // xyz: radians, applied Z * Y * X; w: death roll of the whole body.
 };
 
 // One loaded skin
@@ -174,6 +174,7 @@ struct HumanoidDraw {
     const std::string* offhandItem = nullptr;
     std::array<const std::string*, 4> armor{}; // Head, chest, legs, feet.
     bool hideHead = false; // First-person body view: the camera sits inside the head.
+    float deathRoll = 0.0f; // Radians the body has tipped over; 0 while alive.
 };
 
 // Walk cycles per entity, keyed by network id; the local player uses LOCAL_WALK_KEY.
@@ -261,6 +262,13 @@ glm::vec3 RenderPositionOf(GlobalState* state, const Entity& entity, std::chrono
     float vehicleYaw = 0.0f;
     if (EntitySeat::Resolve(state, entity, now, seat, vehicleYaw) != EntitySeat::Kind::None) return seat;
     return entity.InterpolatedPosition(now);
+}
+
+// How far a dying body has tipped over, in radians, `ticks` after its death: vanilla's sqrt ramp up to 90 degrees.
+float DeathRoll(float ticks)
+{
+    float f = std::sqrt(std::clamp((ticks - 1.0f) / 20.0f * 1.6f, 0.0f, 1.0f));
+    return glm::radians(90.0f * f);
 }
 
 // The chunk light at a point on an entity, packed sky * 16 + block for TexturedInstance.
@@ -2034,6 +2042,11 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                         for (size_t i = 0; i < 4; i++) draw.armor[i] = HeldItemName(entity->GetEquipment(slots[i]));
                     }
 
+                    if (entity->dead && entity->deathTime != std::chrono::steady_clock::time_point{})
+                    {
+                        draw.deathRoll = DeathRoll(std::chrono::duration<float>(now - entity->deathTime).count() * 20.0f);
+                    }
+
                     EntityAnimation::WalkState& walk = g_walkStates[entity->id];
                     walk.Update(draw.position, now);
                     walk.lastSeenFrame = g_walkFrame;
@@ -2188,6 +2201,11 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             }
             else if (movement.mode == MoveMode::Swim) draw.anim.posture = EntityAnimation::Posture::Treading;
             else if (state->tickLoop->IsSneaking()) draw.anim.posture = EntityAnimation::Posture::Crouching;
+            if (int64_t deathNs = state->localDeathNs.load(); deathNs != 0)
+            {
+                int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                draw.deathRoll = DeathRoll(static_cast<float>(nowNs - deathNs) * 1e-9f * 20.0f);
+            }
             walk.posture = draw.anim.posture;
             walk.swimAmount = draw.anim.swimAmount;
             walk.headXRot = draw.anim.headXRot;
@@ -2310,12 +2328,13 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     const EntityJsonModel::PartInfo& info = mesh.parts[part];
                     instance.partPivot = glm::vec4(info.pivot, 0.0f);
                     instance.partOffset = glm::vec4(ToWorldOffset(pose[part].offset, mesh.scale), light);
-                    instance.partRotation = glm::vec4(ToWorldRotation(pose[part].rotation), 0.0f);
+                    instance.partRotation = glm::vec4(ToWorldRotation(pose[part].rotation), draw.deathRoll);
                     AddTextured(BATCH_MOBS, mesh, layer.skin->descriptorSet, info.indexCount, info.firstIndex, instance);
                 }
                 if (mesh.parts.empty())
                 {
-                    instance.partPivot = instance.partRotation = glm::vec4(0.0f);
+                    instance.partPivot = glm::vec4(0.0f);
+                    instance.partRotation = glm::vec4(0.0f, 0.0f, 0.0f, draw.deathRoll);
                     instance.partOffset = glm::vec4(0.0f, 0.0f, 0.0f, light);
                     AddTextured(BATCH_MOBS, mesh, layer.skin->descriptorSet, mesh.indexCount, 0, instance);
                 }
@@ -2346,7 +2365,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                             const EntityJsonModel::PartInfo& info = armorMesh.parts[index];
                             instance.partPivot = glm::vec4(info.pivot, pass == 0 ? static_cast<float>(look.tint) : 0.0f);
                             instance.partOffset = glm::vec4(ToWorldOffset(bodyPose[index].offset, body.scale), light);
-                            instance.partRotation = glm::vec4(ToWorldRotation(bodyPose[index].rotation), 0.0f);
+                            instance.partRotation = glm::vec4(ToWorldRotation(bodyPose[index].rotation), draw.deathRoll);
                             AddTextured(BATCH_MOBS, armorMesh, skin->descriptorSet, info.indexCount, info.firstIndex, instance);
                         }
                     }
