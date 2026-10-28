@@ -24,6 +24,9 @@ layout(set = 0, binding = 0) uniform CameraUBO {
     vec4 cameraPosition;
     float fogStart;
     float fogEnd;
+    float specularStrength;
+    float time;
+    vec4 sunDirection;
 } camera;
 
 layout(location = 0) in uvec3 packedData;
@@ -37,6 +40,7 @@ layout(location = 5) out float fragAOMultiplier;
 layout(location = 6) out float fragFaceShade;
 layout(location = 7) out vec3 fragViewOffset; // world position relative to the camera, for fog
 layout(location = 8) out float fragChunkFade;
+layout(location = 9) flat out vec4 fragSpecular; // xyz = face normal, w = shininess 0-1
 
 // Vanilla's hardcoded per-face diffuse shading (LevelRenderer::getShade).
 // normalIndex matches ChunkMesher's FaceIndexFor: 0=Up, 1=Down, 2=North,
@@ -52,6 +56,16 @@ float FaceShade(uint normalIndex) {
     return camera.shadeEastWest; // 4 (East) or 5 (West).
 }
 
+// Face normals by normalIndex (0=Up, 1=Down, 2=North, 3=South, 4=East, 5=West).
+vec3 FaceNormal(uint normalIndex) {
+    if (normalIndex == 0u) return vec3(0.0, 1.0, 0.0);
+    if (normalIndex == 1u) return vec3(0.0, -1.0, 0.0);
+    if (normalIndex == 2u) return vec3(0.0, 0.0, -1.0);
+    if (normalIndex == 3u) return vec3(0.0, 0.0, 1.0);
+    if (normalIndex == 4u) return vec3(1.0, 0.0, 0.0);
+    return vec3(-1.0, 0.0, 0.0);
+}
+
 void main() {
     uint word0 = packedData.x;
     uint word1 = packedData.y;
@@ -64,13 +78,14 @@ void main() {
     float y = float(bitfieldExtract(word0, 12, 9));
 
     // Extract biome-tint flag (see BiomeColors.hpp for the placeholder color).
-    fragBiomeTinted = bitfieldExtract(word0, 26, 1);
+    fragBiomeTinted = bitfieldExtract(word0, 26, 3);
 
     // Extract face normal index (see FaceShade's own comment) and resolve
     // it to a shade multiplier right here rather than passing the raw index
     // through to terrain.frag.
     uint normalIndex = bitfieldExtract(word0, 21, 3);
     fragFaceShade = FaceShade(normalIndex);
+    fragSpecular = vec4(FaceNormal(normalIndex), float(bitfieldExtract(word1, 24, 3)) / 7.0);
 
     // Extract lighting
     uint blockLight = bitfieldExtract(word1, 16, 4);

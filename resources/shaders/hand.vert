@@ -3,6 +3,7 @@
 // The first-person arm: one skinned box, placed entirely by mvp.
 layout(push_constant) uniform PushConstants {
     mat4 mvp;
+    vec4 shade; // x: brightness from the light around the player.
 } pc;
 
 layout(location = 0) in vec3 inPosition;
@@ -18,4 +19,5 @@ void main() {
     // Vanilla's per-face shading; the normal is in the arm's own space.
     vec3 n = abs(inNormal);
     fragLight = n.y > 0.5 ? (inNormal.y < 0.0 ? 1.0 : 0.5) : (n.z > 0.5 ? 0.8 : 0.6);
+    fragLight *= pc.shade.x;
 }

@@ -8,7 +8,7 @@ layout(push_constant) uniform PushConstants {
     vec4 normalRow0; // Rows of the 3x3 normal matrix (rotation part of the display transform).
     vec4 normalRow1;
     vec4 normalRow2;
-    vec4 params;     // x: 1 = flat item lit head-on, 0 = block-style lighting.
+    vec4 params;     // x: 1 = flat item lit head-on, 0 = block-style lighting; y: light taken away, 0 to 1.
 } pc;
 
 layout(location = 0) in vec3 inPosition;
@@ -35,5 +35,5 @@ void main() {
 
     fragUV = inUV;
     fragLayer = inLayer;
-    fragLight = pc.params.x > 0.5 ? 1.0 : min(1.0, 0.4 + 0.6 * lit);
+    fragLight = (pc.params.x > 0.5 ? 1.0 : min(1.0, 0.4 + 0.6 * lit)) * (1.0 - pc.params.y);
 }

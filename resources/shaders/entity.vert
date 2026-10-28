@@ -1,9 +1,36 @@
 #version 450
 
+#ifdef SHADOWS
+layout(set = 0, binding = 0) uniform CameraUBO {
+    mat4 view;
+    mat4 proj;
+    float lightingEnabled;
+    float brightnessFactor;
+    float skyLightFactor;
+    float lightFalloff;
+    float shadeTop;
+    float shadeBottom;
+    float shadeNorthSouth;
+    float shadeEastWest;
+    vec4 fogColor;
+    vec4 cameraPosition;
+    float fogStart;
+    float fogEnd;
+    float specularStrength;
+    float time;
+    vec4 sunDirection;
+    mat4 shadowViewProj[3];
+    vec4 shadowParams; // x darkness, y texel (uv), w debug view
+    vec4 shadowSplits; // far view distance of each cascade
+    vec4 shadowTexels; // blocks per texel of each cascade
+    vec4 shadowRanges; // depth span of each cascade, in blocks
+} camera;
+#else
 layout(set = 0, binding = 0) uniform CameraUBO {
     mat4 view;
     mat4 proj;
 } camera;
+#endif
 
 struct EntityInstance {
     vec4 positionYaw;     // xyz: world position (feet), w: yaw radians.
@@ -29,6 +56,9 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 0) out vec3 fragNormal;
 layout(location = 1) out vec4 fragColor;
 layout(location = 2) out vec4 fragHurt;
+#ifdef SHADOWS
+layout(location = 3) out vec3 fragViewOffset; // world position relative to the camera
+#endif
 
 void main() {
     EntityInstance inst = instances[gl_InstanceIndex];
@@ -51,6 +81,9 @@ void main() {
     vec3 worldPos = rotatedPos + inst.positionYaw.xyz + vec3(0.0, halfExtents.y, 0.0);
 
     gl_Position = camera.proj * camera.view * vec4(worldPos, 1.0);
+#ifdef SHADOWS
+    fragViewOffset = worldPos - camera.cameraPosition.xyz;
+#endif
 
     fragNormal = yawRotation * inNormal;
     fragColor = inst.color;
