@@ -60,6 +60,8 @@ struct Block {
     uint8_t blockEntityKind = 0;
     uint8_t blockEntityData = 0;
 
+    bool operator==(const Block&) const = default;
+
     // How much light this block absorbs: 15 blocks it entirely.
     int LightOpacity() const {
         if (lightFilter != 255) return lightFilter;
