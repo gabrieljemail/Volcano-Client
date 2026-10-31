@@ -14,6 +14,7 @@ namespace Volcano::GUI {
 struct ServerEntry {
     std::string name = "Minecraft server";
     std::string address; // "host" or "host:port"
+    std::string category; // User-made group name; empty for none.
 };
 
 // Reads servers.json (next to the exe): an array of {"name", "address"}.

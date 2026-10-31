@@ -1,0 +1,13 @@
+{
+    "_comment": "Player body like vanilla's PlayerModel (modern 64x64 skin layout: separate left arm and leg regions). Slim (3 pixel) arms.",
+    "textureWidth": 64,
+    "textureHeight": 64,
+    "boxes": [
+        { "name": "head", "origin": [-4.0, -8.0, -4.0], "size": [8.0, 8.0, 8.0], "uv": [0.0, 0.0], "pivot": [0.0, 0.0, 0.0] },
+        { "name": "body", "origin": [-4.0, 0.0, -2.0], "size": [8.0, 12.0, 4.0], "uv": [16.0, 16.0], "pivot": [0.0, 0.0, 0.0] },
+        { "name": "right_arm", "origin": [-2.0, -2.0, -2.0], "size": [3.0, 12.0, 4.0], "uv": [40.0, 16.0], "pivot": [-5.0, 2.5, 0.0] },
+        { "name": "left_arm", "origin": [-1.0, -2.0, -2.0], "size": [3.0, 12.0, 4.0], "uv": [32.0, 48.0], "pivot": [5.0, 2.5, 0.0] },
+        { "name": "right_leg", "origin": [-2.0, 0.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [0.0, 16.0], "pivot": [-1.9, 12.0, 0.0] },
+        { "name": "left_leg", "origin": [-2.0, 0.0, -2.0], "size": [4.0, 12.0, 4.0], "uv": [16.0, 48.0], "pivot": [1.9, 12.0, 0.0] }
+    ]
+}

@@ -5,7 +5,9 @@
 #include <asio.hpp>
 #include <chrono>
 #include <cstdint>
+#include <array>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -20,7 +22,8 @@ namespace Volcano {
 // knowledge lives here
 class Connection {
 public:
-    explicit Connection(asio::io_context& ioContext) : socket(ioContext) {}
+    explicit Connection(asio::io_context& ioContext);
+    ~Connection();
 
     void Connect(const std::string& host, uint16_t port)
     {
@@ -90,6 +93,10 @@ public:
     // otherwise.
     void EnableCompression(int32_t thresholdIn) { threshold = thresholdIn; }
 
+    // Called once, after the Encryption Response is sent. From the next byte on, everything in both directions is
+    // AES-128/CFB8 with the shared secret as key and IV. NETWORK THREAD ONLY.
+    void EnableEncryption(const std::array<uint8_t, 16>& sharedSecret);
+
     void Close()
     {
         asio::error_code ec;
@@ -105,6 +112,12 @@ private:
     // never a socket operation
     std::mutex outboundMutex;
     std::vector<std::pair<int32_t, std::vector<uint8_t>>> outbound;
+
+    // Whole reads and writes, through the cipher once encryption is on.
+    struct Cipher;
+    std::unique_ptr<Cipher> cipher;
+    void ReadExact(uint8_t* destination, size_t count);
+    void WriteAll(const std::vector<uint8_t>& data);
 
     uint8_t ReadByteBlocking();
     void SendUncompressed(int32_t packetId, const std::vector<uint8_t>& payload);

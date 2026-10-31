@@ -106,6 +106,10 @@ Completion: **about 60% Complete.** (Estimate; milestone 2 is mostly entity cove
 * **Step-up applied while airborne, not just on the ground.** `MoveAxis` tried `TryStepUp` on any blocked horizontal move regardless of `grounded`, so jumping/falling into a solid face let the player climb it a `STEP_HEIGHT` (0.6-block) hop at a time instead of colliding with it like a wall. Now gated on `grounded`. -- *`TickLoop.cpp`*
 * **Ghost chunk geometry after a dimension change** (e.g. dying and respawning back at the world spawn) — the old dimension's chunks, entities, and both render lists just kept rendering forever, since nothing ever cleared them. The server's `Respawn` packet (sent on every dimension change, not only death) was previously unhandled entirely. The disconnect-screen reset (world/render-list/entity clear, already existed, only ever ran when returning to the connect screen) is now a shared `GlobalState::ResetWorldState()`, called on `Respawn` too — same reset, but without reopening the connect screen, so the session stays connected while the new dimension's chunks stream in. **Not yet verified against a live respawn/dimension change** — only that it builds and the reset is a safe no-op mid-connect-screen-return (its original call site). -- *`GlobalState.hpp`, `VolcanoClient.cpp`, `NetworkClient.cpp`, `PacketIds.hpp`*
 
+## Low-RAM work (2026-10-31)
+* **Chunk storage is sectioned and palettized.** A column was a flat 98,304-cell `Block` array (20 bytes each) plus two light arrays, about 2.1 MB per column (~620 MB at render distance 8). Each 16-tall section now holds a palette plus 16-bit cell indices, allocated only once it has a non-air block, and light as nibbles, allocated only when it differs from the default. A typical terrain column measures 56 KB in a standalone randomized test against the flat layout (0 mismatches). Public `Chunk` accessors are unchanged. **Not checked in the real client yet**: compare `VolcanoClient.exe` memory at the same spot and render distance. -- *`Chunk.hpp`, `Block.hpp` (defaulted `operator==`)*
+* Ideas not done yet: free songs after they play (OpenAL buffers are never deleted), a low-RAM onboarding preset that caps render distance, a smaller singleplayer `-Xmx` on 4 GB machines, a texture layer size cap.
+
 ## Fixed since last update (2026-10-27)
 * **Mobs vanished after being hit or landing.** Position sync, teleport, vehicle move and explosion packets built a vector from three `ReadDouble()` calls in one argument list. C++ leaves that evaluation order unspecified and clang in MSVC mode runs it right to left, so x and z were swapped and the mob landed about 4,200 blocks away. A `ReadVec3` helper reads them as separate statements at all six sites. Probably also the cause of the old "entities inside walls" note. -- *`NetworkClient.cpp`*
 * Teleport (0x7d) now parses the 26.x layout (position, velocity, yaw/pitch, relative-flags int, onGround). -- *`NetworkClient.cpp`*
@@ -233,3 +237,11 @@ What was listed here on 2026-10-16 has mostly landed (see Current State). What i
 [x] Drop key: tap drops one item, hold (0.35 s) or Ctrl drops the stack (`DropKey.hpp`). Not tested against a server yet.
 [x] Inventory clicks: Shift+Click, hotbar-key swap and drop-over-slot send the protocol click modes 1/2/4 with no local prediction, so slots update when the server answers. Not tested against a server yet.
 [ ] Inventory double-click gather, drag-split, creative inventory clicks.
+
+## Accounts and skins (2026-10-30, built; not tested live)
+[x] Microsoft sign-in: device code -> Xbox -> XSTS -> Minecraft (src/network/microsoft/MSAccountManager). Accounts persist in accounts.json (refresh tokens, plain text). Needs Auth.ClientId in settings.json (your own Entra app registration, public client, XboxLive.signin scope).
+[x] Account switcher in the top right of the menus (src/renderer/gui/AccountSwitcher): Offline, each account, remove, Add account.
+[x] Online-mode login: Encryption Request, session server join, AES/CFB8 on Connection.
+[x] Skins: the textures property from Player Info Update / Login Success (online servers and offline-mode skin plugins alike), and the signed-in account's own skin for the local player. SkinFetcher downloads on a worker thread (https; Mojang hosts plus Skins.AllowedHosts). Slim and wide player models, outer skin layer.
+[ ] First-person hand always uses the wide arm mesh, so slim skins look slightly stretched there.
+[ ] Verify live: online server join, a skin-plugin server, device-code sign-in.

@@ -337,7 +337,7 @@ void HandModel::CreatePipeline(const Engine::ShaderLibrary& shaders)
 void HandModel::DrawArm(VkCommandBuffer cmd, const ArmMesh& mesh, const glm::mat4& mvp, float brightness)
 {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    VkDescriptorSet skinSet = EntityRenderer::GetDefaultSkinSet();
+    VkDescriptorSet skinSet = EntityRenderer::GetLocalSkinSet();
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &skinSet, 0, nullptr);
     VkDeviceSize vertexOffset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &vertexOffset);

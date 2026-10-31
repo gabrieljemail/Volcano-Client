@@ -7,6 +7,7 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 #include <Pincel/Pincel.hpp>
+#include "AccountPanel.hpp"
 #include "ImGuiInput.hpp"
 #include "PincelSurface.hpp"
 #include "models/Screen.hpp"
@@ -128,6 +129,7 @@ private:
     std::vector<Field> extraFields;            // From AddField.
     std::vector<Control> controls;
     ImGuiInput input;
+    AccountPanel accountPanel; // The account switcher, over every screen outside a world.
 
     Pincel::Element tooltip;
     Pincel::Element tooltipText;

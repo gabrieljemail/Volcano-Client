@@ -14,6 +14,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include "EntityRenderer.hpp"
 #include "models/Entity.hpp"
+#include "../../network/SkinFetcher.hpp"
+#include "../../network/Uuid.hpp"
 #include "models/EntityRegistry.hpp"
 #include "models/EntitySeat.hpp"
 #include "models/BodyRotation.hpp"
@@ -178,6 +180,7 @@ struct HumanoidDraw {
     bool hideHead = false; // First-person body view: the camera sits inside the head.
     float deathRoll = 0.0f; // Radians the body has tipped over; 0 while alive.
     float pitch = 0.0f;     // Radians the whole body tilts nose down.
+    const SkinTexture* skin = nullptr; // A player's own skin, for every layer; null uses the model's.
 };
 
 // Walk cycles per entity, keyed by network id; the local player uses LOCAL_WALK_KEY.
@@ -318,6 +321,17 @@ std::unordered_map<std::string, SkinTexture> g_skinCache;
 std::unordered_map<std::string, EntityModelMesh> g_meshCache;
 
 const SkinTexture* g_steveSkin = nullptr; // Default skin for the first-person arm.
+
+// Downloaded player skins by key (hex UUID, or "local"), in a descriptor pool of their own so they can't starve the mobs'.
+struct PlayerSkin
+{
+    SkinTexture texture;
+    bool slim = false;
+};
+constexpr uint32_t MAX_PLAYER_SKINS = 96;
+const char* const LOCAL_SKIN_KEY = "local";
+std::unordered_map<std::string, PlayerSkin> g_playerSkins;
+VkDescriptorPool g_playerSkinPool = VK_NULL_HANDLE;
 
 // Chests: meshes by type (single/left/right), skins by [kind-1][type].
 EntityModelMesh g_chestMeshes[3];
@@ -575,7 +589,8 @@ void UploadTexturedMesh(const std::vector<EntityJsonModel::Vertex>& vertices,
 // against g_textureSetLayout. Any size works (unlike TextureManager, which
 // only accepts exactly 16x16) - player/zombie skins are both 64x64 in this
 // resource pack, but nothing here assumes that.
-SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height, const std::string& path)
+SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height, const std::string& path,
+    VkDescriptorPool pool = VK_NULL_HANDLE)
 {
     SkinTexture skin;
     VkDeviceSize imageBytes = static_cast<VkDeviceSize>(width) * height * 4;
@@ -649,7 +664,7 @@ SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height
 
     VkDescriptorSetAllocateInfo dsAlloc{};
     dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = g_textureDescriptorPool;
+    dsAlloc.descriptorPool = pool != VK_NULL_HANDLE ? pool : g_textureDescriptorPool;
     dsAlloc.descriptorSetCount = 1;
     dsAlloc.pSetLayouts = &g_textureSetLayout;
     if (vkAllocateDescriptorSets(GetDevice(), &dsAlloc, &skin.descriptorSet) != VK_SUCCESS)
@@ -722,6 +737,56 @@ void DestroySkin(SkinTexture& skin)
     if (skin.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), skin.view, nullptr);
     if (skin.image.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, skin.image.image, skin.image.allocation);
     skin = SkinTexture{};
+}
+
+// Puts the downloaded skins the fetcher finished onto the GPU (render thread).
+void UploadFinishedSkins(GlobalState* state)
+{
+    if (state->skinFetcher == nullptr) return;
+    for (SkinImage& image : state->skinFetcher->TakeCompleted())
+    {
+        if (g_playerSkins.size() >= MAX_PLAYER_SKINS && g_playerSkins.find(image.key) == g_playerSkins.end()) continue;
+        try
+        {
+            PlayerSkin skin;
+            skin.texture = CreateTextureFromPixels(image.pixels.data(), 64, 64, image.key, g_playerSkinPool);
+            skin.slim = image.slim;
+            auto existing = g_playerSkins.find(image.key);
+            if (existing != g_playerSkins.end()) DestroySkin(existing->second.texture);
+            g_playerSkins[image.key] = skin;
+        }
+        catch (const std::exception& e)
+        {
+            Log::Error(std::string("EntityRenderer: player skin upload failed: ") + e.what());
+        }
+    }
+}
+
+// Picks a player's skin and the matching (wide or slim) model: the downloaded skin when it has arrived, asking the
+// fetcher for it the first time it's wanted; otherwise the model's own default skin. `model` is the wide "player" model.
+void ResolvePlayerLook(GlobalState* state, const std::string& key, const MobModel*& model, const SkinTexture*& skin)
+{
+    GlobalState::SkinSource source;
+    {
+        std::lock_guard<std::mutex> lock(state->skinSourcesMutex);
+        auto it = state->skinSources.find(key);
+        if (it == state->skinSources.end()) return;
+        source = it->second;
+    }
+
+    auto loaded = g_playerSkins.find(key);
+    if (loaded == g_playerSkins.end())
+    {
+        if (state->skinFetcher != nullptr) state->skinFetcher->Request(key, source.url, source.slim);
+        return;
+    }
+
+    skin = &loaded->second.texture;
+    if (loaded->second.slim)
+    {
+        auto slim = g_mobModels.find("player_slim");
+        if (slim != g_mobModels.end()) model = &slim->second;
+    }
 }
 
 constexpr const char* MOB_MODEL_DIR = "resources/volcano/models/entity/";
@@ -981,6 +1046,17 @@ void CreateDescriptorLayoutAndPool()
     if (vkCreateDescriptorPool(GetDevice(), &texturePoolInfo, nullptr, &g_textureDescriptorPool) != VK_SUCCESS)
     {
         throw std::runtime_error("[ERROR] Failed to create entity skin texture descriptor pool.");
+    }
+
+    VkDescriptorPoolSize playerPoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_PLAYER_SKINS };
+    VkDescriptorPoolCreateInfo playerPoolInfo{};
+    playerPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    playerPoolInfo.poolSizeCount = 1;
+    playerPoolInfo.pPoolSizes = &playerPoolSize;
+    playerPoolInfo.maxSets = MAX_PLAYER_SKINS;
+    if (vkCreateDescriptorPool(GetDevice(), &playerPoolInfo, nullptr, &g_playerSkinPool) != VK_SUCCESS)
+    {
+        throw std::runtime_error("[ERROR] Failed to create the player skin descriptor pool.");
     }
 }
 
@@ -1725,9 +1801,20 @@ void EntityRenderer::ReloadTextures()
     // Every skin set came from this pool and all were just dropped.
     if (g_textureDescriptorPool != VK_NULL_HANDLE) vkResetDescriptorPool(GetDevice(), g_textureDescriptorPool, 0);
 
+    // Downloaded skins are re-uploaded from the fetcher's next batch, so forget them and ask again.
+    for (auto& [key, playerSkin] : g_playerSkins) DestroySkin(playerSkin.texture);
+    g_playerSkins.clear();
+    if (g_playerSkinPool != VK_NULL_HANDLE) vkResetDescriptorPool(GetDevice(), g_playerSkinPool, 0);
+
     // Meshes stay cached (they come from client JSON, not the pack).
     LoadSkins();
     LoadMobManifest();
+}
+
+VkDescriptorSet EntityRenderer::GetLocalSkinSet()
+{
+    auto it = g_playerSkins.find(LOCAL_SKIN_KEY);
+    return it != g_playerSkins.end() ? it->second.texture.descriptorSet : GetDefaultSkinSet();
 }
 
 VkDescriptorSet EntityRenderer::GetDefaultSkinSet()
@@ -1887,6 +1974,14 @@ void EntityRenderer::Shutdown()
     for (auto& [stateId, texture] : g_blockTextures) DestroySkin(texture);
     g_blockTextures.clear();
 
+    for (auto& [key, playerSkin] : g_playerSkins) DestroySkin(playerSkin.texture);
+    g_playerSkins.clear();
+    if (g_playerSkinPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(GetDevice(), g_playerSkinPool, nullptr);
+        g_playerSkinPool = VK_NULL_HANDLE;
+    }
+
     // Destroying the pool frees every skin's descriptor set allocated from it.
     if (g_textureDescriptorPool != VK_NULL_HANDLE)
     {
@@ -1920,6 +2015,8 @@ void EntityRenderer::Shutdown()
 void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state,
     const glm::mat4& view, const glm::mat4& proj, const glm::vec3& cameraPosition, bool indirect)
 {
+    UploadFinishedSkins(state);
+
     std::array<glm::vec4, 4> frustumPlanes = ExtractFrustumPlanes(proj * view);
 
     // Frustum-cull first, then keep only the closest MAX_VISIBLE_ENTITIES -
@@ -2043,6 +2140,10 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     HumanoidDraw draw{
                         RenderPositionOf(state, *entity, now), entity->InterpolatedYaw(now), HurtColorFor(*entity),
                         &mob->second };
+                    if (const PlayerEntity* skinned = state->FindPlayerEntity(entity->id))
+                    {
+                        ResolvePlayerLook(state, FormatUuid(skinned->uuid), draw.model, draw.skin);
+                    }
 
                     if (mob->second.armorOuter != nullptr)
                     {
@@ -2175,6 +2276,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             HumanoidDraw draw{
                 state->tickLoop->GetRenderPosition(), glm::radians(bodyYaw),
                 glm::vec4(hurtColor.r, hurtColor.g, hurtColor.b, 0.0f), &mob->second };
+            ResolvePlayerLook(state, LOCAL_SKIN_KEY, draw.model, draw.skin);
 
             EntityAnimation::WalkState& walk = g_walkStates[LOCAL_WALK_KEY];
             walk.Update(draw.position, now);
@@ -2329,6 +2431,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             for (const MobLayer& layer : draw.model->layers)
             {
                 const EntityModelMesh& mesh = *layer.mesh;
+                const VkDescriptorSet layerSet = (draw.skin != nullptr ? draw.skin : layer.skin)->descriptorSet;
 
                 // One draw per part, each turned about its own pivot.
                 EntityAnimation::Pose pose = EntityAnimation::ComputePose(mesh.roles, mesh.parts, draw.anim);
@@ -2339,14 +2442,14 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     instance.partPivot = glm::vec4(info.pivot, 0.0f);
                     instance.partOffset = glm::vec4(ToWorldOffset(pose[part].offset, mesh.scale), light);
                     instance.partRotation = glm::vec4(ToWorldRotation(pose[part].rotation), draw.deathRoll);
-                    AddTextured(BATCH_MOBS, mesh, layer.skin->descriptorSet, info.indexCount, info.firstIndex, instance);
+                    AddTextured(BATCH_MOBS, mesh, layerSet, info.indexCount, info.firstIndex, instance);
                 }
                 if (mesh.parts.empty())
                 {
                     instance.partPivot = glm::vec4(0.0f);
                     instance.partRotation = glm::vec4(0.0f, 0.0f, 0.0f, draw.deathRoll);
                     instance.partOffset = glm::vec4(0.0f, 0.0f, 0.0f, light);
-                    AddTextured(BATCH_MOBS, mesh, layer.skin->descriptorSet, mesh.indexCount, 0, instance);
+                    AddTextured(BATCH_MOBS, mesh, layerSet, mesh.indexCount, 0, instance);
                 }
             }
 

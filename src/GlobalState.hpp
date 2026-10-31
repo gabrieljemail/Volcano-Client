@@ -68,6 +68,8 @@ class LightEngine;
 class ItemRenderer;
 class ParticleSystem;
 class ResourceManager;
+class MSAccountManager;
+class SkinFetcher;
 
 // Defined in renderer/engine/RenderEngine.hpp - the abstraction layer every
 // non-renderer system talks to instead of Vulkan. Forward-declared for the
@@ -650,6 +652,22 @@ struct GlobalState {
             networkInbox.pendingUnloads.clear();
         }
     }
+
+    // The signed-in Microsoft accounts and which one connections use. Owned by main(); every method is thread safe.
+    MSAccountManager* accountManager{nullptr};
+
+    // Downloads skins in the background; the render thread uploads what it finishes. Owned by main().
+    SkinFetcher* skinFetcher{nullptr};
+
+    // Where each player's skin lives, keyed by hex UUID (the textures property of Player Info Update, or of Login Success for
+    // the local player). Written by the network thread, read by the render thread.
+    struct SkinSource
+    {
+        std::string url;
+        bool slim = false;
+    };
+    std::unordered_map<std::string, SkinSource> skinSources = {};
+    std::mutex skinSourcesMutex;
 };
 
 }

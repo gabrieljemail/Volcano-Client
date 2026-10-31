@@ -64,6 +64,13 @@ public:
     static bool HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string& error,
         const std::function<void(uint64_t received, uint64_t total)>& progress = nullptr);
 
+    // One https request with any method, headers ("Name: value") and body. Returns true when a response arrived, whatever its
+    // status (`status`, and `response` holds the body, error bodies included); false with a reason in `error` otherwise.
+    // Blocking, thread safe.
+    static bool HttpRequest(const std::string& method, const std::string& url, const std::vector<std::string>& headers,
+        const std::string& requestBody, int& status, std::vector<uint8_t>& response, std::string& error,
+        const std::function<void(uint64_t received, uint64_t total)>& progress = nullptr);
+
     // Blocking yes/no prompt. Returns true for the agree answer. `agreeLabel` names it in the text where the dialog
     // can't relabel its buttons; without a dialog it asks on the terminal.
     static bool ShowConsentDialog(const std::string& title, const std::string& message, const std::string& agreeLabel);

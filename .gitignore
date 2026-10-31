@@ -56,4 +56,5 @@ imgui.ini
 
 # Personal: saved servers and a private SSH helper.
 servers.json
+accounts.json
 server-ssh.ps1

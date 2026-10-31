@@ -3,6 +3,7 @@
 #include "resources/ResourceManager.hpp"
 #include <nlohmann/json.hpp>
 #include <cctype>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -117,6 +118,42 @@ uint32_t ResolveColor(const std::string& value, uint32_t inherited)
     return it != colors.end() ? it->second : inherited;
 }
 
+// Adds `text` as segments, turning legacy "section sign + code" sequences into colors: 0-9 and a-f pick a color, r goes
+// back to the inherited one, and the style codes (k-o) are swallowed since segments carry only a color.
+void AddLegacyText(const std::string& text, uint32_t inheritedColor, std::vector<ChatSegment>& out)
+{
+    static const char* digits = "0123456789abcdef";
+    static const uint32_t legacy[16] = { 0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA,
+        0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF };
+
+    uint32_t color = inheritedColor;
+    std::string run;
+    auto flush = [&]()
+    {
+        if (!run.empty()) out.push_back(ChatSegment{ run, color });
+        run.clear();
+    };
+
+    for (size_t i = 0; i < text.size(); i++)
+    {
+        bool sign = static_cast<unsigned char>(text[i]) == 0xC2 && i + 2 < text.size()
+            && static_cast<unsigned char>(text[i + 1]) == 0xA7;
+        if (!sign)
+        {
+            run += text[i];
+            continue;
+        }
+
+        char code = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i + 2])));
+        const char* found = std::strchr(digits, code);
+        flush();
+        if (found != nullptr && code != '\0') color = legacy[found - digits];
+        else if (code == 'r') color = inheritedColor;
+        i += 2; // The sign (two bytes) and its code; whatever follows is plain text.
+    }
+    flush();
+}
+
 void Flatten(const NBT::Tag& tag, uint32_t inheritedColor, std::vector<ChatSegment>& out)
 {
     using namespace NBT;
@@ -124,7 +161,7 @@ void Flatten(const NBT::Tag& tag, uint32_t inheritedColor, std::vector<ChatSegme
     switch (tag.type)
     {
         case TagType::String:
-            out.push_back(ChatSegment{ std::get<std::string>(tag.value), inheritedColor });
+            AddLegacyText(std::get<std::string>(tag.value), inheritedColor, out);
             return;
 
         case TagType::List: {
@@ -141,7 +178,7 @@ void Flatten(const NBT::Tag& tag, uint32_t inheritedColor, std::vector<ChatSegme
                 color = ResolveColor(std::get<std::string>(it->second.value), inheritedColor);
 
             if (auto it = compound.find("text"); it != compound.end() && it->second.type == TagType::String)
-                out.push_back(ChatSegment{ std::get<std::string>(it->second.value), color });
+                AddLegacyText(std::get<std::string>(it->second.value), color, out);
             else if (auto it = compound.find("translate"); it != compound.end() && it->second.type == TagType::String)
             {
                 const std::string& key = std::get<std::string>(it->second.value);

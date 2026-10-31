@@ -4,6 +4,7 @@
 #include "../Logger.hpp"
 #include "NetworkStats.hpp"
 #include "models/PacketEvent.hpp"
+#include <openssl/evp.h>
 #include <zlib.h>
 #include <filesystem>
 #include <iomanip>
@@ -56,6 +57,53 @@ std::vector<uint8_t> ZlibDecompress(const uint8_t* data, size_t size, int32_t un
 
 } // namespace
 
+struct Connection::Cipher
+{
+    EVP_CIPHER_CTX* encrypt = EVP_CIPHER_CTX_new();
+    EVP_CIPHER_CTX* decrypt = EVP_CIPHER_CTX_new();
+    ~Cipher()
+    {
+        EVP_CIPHER_CTX_free(encrypt);
+        EVP_CIPHER_CTX_free(decrypt);
+    }
+};
+
+Connection::Connection(asio::io_context& ioContext) : socket(ioContext) {}
+
+Connection::~Connection() = default;
+
+void Connection::EnableEncryption(const std::array<uint8_t, 16>& sharedSecret)
+{
+    auto created = std::make_unique<Cipher>();
+    if (EVP_EncryptInit_ex(created->encrypt, EVP_aes_128_cfb8(), nullptr, sharedSecret.data(), sharedSecret.data()) != 1
+        || EVP_DecryptInit_ex(created->decrypt, EVP_aes_128_cfb8(), nullptr, sharedSecret.data(), sharedSecret.data()) != 1)
+    {
+        throw std::runtime_error("Couldn't start the connection's encryption");
+    }
+    cipher = std::move(created);
+}
+
+void Connection::ReadExact(uint8_t* destination, size_t count)
+{
+    asio::read(socket, asio::buffer(destination, count));
+    if (cipher == nullptr || count == 0) return;
+    int written = 0;
+    EVP_DecryptUpdate(cipher->decrypt, destination, &written, destination, static_cast<int>(count));
+}
+
+void Connection::WriteAll(const std::vector<uint8_t>& data)
+{
+    if (cipher == nullptr)
+    {
+        asio::write(socket, asio::buffer(data));
+        return;
+    }
+    std::vector<uint8_t> sealed(data.size());
+    int written = 0;
+    EVP_EncryptUpdate(cipher->encrypt, sealed.data(), &written, data.data(), static_cast<int>(data.size()));
+    asio::write(socket, asio::buffer(sealed));
+}
+
 void Connection::SendPacket(int32_t packetId, const std::vector<uint8_t>& payload)
 {
     LogPacket("C2S", packetId, payload.data(), payload.size());
@@ -101,7 +149,7 @@ void Connection::SendUncompressed(int32_t packetId, const std::vector<uint8_t>& 
     framed.WriteVarInt(static_cast<int32_t>(idAndPayload.Data().size()));
     framed.WriteBytes(idAndPayload.Data().data(), idAndPayload.Data().size());
 
-    asio::write(socket, asio::buffer(framed.Data()));
+    WriteAll(framed.Data());
 }
 
 void Connection::SendCompressed(int32_t packetId, const std::vector<uint8_t>& payload)
@@ -128,13 +176,13 @@ void Connection::SendCompressed(int32_t packetId, const std::vector<uint8_t>& pa
     framed.WriteVarInt(static_cast<int32_t>(body.Data().size()));
     framed.WriteBytes(body.Data().data(), body.Data().size());
 
-    asio::write(socket, asio::buffer(framed.Data()));
+    WriteAll(framed.Data());
 }
 
 uint8_t Connection::ReadByteBlocking()
 {
     uint8_t byte;
-    asio::read(socket, asio::buffer(&byte, 1));
+    ReadExact(&byte, 1);
     return byte;
 }
 
@@ -198,7 +246,7 @@ int32_t Connection::ReadPacketRaw(std::vector<uint8_t>& outPayload)
     }
 
     std::vector<uint8_t> body(static_cast<size_t>(CheckedLength(length, "packet length")));
-    asio::read(socket, asio::buffer(body));
+    ReadExact(body.data(), body.size());
 
     PacketReader reader(body.data(), body.size());
     int32_t packetId = reader.ReadVarInt();
@@ -219,7 +267,7 @@ int32_t Connection::ReadPacketCompressed(std::vector<uint8_t>& outPayload)
     }
 
     std::vector<uint8_t> body(static_cast<size_t>(CheckedLength(packetLength, "packet length")));
-    asio::read(socket, asio::buffer(body));
+    ReadExact(body.data(), body.size());
 
     PacketReader outer(body.data(), body.size());
     int32_t dataLength = outer.ReadVarInt();

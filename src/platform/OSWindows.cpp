@@ -304,10 +304,12 @@ struct WinHttpHandle
 };
 } // namespace
 
-bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string& error,
+bool OS::HttpRequest(const std::string& method, const std::string& url, const std::vector<std::string>& headers,
+    const std::string& requestBody, int& status, std::vector<uint8_t>& body, std::string& error,
     const std::function<void(uint64_t, uint64_t)>& progress)
 {
     body.clear();
+    status = 0;
     std::wstring wideUrl = ToWide(url);
 
     URL_COMPONENTS parts{};
@@ -333,25 +335,31 @@ bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string
         error = "Couldn't connect to the server.";
         return false;
     }
-    WinHttpHandle request(WinHttpOpenRequest(connection.handle, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+    WinHttpHandle request(WinHttpOpenRequest(connection.handle, ToWide(method).c_str(), path.c_str(), nullptr, WINHTTP_NO_REFERER,
         WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
-    if (request.handle == nullptr
-        || !WinHttpSendRequest(request.handle, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)
+    if (request.handle == nullptr)
+    {
+        error = "The request failed (error " + std::to_string(GetLastError()) + ").";
+        return false;
+    }
+
+    std::wstring headerText;
+    for (const std::string& header : headers) headerText += ToWide(header) + L"\r\n";
+    void* data = requestBody.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(requestBody.data());
+    DWORD dataSize = static_cast<DWORD>(requestBody.size());
+    if (!WinHttpSendRequest(request.handle, headerText.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headerText.c_str(),
+            static_cast<DWORD>(headerText.size()), data, dataSize, dataSize, 0)
         || !WinHttpReceiveResponse(request.handle, nullptr))
     {
         error = "The request failed (error " + std::to_string(GetLastError()) + ").";
         return false;
     }
 
-    DWORD status = 0;
-    DWORD statusSize = sizeof(status);
+    DWORD code = 0;
+    DWORD codeSize = sizeof(code);
     WinHttpQueryHeaders(request.handle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-        WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX);
-    if (status != 200)
-    {
-        error = "The server answered " + std::to_string(status) + ".";
-        return false;
-    }
+        WINHTTP_HEADER_NAME_BY_INDEX, &code, &codeSize, WINHTTP_NO_HEADER_INDEX);
+    status = static_cast<int>(code);
 
     DWORD length = 0;
     DWORD lengthSize = sizeof(length);
@@ -383,6 +391,20 @@ bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string
         }
         body.resize(at + read);
         if (progress) progress(body.size(), total);
+    }
+    return true;
+}
+
+bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string& error,
+    const std::function<void(uint64_t, uint64_t)>& progress)
+{
+    int status = 0;
+    if (!HttpRequest("GET", url, {}, "", status, body, error, progress)) return false;
+    if (status != 200)
+    {
+        error = "The server answered " + std::to_string(status) + ".";
+        body.clear();
+        return false;
     }
     return true;
 }

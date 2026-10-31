@@ -1,7 +1,10 @@
 {
     "_comment": "Textured box mobs, keyed by entity type name (entities.json). model: file in this folder. skin: path under textures/entity/. scale: optional uniform scale about the feet. layers: optional extra { model, skin } drawn after the base (e.g. sheep wool). A listed name takes this path whatever its EntityRegistry shape.",
     "mobs": {
-        "player":    { "model": "humanoid.json", "skin": "player/wide/steve.png", "armor": true },
+        "player":      { "model": "player.json", "skin": "player/wide/steve.png", "armor": true,
+                         "layers": [ { "model": "player_overlay.json", "skin": "player/wide/steve.png" } ] },
+        "player_slim": { "model": "player_slim.json", "skin": "player/slim/steve.png", "armor": true,
+                         "layers": [ { "model": "player_overlay_slim.json", "skin": "player/slim/steve.png" } ] },
         "mannequin": { "model": "humanoid.json", "skin": "player/wide/steve.png", "armor": true },
         "zombie":    { "model": "humanoid.json", "skin": "zombie/zombie.png", "armor": true },
         "husk":      { "model": "humanoid.json", "skin": "zombie/husk.png", "armor": true, "scale": 1.0625 },

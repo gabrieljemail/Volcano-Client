@@ -44,6 +44,9 @@ public:
     // The default (Steve) skin as a sampler2D descriptor set, and its layout,
     // for the first-person arm. Valid between Init() and Shutdown().
     static VkDescriptorSet GetDefaultSkinSet();
+
+    // The local player's own skin once it has downloaded, else the default. For the first-person hand.
+    static VkDescriptorSet GetLocalSkinSet();
     static VkDescriptorSetLayout GetSkinSetLayout();
 
     // One modeled block entity to draw: position is the block centre at floor

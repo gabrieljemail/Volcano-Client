@@ -3,6 +3,7 @@
 #include "../Logger.hpp"
 #include <chrono>
 #include <memory>
+#include <optional>
 
 namespace Volcano {
 
@@ -35,6 +36,8 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
     {
         std::string javaPath = std::get<std::string>(state->config->Get("Network.JavaPath", std::string("java")));
         std::string javaArguments = std::get<std::string>(state->config->Get("Network.JavaArguments", std::string("")));
+        if (!javaPathOverride.empty()) javaPath = javaPathOverride;
+        if (!javaArgumentsOverride.empty()) javaArguments = javaArgumentsOverride;
 
         // Mirrors every logged server line into GlobalState::serverLogLines
         // too, for the starting-server screen to show live
@@ -79,7 +82,17 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
         // so its Connection can be published to other threads safely
         auto client = std::make_shared<NetworkClient>(ioContext);
         state->SetConnectionPhase(ConnectionPhase::Connecting, host + ":" + std::to_string(port));
-        if (client->ConnectAndLogin(host, port, username)) {
+
+        // The selected Microsoft account, if any, logs in for real (refreshing its tokens first); otherwise offline.
+        std::optional<LoginSession> session;
+        std::string accountError;
+        if (state->accountManager != nullptr && state->accountManager->CurrentIndex().has_value() && localServerDir.empty())
+        {
+            session = state->accountManager->AcquireSession(accountError);
+            if (!session.has_value()) skipConnect = true;
+        }
+
+        if (!skipConnect && client->ConnectAndLogin(host, port, username, session ? &*session : nullptr, state->accountManager)) {
             // Published only once Configuration is behind us and the Play loop
             // is about to start
             state->activeConnection.store(
@@ -94,7 +107,7 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
 
         // The session/login attempt is over one way or another
         if (!stopToken.stop_requested() && !state->shouldClose) {
-            std::string reason = client->GetLastError();
+            std::string reason = accountError.empty() ? client->GetLastError() : accountError;
             state->ReportDisconnect(reason.empty() ? "Disconnected from server" : reason);
         }
     }

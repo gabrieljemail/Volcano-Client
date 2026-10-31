@@ -31,6 +31,10 @@ public:
     ~NetworkThread();
     void Start();
 
+    // Singleplayer only: this world's own Java (the Network.* settings otherwise). Set before Start().
+    std::string javaPathOverride;
+    std::string javaArgumentsOverride;
+
     // Signals ThreadEntry to stop WITHOUT waiting for it
     void RequestStop();
 

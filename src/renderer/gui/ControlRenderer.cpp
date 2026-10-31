@@ -5,6 +5,7 @@
 #include <optional>
 #include <imgui.h>
 #include "GlobalState.hpp"
+#include "network/microsoft/MSAccountManager.hpp"
 #include "Logger.hpp"
 #include "audio/SoundRegistry.hpp"
 #include "platform/OS.hpp"
@@ -227,6 +228,7 @@ void ControlRenderer::Build(Screen& screen)
         }
     }
     if (screen.build) screen.build(*this);
+    accountPanel.Build(*this, state->accountManager);
 
     // Over everything else, and never in the mouse's way.
     tooltip = root.AddStack(Orientation::Vertical);
@@ -543,6 +545,7 @@ void ControlRenderer::React(Screen& screen)
     for (Element& button : extraButtons) StyleButton(button);
     for (const Field& field : extraFields) StyleField(field);
     if (screen.update) screen.update(*this);
+    accountPanel.Update(*this, state->accountManager, state->connectionPhase.load() != ConnectionPhase::Playing);
 }
 
 void ControlRenderer::ReactButton(Control& control)

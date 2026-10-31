@@ -6,6 +6,8 @@
 #include "../renderer/entity/models/EntityMotion.hpp"
 #include <thread>
 #include "TextComponent.hpp"
+#include "SkinFetcher.hpp"
+#include "Uuid.hpp"
 #include "models/ChatEvent.hpp"
 #include "models/PacketEvent.hpp"
 #include "../Logger.hpp"
@@ -21,6 +23,9 @@
 #include "../renderer/particle/ParticleSystem.hpp"
 #include <glm/gtc/constants.hpp>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
+#include <openssl/rsa.h>
+#include <openssl/x509.h>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -74,6 +79,70 @@ std::array<uint8_t, 16> OfflineUuidFromUsername(const std::string& username)
     digest[6] = (digest[6] & 0x0Fu) | 0x30u; // version 3
     digest[8] = (digest[8] & 0x3Fu) | 0x80u; // RFC 4122 variant
     return digest;
+}
+
+// Minecraft's server hash: SHA-1 of the server id, shared secret and public key, printed as Java's signed BigInteger
+// (so a leading 1 bit makes it a negative number, written with a minus sign and no leading zeros).
+std::string MinecraftServerHash(const std::string& serverId, const std::array<uint8_t, 16>& secret,
+    const std::vector<uint8_t>& publicKey)
+{
+    uint8_t digest[20]{};
+    unsigned int digestLength = 0;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, EVP_sha1(), nullptr);
+    EVP_DigestUpdate(ctx, serverId.data(), serverId.size());
+    EVP_DigestUpdate(ctx, secret.data(), secret.size());
+    EVP_DigestUpdate(ctx, publicKey.data(), publicKey.size());
+    EVP_DigestFinal_ex(ctx, digest, &digestLength);
+    EVP_MD_CTX_free(ctx);
+
+    bool negative = (digest[0] & 0x80u) != 0;
+    if (negative)
+    {
+        int carry = 1;
+        for (int i = 19; i >= 0; i--)
+        {
+            int value = (~digest[i] & 0xFF) + carry;
+            digest[i] = static_cast<uint8_t>(value & 0xFF);
+            carry = value >> 8;
+        }
+    }
+
+    static const char* hex = "0123456789abcdef";
+    std::string text;
+    for (uint8_t byte : digest)
+    {
+        text += hex[byte >> 4];
+        text += hex[byte & 15];
+    }
+    size_t firstDigit = text.find_first_not_of('0');
+    text = firstDigit == std::string::npos ? "0" : text.substr(firstDigit);
+    return negative ? "-" + text : text;
+}
+
+// RSA with PKCS#1 v1.5 padding against the server's DER public key, as the login encryption handshake requires.
+std::vector<uint8_t> RsaEncrypt(const std::vector<uint8_t>& publicKeyDer, const uint8_t* data, size_t size)
+{
+    const uint8_t* cursor = publicKeyDer.data();
+    EVP_PKEY* key = d2i_PUBKEY(nullptr, &cursor, static_cast<long>(publicKeyDer.size()));
+    if (key == nullptr) throw std::runtime_error("The server's public key is unreadable");
+
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(key, nullptr);
+    std::vector<uint8_t> out;
+    size_t outLength = 0;
+    bool ok = ctx != nullptr && EVP_PKEY_encrypt_init(ctx) > 0
+        && EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) > 0
+        && EVP_PKEY_encrypt(ctx, nullptr, &outLength, data, size) > 0;
+    if (ok)
+    {
+        out.resize(outLength);
+        ok = EVP_PKEY_encrypt(ctx, out.data(), &outLength, data, size) > 0;
+        out.resize(outLength);
+    }
+    EVP_PKEY_CTX_free(ctx);
+    EVP_PKEY_free(key);
+    if (!ok) throw std::runtime_error("Couldn't encrypt the login handshake");
+    return out;
 }
 
 // Minecraft packs yaw/pitch as a signed byte spanning a full 360 degrees
@@ -249,17 +318,6 @@ void TraceEntity(GlobalState* state, const char* label, int32_t packetId,
     Log::Info(oss.str());
 }
 
-std::string FormatUuid(const std::array<uint8_t, 16>& uuid)
-{
-    std::ostringstream oss;
-    oss << std::hex << std::setfill('0');
-    for (size_t i = 0; i < uuid.size(); i++) {
-        oss << std::setw(2) << static_cast<int>(uuid[i]);
-        if (i == 3 || i == 5 || i == 7 || i == 9) oss << '-';
-    }
-    return oss.str();
-}
-
 // One parsed protocol Slot (see resources/minecraft-data/.../protocol.json's
 // "Slot" type) plus whether the reader's position can still be trusted for
 // whatever comes after it in the packet.
@@ -373,7 +431,8 @@ PlayerDataUpdate ReadPlayerEntityData(PacketReader& reader)
 
 } // namespace
 
-bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, const std::string& username)
+bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, const std::string& username,
+    const LoginSession* session, MSAccountManager* accounts)
 {
     try {
         Log::Info("Connecting to " + host + ":" + std::to_string(port) + "...");
@@ -388,14 +447,15 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
         connection.SendPacket(0x00, handshake.Data());
 
         // Login Start.
-        auto uuid = OfflineUuidFromUsername(username);
+        auto uuid = session != nullptr ? session->uuid : OfflineUuidFromUsername(username);
+        const std::string& loginName = session != nullptr ? session->username : username;
         PacketWriter loginStart;
-        loginStart.WriteString(username);
+        loginStart.WriteString(loginName);
         loginStart.WriteBytes(uuid.data(), uuid.size());
         connection.SendPacket(0x00, loginStart.Data());
 
-        Log::Info("Sent Handshake + Login Start as '" + username
-                  + "' (offline UUID " + FormatUuid(uuid) + "). Waiting for response...");
+        Log::Info("Sent Handshake + Login Start as '" + loginName + "' ("
+                  + (session != nullptr ? "account" : "offline") + " UUID " + FormatUuid(uuid) + "). Waiting for response...");
 
         // Set Compression (0x03) can arrive before Login Success once the
         // server has compression enabled (the common case)
@@ -403,6 +463,48 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
             std::vector<uint8_t> payload;
             int32_t packetId = connection.ReadPacket(payload);
             PacketReader reader(payload.data(), payload.size());
+
+            if (packetId == 0x01) {
+                // Encryption Request: prove the account to Mojang's session server, then switch the stream to AES.
+                std::string serverId = reader.ReadString();
+                std::vector<uint8_t> publicKey(static_cast<size_t>(reader.ReadVarInt()));
+                reader.ReadBytes(publicKey.data(), publicKey.size());
+                std::vector<uint8_t> verifyToken(static_cast<size_t>(reader.ReadVarInt()));
+                reader.ReadBytes(verifyToken.data(), verifyToken.size());
+                bool shouldAuthenticate = reader.Remaining() == 0 || reader.ReadBool();
+
+                if (shouldAuthenticate && (session == nullptr || accounts == nullptr)) {
+                    lastError = "This server is in online mode. Pick a Microsoft account in the top right to join it.";
+                    Log::Error("[NET] " + lastError);
+                    return false;
+                }
+
+                std::array<uint8_t, 16> sharedSecret{};
+                if (RAND_bytes(sharedSecret.data(), static_cast<int>(sharedSecret.size())) != 1) {
+                    throw std::runtime_error("No random bytes for the login handshake");
+                }
+
+                if (shouldAuthenticate) {
+                    std::string joinError;
+                    if (!accounts->JoinServer(*session, MinecraftServerHash(serverId, sharedSecret, publicKey), joinError)) {
+                        lastError = joinError;
+                        Log::Error("[NET] " + joinError);
+                        return false;
+                    }
+                }
+
+                std::vector<uint8_t> encryptedSecret = RsaEncrypt(publicKey, sharedSecret.data(), sharedSecret.size());
+                std::vector<uint8_t> encryptedToken = RsaEncrypt(publicKey, verifyToken.data(), verifyToken.size());
+                PacketWriter response;
+                response.WriteVarInt(static_cast<int32_t>(encryptedSecret.size()));
+                response.WriteBytes(encryptedSecret.data(), encryptedSecret.size());
+                response.WriteVarInt(static_cast<int32_t>(encryptedToken.size()));
+                response.WriteBytes(encryptedToken.data(), encryptedToken.size());
+                connection.SendPacket(0x01, response.Data());
+                connection.EnableEncryption(sharedSecret);
+                Log::Info(shouldAuthenticate ? "Login encryption on (authenticated)." : "Login encryption on.");
+                continue;
+            }
 
             if (packetId == 0x03) {
                 int32_t compressionThreshold = reader.ReadVarInt();
@@ -418,6 +520,18 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
                 Log::Info("Login Success: " + serverUsername
                           + " (" + FormatUuid(serverUuid) + ")");
                 loginUsername = serverUsername;
+
+                // The profile's properties follow; the textures one is this player's skin.
+                int32_t propertyCount = reader.Remaining() > 0 ? reader.ReadVarInt() : 0;
+                for (int32_t i = 0; i < propertyCount; i++) {
+                    std::string propertyName = reader.ReadString();
+                    std::string propertyValue = reader.ReadString();
+                    if (reader.ReadBool()) reader.ReadString(); // signature
+                    if (propertyName == "textures") loginTextures = propertyValue;
+                }
+                if (session != nullptr && accounts != nullptr) {
+                    fallbackSkinUrl = accounts->CurrentSkinUrl(fallbackSkinSlim);
+                }
 
                 // Login Acknowledged (Login state, serverbound, empty body) -
                 // required since the Configuration state was introduced: the
@@ -459,6 +573,18 @@ void NetworkClient::RunSession(GlobalState* state, std::stop_token stopToken)
     {
         std::lock_guard<std::mutex> lock(state->localUsernameMutex);
         state->localUsername = loginUsername;
+    }
+
+    // The local player's skin: the server's textures property, else the signed-in account's own.
+    {
+        std::string url = fallbackSkinUrl;
+        bool slim = fallbackSkinSlim;
+        if (!loginTextures.empty()) SkinFetcher::ParseTexturesProperty(loginTextures, url, slim);
+        if (!url.empty())
+        {
+            std::lock_guard<std::mutex> lock(state->skinSourcesMutex);
+            state->skinSources["local"] = { url, slim };
+        }
     }
 
     try {
@@ -1856,13 +1982,15 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
                     std::optional<std::string> name;
                     std::optional<GameMode> gameMode;
+                    std::string textures;
                     if (actions & ADD_PLAYER) {
                         name = reader.ReadString();
                         int32_t propCount = reader.ReadVarInt();
                         for (int32_t p = 0; p < propCount; p++) {
-                            reader.ReadString(); // property name
-                            reader.ReadString(); // property value
+                            std::string propertyName = reader.ReadString();
+                            std::string propertyValue = reader.ReadString();
                             if (reader.ReadBool()) reader.ReadString(); // signature, when present
+                            if (propertyName == "textures") textures = propertyValue;
                         }
                     }
                     if (actions & INITIALIZE_CHAT) {
@@ -1881,6 +2009,14 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                     }
                     if (actions & UPDATE_LIST_ORDER) reader.ReadVarInt();
                     if (actions & UPDATE_HAT) reader.ReadBool();
+
+                    // Skin from the server's profile: Mojang's own for online mode, or a skin plugin's for offline mode.
+                    std::string skinUrl;
+                    bool skinSlim = false;
+                    if (!textures.empty() && SkinFetcher::ParseTexturesProperty(textures, skinUrl, skinSlim)) {
+                        std::lock_guard<std::mutex> lock(state->skinSourcesMutex);
+                        state->skinSources[FormatUuid(uuid)] = { skinUrl, skinSlim };
+                    }
 
                     if (name.has_value() || gameMode.has_value()) {
                         std::lock_guard<std::mutex> lock(state->playerListMutex);
@@ -1943,6 +2079,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
             // Best-effort
             try {
+                reader.ReadVarInt(); // global index
                 std::array<uint8_t, 16> senderUuid{};
                 reader.ReadBytes(senderUuid.data(), senderUuid.size());
                 reader.ReadVarInt(); // index

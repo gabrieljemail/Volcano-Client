@@ -8,6 +8,7 @@
 #include <string>
 #include <glm/glm.hpp>
 #include "Connection.hpp"
+#include "microsoft/MSAccountManager.hpp"
 #include "../GlobalState.hpp"
 #include "../interaction/InteractionTypes.hpp"
 
@@ -23,7 +24,11 @@ public:
     // Connects and runs Handshake -> Login Start, then reads and logs the
     // server's first response (Login Success or Disconnect). Returns true
     // on Login Success.
-    bool ConnectAndLogin(const std::string& host, uint16_t port, const std::string& username);
+    //
+    // With a `session` the client logs in as that Microsoft account and answers an online-mode server's Encryption Request
+    // through `accounts`; without one it logs in offline as `username` and fails if the server wants authentication.
+    bool ConnectAndLogin(const std::string& host, uint16_t port, const std::string& username,
+        const LoginSession* session = nullptr, MSAccountManager* accounts = nullptr);
 
     // Runs Configuration state to completion, then pumps the Play state
     // packet loop until disconnected or stopToken is cancelled. Parsed
@@ -48,6 +53,9 @@ private:
     Connection connection;
     std::string lastError;
     std::string loginUsername; // From Login Success; published to GlobalState by RunSession.
+    std::string loginTextures; // The "textures" profile property from Login Success, if the server sent one.
+    std::string fallbackSkinUrl; // The signed-in account's own skin, used when the server sent no textures property.
+    bool fallbackSkinSlim = false;
 
     // Reads Graphics.RenderDistance from state->config for the Client
     // Information packet
