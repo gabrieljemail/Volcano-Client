@@ -6,16 +6,16 @@ Volcano is a Minecraft client written in C++. It is designed to be fast, customi
 ## Players
 If you are a player, you'll be happy to know that using Volcano is actually simpler than Minecraft!
 To get started, follow these steps:
-	1. Click Releases on the right of this page on GitHub. You'll find a bunch of versions, just use the top one.
-	2. Download the distribution for your platform, e.g. VolcanoClient-Installer.exe for Windows or VolcanoClient.tgz for Linux.
-		a. If you are on Windows, just click the .exe file.
-		b. If you are on Linux, extract the .tgz file to somewhere you won't accidentally delete it. Then, you can launch it from your terminal by typing the path to VolcanoClient.elf or make a .desktop file for it. If it doesn't work the first time, try running this in your terminal: `chmod +x <PATH_TO_VOLCANO_ELF>`.
-	3. Launch the game, and the game will guide you through initial setup. The first time, it asks to download the game's textures, models and sounds directly from Mojang's servers (they aren't included with Volcano). You need to own a valid license for the game to do this, and the download only happens if you agree.
+1. Click Releases on the right of this page on GitHub. You'll find a bunch of versions, just use the top one.
+2. Download the distribution for your platform, e.g. VolcanoClient-Installer.exe for Windows or VolcanoClient.tgz for Linux.
+	a. If you are on Windows, just click the .exe file.
+	b. If you are on Linux, extract the .tgz file to somewhere you won't accidentally delete it. Then, you can launch it from your terminal by typing the path to VolcanoClient.elf or make a .desktop file for it. If it doesn't work the first time, try running this in your terminal: `chmod +x <PATH_TO_VOLCANO_ELF>`.
+3. Launch the game, and the game will guide you through initial setup. The first time, it asks to download the game's textures, models and sounds directly from Mojang's servers (they aren't included with Volcano). You need to own a valid license for the game to do this, and the download only happens if you agree.
 
 No launcher is necessary, and you'll be happy to know that your resource packs will work in Volcano!
-	- **To use a 26.2+ resource pack:** Copy the ZIP file (or folder) to the `resourcepacks` folder next to the game. To use it, launch the client, go to Settings, then \[Resource Packs\], and add it. Packs higher in the list win over lower ones, and the game's own assets always sit at the bottom.
-	- **Using mods:** Unfortunately, your Minecraft mods won't work for Volcano. However, Volcano is still moddable. If there is a mod you want to install, download its .dll (or .so) file and put it in `<YOUR_VOLCANO_INSTALL>/mods`. **BE CAREFUL WITH MODS, malicious ones can harm your computer, steal information, give you a virus, or eat your pet rock.**
-	- **Singleplayer:** If you came back here because you found the text that shows up while your world takes forever to load and thought it was scary, it's okay! That text is the server log, and that tells you what it's doing. Minecraft doesn't use a dedicated server like Volcano, so it doesn't show you any logs; but Volcano shows you these logs in case something goes wrong and you need to know what the server was doing.
+- **To use a 26.2+ resource pack:** Copy the ZIP file (or folder) to the `resourcepacks` folder next to the game. To use it, launch the client, go to Settings, then \[Resource Packs\], and add it. Packs higher in the list win over lower ones, and the game's own assets always sit at the bottom.
+- **Using mods:** Unfortunately, your Minecraft mods won't work for Volcano. However, Volcano is still moddable. If there is a mod you want to install, download its .dll (or .so) file and put it in `<YOUR_VOLCANO_INSTALL>/mods`. **BE CAREFUL WITH MODS, malicious ones can harm your computer, steal information, give you a virus, or eat your pet rock.**
+- **Singleplayer:** If you came back here because you found the text that shows up while your world takes forever to load and thought it was scary, it's okay! That text is the server log, and that tells you what it's doing. Minecraft doesn't use a dedicated server like Volcano, so it doesn't show you any logs; but Volcano shows you these logs in case something goes wrong and you need to know what the server was doing.
 
 ## Modders
 A Volcano mod is a native library (a `.dll` on Windows, a `.so` on Linux) that the client loads from the `mods` folder at startup. Mods are written in C++20. They can listen for events, add HUD widgets, react to network packets and sounds, read and write config, register key bindings and add render passes.
