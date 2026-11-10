@@ -20,8 +20,7 @@ namespace Volcano {
 // VkBuffer/VmaAllocation per chunk). Kept entirely separate from
 // ChunkMesher's slabs since this mesh is bound by different pipelines
 // (nonCubicPipeline/translucentPipeline) with a different vertex format
-// (MiscVertex). Two pairs - cutout and translucent - since MeshChunk now
-// produces two Meshes per chunk; see NonCubicMesher::ChunkMeshes.
+// (MiscVertex). Two pairs
 static SlabBuffer vertexSlab;
 static SlabBuffer indexSlab;
 static SlabBuffer translucentVertexSlab;
@@ -30,27 +29,7 @@ static bool slabsInitialized = false;
 
 // Scales this mesher's base slab size by how many chunk columns
 // Graphics.RenderDistance actually loads - (2*RD+1)^2, the same square-view
-// accounting vanilla's own simulation distance uses - rather than a single
-// fixed budget that's only right for whatever distance it happened to be
-// tuned at (128 MB overflows constantly at a render distance as small as
-// 6). Every factor lives in settings.json (Graphics.SlabSize.*) rather than
-// being hardcoded, since the right numbers depend entirely on the machine:
-// this is a single VkDeviceMemory allocation out of the host-visible heap
-// SlabBuffer maps persistently (CreateBuffer's isUMA flag), which on an
-// integrated/UMA GPU is real system RAM, and on a discrete GPU without
-// resizable BAR is often capped in the low hundreds of MB regardless of
-// total VRAM - scaling too aggressively risks that allocation failing
-// outright (SlabBuffer::Init now throws a readable error instead of
-// crashing on that, but a smaller increase that stays reliable beats a
-// bigger one that doesn't). If it's still failing, lower baseSizeMBKey
-// and/or maxScalePercent in settings.json.
-//
-// baseSizeMBKey: the base size in MB (floor - never allocates less than
-// this regardless of render distance). ReferenceRenderDistance: the render
-// distance that base size is considered "right" for; scale is 1.0 there.
-// MaxScalePercent: hard cap on how far render distance can scale the base
-// size up (percent, not a fraction - ConfigValue has no float type, same
-// convention as InteractionManagerConfig's alpha settings).
+// accounting vanilla's own simulation distance uses
 static uint64_t SlabSizeForRenderDistance(const std::string& baseSizeMBKey, uint32_t defaultBaseSizeMB) {
     Config* config = Config::Active();
     uint64_t baseSize = (config
@@ -126,21 +105,14 @@ SlabStats NonCubicMesher::GetSlabStats() {
     };
 }
 
-// Neighbor offset for each of ChunkMesher's 6 face indices - used both to
-// cull a transparent-cube face against an identical neighbor (see
-// MeshTransparentCube) and to sample the real light a face is exposed to.
+// Neighbor offset for each of ChunkMesher's 6 face indices
 static constexpr int FACE_DX[6] = { 0, 0, 0, 0, 1, -1 };
 static constexpr int FACE_DY[6] = { 1, -1, 0, 0, 0, 0 };
 static constexpr int FACE_DZ[6] = { 0, 0, -1, 1, 0, 0 };
 
 // Reads a block that may be outside this chunk's own 0..CHUNK_SIZE_X-1 /
 // 0..CHUNK_SIZE_Z-1 horizontal range by falling back to World for anything
-// that crosses into a neighboring chunk - same reasoning and shape as
-// ChunkMesher's own GetBlockAcrossChunks. Without this, a transparent block
-// sitting against the same visual across a chunk seam (e.g. a glass wall
-// spanning two chunks) had its shared face drawn from both sides instead of
-// culled, since Chunk::getBlock alone has no way to see past its own
-// bounds and just reports Air there.
+// that crosses into a neighboring chunk
 static Block GetBlockAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
     if (lx >= 0 && lx < CHUNK_SIZE_X && lz >= 0 && lz < CHUNK_SIZE_Z) {
         return chunk.getBlock(lx, ly, lz);
@@ -153,7 +125,7 @@ static Block GetBlockAcrossChunks(const Chunk& chunk, const World& world, int lx
 
 // Same cross-chunk fallback, for the light sample at the block a face is
 // exposed to (see ChunkMesher's own GetLightAcrossChunks). Both channels
-// from one lookup - see LightSample's own comment.
+// from one lookup
 static LightSample GetLightAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
     if (lx >= 0 && lx < CHUNK_SIZE_X && lz >= 0 && lz < CHUNK_SIZE_Z) {
         return chunk.getLightSample(lx, ly, lz);
@@ -165,9 +137,7 @@ static LightSample GetLightAcrossChunks(const Chunk& chunk, const World& world, 
 }
 
 // Four corners of one face of an axis-aligned box, in some consistent
-// (not necessarily outward-CCW) winding - the non-cubic pipeline disables
-// backface culling entirely (see VulkanInit's nonCubicPipeline), so unlike
-// ChunkMesher/EntityRenderer there's no winding convention to satisfy here.
+// (not necessarily outward-CCW) winding
 static std::array<glm::vec3, 4> FaceCorners(const glm::vec3& min, const glm::vec3& max, int faceIndex) {
     switch (faceIndex) {
         case 0: return { glm::vec3(min.x, max.y, min.z), glm::vec3(max.x, max.y, min.z),
@@ -186,22 +156,7 @@ static std::array<glm::vec3, 4> FaceCorners(const glm::vec3& min, const glm::vec
 }
 
 // uvRect is (u1,v1,u2,v2) in 0..16 model-space texture units (matching the
-// model JSON's own "uv" - see NonCubeElement::faceUVs), normalized here to
-// 0..1. Corner order matches FaceCorners' - (u1,v1) at corner 0 through
-// (u1,v2) at corner 3 - the same parametrization a full 0,0,16,16 rect
-// degenerates to, so this is a strict generalization of the old hardcoded
-// full-texture UVs, not a behavior change for anything that already used
-// the whole texture (full cubes, cross planes).
-//
-// `verticalFace` flips V, for the same reason ChunkMesher's own texV does:
-// texture V runs DOWN the image (V=0 is its top row), while every vertical
-// quad this file emits is built with corners 0/1 along its BOTTOM edge and
-// 2/3 along its top (see FaceCorners' four side cases, and MeshCross's own
-// corner list). Handing those corners an unflipped V therefore pinned the
-// top of the texture to the bottom of the quad - the same upside-down side
-// textures the terrain pass had. True for the four side faces (2-5) and for
-// cross billboards; false for Up/Down faces, which are horizontal and have
-// no up/down to get wrong.
+// model JSON's own "uv"
 static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices,
         const std::array<glm::vec3, 4>& corners, const glm::vec4& uvRect,
         uint16_t textureLayer, BiomeTint tint, LightSample light, bool verticalFace) {
@@ -225,14 +180,7 @@ static void EmitQuad(std::vector<MiscVertex>& vertices, std::vector<uint32_t>& i
 }
 
 // True when element's face f lies exactly on the block's 0..16 boundary
-// along the axis its normal points - meaning an opaque neighbor there would
-// fully occlude it, since the neighbor's own face spans the full 16x16 area
-// on that plane regardless of how much of it this element's own face
-// actually covers. Same condition ChunkMesher's greedy sweep uses to cull
-// between two opaque blocks, just checked per-element instead of per-voxel.
-// A face that ISN'T flush (a torch's stick, the inner corner of a stair's
-// raised step) never gets culled - nothing on the other side of it is ever
-// a full, coplanar occluder.
+// along the axis its normal points
 static bool IsFaceFlush(const BlockRegistry::NonCubeElement& element, int face) {
     constexpr float EPS = 0.01f;
     switch (face) {
@@ -247,14 +195,7 @@ static bool IsFaceFlush(const BlockRegistry::NonCubeElement& element, int face) 
 
 // Emits every present face of one model element (a box in 0..16 model-space
 // units), skipping any face IsFaceFlush() above says is fully hidden behind
-// a solid neighbor - without this, a stair's base slab flickered against the
-// solid block it sits on (both drew a face on the exact same plane, and with
-// this pass's depth WRITE off - see VulkanInit's nonCubicPipeline - neither
-// consistently "won," so which one showed varied frame to frame), and same
-// for a slab's top face against whatever's placed directly above it. A face
-// that isn't flush (a torch's thin stick, a stair step's inner corner) is
-// never culled, matching vanilla's own per-face "cullface" hint in the model
-// JSON (not read directly here, but this reproduces the same cases).
+// a solid neighbor
 static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const Chunk& chunk, const World& world,
         int bx, int by, int bz, const glm::vec3& blockOrigin, const TextureManager& textureManager,
         std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
@@ -282,9 +223,7 @@ static void MeshElementFaces(const BlockRegistry::NonCubeElement& element, const
 // panes don't show their shared internal face) OR is a fully opaque block
 // (every face of a full cube is flush by construction, so an opaque neighbor
 // there is the exact same coplanar-face flicker IsFaceFlush/MeshElementFaces
-// above fixes for partial shapes - glass placed directly against stone used
-// to flicker at that boundary the same way). Any other neighbor (air, a
-// different transparent visual) still draws the face.
+// above fixes for partial shapes
 static void MeshTransparentCube(const BlockRegistry::NonCubeElement& element, uint16_t visualId,
         const Chunk& chunk, const World& world, int bx, int by, int bz, const glm::vec3& blockOrigin,
         const TextureManager& textureManager, std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
@@ -428,9 +367,7 @@ static void MeshFluid(const BlockRegistry::NonCubeVisual& visual, const Chunk& c
 
 // N billboard planes through the block's center, evenly spaced across 180°
 // (each plane is visible from both sides - the non-cubic pipeline disables
-// backface culling - so 180° of spacing gives N crossing planes, matching
-// vanilla's 2-plane X-shape at CROSS_BILLBOARD_COUNT's default of 2: 45° and
-// 135°, the same pair of diagonals vanilla's block/cross model uses).
+// backface culling
 static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const Chunk& chunk,
         int bx, int by, int bz, const glm::vec3& blockOrigin, const TextureManager& textureManager,
         std::vector<MiscVertex>& vertices, std::vector<uint32_t>& indices) {
@@ -489,9 +426,7 @@ static Mesh BuildMesh(const std::vector<MiscVertex>& vertices, const std::vector
             mesh.indexBytes = indexBufferSize;
         }
 
-        // Half a mesh is useless - give back whichever half did fit, and flag
-        // the failure so the caller keeps the section's old mesh and retries
-        // (see ChunkMesher.cpp's own comment).
+        // Half a mesh is useless
         if (!vertexOk || !indexOk) {
             NonCubicMesher::ReleaseMesh(mesh);
             mesh = Mesh{};

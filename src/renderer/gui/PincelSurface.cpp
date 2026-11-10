@@ -217,17 +217,26 @@ void PincelSurface::DestroyImage()
 
     if (imageView != VK_NULL_HANDLE) vkDestroyImageView(dev, imageView, nullptr);
     if (image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, image, imageAllocation);
-    if (staging != VK_NULL_HANDLE)
+    for (uint32_t i = 0; i < UPLOAD_SLOTS; i++)
     {
-        vmaUnmapMemory(vmaAllocator, stagingAllocation);
-        vmaDestroyBuffer(vmaAllocator, staging, stagingAllocation);
+        if (staging[i] != VK_NULL_HANDLE)
+        {
+            vmaUnmapMemory(vmaAllocator, stagingAllocation[i]);
+            vmaDestroyBuffer(vmaAllocator, staging[i], stagingAllocation[i]);
+        }
+        if (uploadCommands[i] != VK_NULL_HANDLE) vkFreeCommandBuffers(dev, GetCommandPool(), 1, &uploadCommands[i]);
+        if (uploadFences[i] != VK_NULL_HANDLE) vkDestroyFence(dev, uploadFences[i], nullptr);
+        staging[i] = VK_NULL_HANDLE;
+        stagingAllocation[i] = VK_NULL_HANDLE;
+        stagingMapped[i] = nullptr;
+        uploadCommands[i] = VK_NULL_HANDLE;
+        uploadFences[i] = VK_NULL_HANDLE;
     }
     imageView = VK_NULL_HANDLE;
     image = VK_NULL_HANDLE;
     imageAllocation = VK_NULL_HANDLE;
-    staging = VK_NULL_HANDLE;
-    stagingAllocation = VK_NULL_HANDLE;
-    stagingMapped = nullptr;
+    imageHasContent = false;
+    nextSlot = 0;
     width = 0;
     height = 0;
     uploadedVersion = 0;
@@ -266,14 +275,34 @@ bool PincelSurface::CreateImage(uint32_t newWidth, uint32_t newHeight)
     VmaAllocationCreateInfo bufferAlloc{};
     bufferAlloc.usage = VMA_MEMORY_USAGE_AUTO;
     bufferAlloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-    if (vmaCreateBuffer(vmaAllocator, &bufferInfo, &bufferAlloc, &staging, &stagingAllocation, nullptr) != VK_SUCCESS
-        || vmaMapMemory(vmaAllocator, stagingAllocation, &stagingMapped) != VK_SUCCESS)
+
+    VkCommandBufferAllocateInfo commandInfo{};
+    commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    commandInfo.commandPool = GetCommandPool();
+    commandInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    commandInfo.commandBufferCount = 1;
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // Nothing is in flight yet.
+
+    for (uint32_t i = 0; i < UPLOAD_SLOTS; i++)
     {
-        Log::Error("PincelSurface: failed to create the staging buffer");
-        if (staging != VK_NULL_HANDLE) vmaDestroyBuffer(vmaAllocator, staging, stagingAllocation);
-        staging = VK_NULL_HANDLE; // So DestroyImage doesn't unmap what never mapped.
-        DestroyImage();
-        return false;
+        if (vmaCreateBuffer(vmaAllocator, &bufferInfo, &bufferAlloc, &staging[i], &stagingAllocation[i], nullptr) != VK_SUCCESS
+            || vmaMapMemory(vmaAllocator, stagingAllocation[i], &stagingMapped[i]) != VK_SUCCESS)
+        {
+            Log::Error("PincelSurface: failed to create a staging buffer");
+            if (staging[i] != VK_NULL_HANDLE) vmaDestroyBuffer(vmaAllocator, staging[i], stagingAllocation[i]);
+            staging[i] = VK_NULL_HANDLE; // So DestroyImage doesn't unmap what never mapped.
+            DestroyImage();
+            return false;
+        }
+        if (vkAllocateCommandBuffers(GetDevice(), &commandInfo, &uploadCommands[i]) != VK_SUCCESS
+            || vkCreateFence(GetDevice(), &fenceInfo, nullptr, &uploadFences[i]) != VK_SUCCESS)
+        {
+            Log::Error("PincelSurface: failed to create the upload commands");
+            DestroyImage();
+            return false;
+        }
     }
 
     VkImageViewCreateInfo viewInfo{};
@@ -318,21 +347,92 @@ void PincelSurface::Upload(const Pincel::Texture& texture)
     }
     if (texture.version == uploadedVersion) return;
 
-    std::memcpy(stagingMapped, texture.data, texture.Size());
+    // The part to copy. Pincel's rectangle covers what the draw behind this version changed, so it only stands for the
+    // whole difference if the version before it was uploaded too; otherwise (or on a fresh image) everything goes.
+    uint32_t regionX = 0, regionY = 0, regionWidth = width, regionHeight = height;
+    const auto& dirty = texture.dirty;
+    bool partial = imageHasContent && texture.version == uploadedVersion + 1 && dirty.width > 0 && dirty.height > 0
+        && dirty.x + dirty.width <= width && dirty.y + dirty.height <= height;
+    if (partial)
+    {
+        regionX = dirty.x;
+        regionY = dirty.y;
+        regionWidth = dirty.width;
+        regionHeight = dirty.height;
+    }
 
-    // The whole image is replaced, so whatever it held doesn't matter.
-    VkCommandBuffer cmd = BeginOneShotCommands();
-    TransitionImageLayout(cmd, image, 0, 1, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    // The oldest upload's buffer and commands are free once its fence is; normally it finished long ago.
+    uint32_t slot = nextSlot;
+    nextSlot = (nextSlot + 1) % UPLOAD_SLOTS;
+    vkWaitForFences(GetDevice(), 1, &uploadFences[slot], VK_TRUE, UINT64_MAX);
+    vkResetFences(GetDevice(), 1, &uploadFences[slot]);
+
+    // Rows keep their place in the buffer (`width * 4` bytes apart), so one offset and row length describe the region.
+    const size_t rowBytes = static_cast<size_t>(regionWidth) * 4;
+    for (uint32_t y = regionY; y < regionY + regionHeight; y++)
+    {
+        size_t offset = (static_cast<size_t>(y) * width + regionX) * 4;
+        std::memcpy(static_cast<uint8_t*>(stagingMapped[slot]) + offset, texture.data + offset, rowBytes);
+    }
+
+    VkCommandBuffer cmd = uploadCommands[slot];
+    vkResetCommandBuffer(cmd, 0);
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    // Before writing: wait for the frame that may still be sampling the image (or the previous copy), keeping the
+    // pixels when only part of them is replaced. Queue order does the rest: this barrier covers everything submitted
+    // earlier, and the one after the copy covers everything submitted later, including the frame that draws it.
+    VkImageMemoryBarrier toTransfer{};
+    toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toTransfer.oldLayout = imageHasContent ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
+    toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toTransfer.srcAccessMask = imageHasContent ? (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT) : 0;
+    toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toTransfer.image = image;
+    toTransfer.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdPipelineBarrier(cmd, imageHasContent ? (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT) : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransfer);
 
     VkBufferImageCopy region{};
+    region.bufferOffset = (static_cast<VkDeviceSize>(regionY) * width + regionX) * 4;
+    region.bufferRowLength = width;
+    region.bufferImageHeight = height;
     region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    region.imageExtent = { width, height, 1 };
-    vkCmdCopyBufferToImage(cmd, staging, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    region.imageOffset = { static_cast<int32_t>(regionX), static_cast<int32_t>(regionY), 0 };
+    region.imageExtent = { regionWidth, regionHeight, 1 };
+    vkCmdCopyBufferToImage(cmd, staging[slot], image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-    TransitionImageLayout(cmd, image, 0, 1, 0, 1,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    EndOneShotCommands(cmd);
+    VkImageMemoryBarrier toShader = toTransfer;
+    toShader.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toShader.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toShader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toShader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toShader);
+    vkEndCommandBuffer(cmd);
 
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, uploadFences[slot]) != VK_SUCCESS)
+    {
+        Log::Error("PincelSurface: failed to submit the upload");
+        // Nothing was queued, so the fence will never signal: put it back as signaled so a later upload doesn't hang.
+        VkFence fence = uploadFences[slot];
+        vkDestroyFence(GetDevice(), fence, nullptr);
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        vkCreateFence(GetDevice(), &fenceInfo, nullptr, &uploadFences[slot]);
+        return;
+    }
+
+    imageHasContent = true;
     uploadedVersion = texture.version;
 }
 

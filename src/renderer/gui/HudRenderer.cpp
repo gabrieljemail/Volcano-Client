@@ -680,13 +680,15 @@ void HudRenderer::RefreshStatus()
 void HudRenderer::RefreshMovement()
 {
     TickLoop::MovementSnapshot movement = state->tickLoop->GetMovementSnapshot();
+    bool flying = movement.mode == MoveMode::Fly;
     bool swimming = movement.mode == MoveMode::Swim || movement.mode == MoveMode::SwimSprint;
     bool sneaking = state->input->IsActive("Sneak");
     bool moving = std::fabs(state->input->GetAxis("Move.Forward")) > 0.01f
         || std::fabs(state->input->GetAxis("Move.Right")) > 0.01f;
 
     const char* label = "Idle";
-    if (swimming) label = "Swimming";
+    if (flying) label = "Flying";
+    else if (swimming) label = "Swimming";
     else if (sneaking) label = "Sneaking";
     else if (movement.sprinting) label = "Sprinting";
     else if (moving) label = "Walking";

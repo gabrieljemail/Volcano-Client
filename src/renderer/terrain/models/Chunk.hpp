@@ -3,9 +3,11 @@
 #define CHUNK_H
 
 #include <vector>
+#include <array>
 #include <memory>
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <unordered_set>
 #include "Block.hpp"
 
@@ -30,19 +32,14 @@ struct LightSample {
     uint8_t block = 0;
 };
 
+// A column is 24 sections of 16x16x16. Each section stores a palette of the
+// distinct Blocks it holds plus a 16-bit palette index per cell, and only
+// once it holds something other than air. Light is 4 bits per cell and only
+// stored once it differs from the default (sky 15, block 0). A mostly-empty
+// column costs around a tenth of a flat array of Blocks.
 class Chunk {
 public:
-    Chunk(int chunkX, int chunkZ) : x(chunkX), z(chunkZ) {
-        blocks.resize(CHUNK_SIZE_X * CHUNK_SIZE_Y * CHUNK_SIZE_Z, Block{});
-        // Full-bright sky default: placeholder-generated chunks (no server
-        // light data ever arrives for them) and any section a light packet
-        // leaves uncovered should still render lit rather than going pitch
-        // black. Block light defaults to 0 (no artificial light) - nothing
-        // should glow until the server actually says something emits light
-        // there.
-        skyLight.resize(CHUNK_SIZE_X * CHUNK_SIZE_Y * CHUNK_SIZE_Z, 15);
-        blockLight.resize(CHUNK_SIZE_X * CHUNK_SIZE_Y * CHUNK_SIZE_Z, 0);
-    }
+    Chunk(int chunkX, int chunkZ) : x(chunkX), z(chunkZ) {}
 
     int getX() const { return x; }
     int getZ() const { return z; }
@@ -50,38 +47,37 @@ public:
     std::chrono::steady_clock::time_point GetFadeStart() const { return fadeStart; }
 
     Block getBlock(int bx, int by, int bz) const {
-        if (bx < 0 || bx >= CHUNK_SIZE_X ||
-            by < 0 || by >= CHUNK_SIZE_Y ||
-            bz < 0 || bz >= CHUNK_SIZE_Z) {
-            return Block{}; // Simple out-of-bounds check for now
-        }
-        return blocks[bx + bz * CHUNK_SIZE_X + by * CHUNK_SIZE_X * CHUNK_SIZE_Z];
+        if (!InBounds(bx, by, bz)) return Block{}; // Simple out-of-bounds check for now
+        const Section& section = sections[by >> 4];
+        if (section.cells.empty()) return Block{};
+        return section.palette[section.cells[CellIndex(bx, by, bz)]];
     }
 
     // Rewrites every block through fn(Block) -> Block (resource reload remaps
-    // visual ids). Caller provides any needed locking (see World).
+    // visual ids). Caller provides any needed locking (see World). Only the
+    // palettes are rewritten; sections still holding nothing stay air.
     template<typename Fn>
     void TransformBlocks(Fn&& fn) {
-        for (Block& block : blocks) block = fn(block);
+        for (Section& section : sections) {
+            for (Block& block : section.palette) block = fn(block);
+        }
     }
 
     void setBlock(int bx, int by, int bz, uint16_t visualId) {
-        if (bx >= 0 && bx < CHUNK_SIZE_X &&
-            by >= 0 && by < CHUNK_SIZE_Y &&
-            bz >= 0 && bz < CHUNK_SIZE_Z) {
-            blocks[bx + bz * CHUNK_SIZE_X + by * CHUNK_SIZE_X * CHUNK_SIZE_Z] = Block{visualId};
-        }
+        setBlock(bx, by, bz, Block{visualId});
     }
 
     // Full-block overload, for callers (ChunkParser) that also resolved a
-    // non-cube visual/collision flag - the uint16_t overload above only ever
-    // produces a plain opaque-or-nothing Block.
+    // non-cube visual/collision flag
     void setBlock(int bx, int by, int bz, const Block& block) {
-        if (bx >= 0 && bx < CHUNK_SIZE_X &&
-            by >= 0 && by < CHUNK_SIZE_Y &&
-            bz >= 0 && bz < CHUNK_SIZE_Z) {
-            blocks[bx + bz * CHUNK_SIZE_X + by * CHUNK_SIZE_X * CHUNK_SIZE_Z] = block;
+        if (!InBounds(bx, by, bz)) return;
+        Section& section = sections[by >> 4];
+        if (section.cells.empty()) {
+            if (block == Block{}) return;
+            section.palette.assign(1, Block{});
+            section.cells.assign(SECTION_CELLS, 0);
         }
+        section.cells[CellIndex(bx, by, bz)] = PaletteIndex(section, block);
     }
 
     // True if every block in local Y range [sectionY*16, sectionY*16+16) is
@@ -91,15 +87,19 @@ public:
     // sectionY out of [0, CHUNK_SIZE_Y/16) reads as empty, matching
     // getBlock's own out-of-bounds-is-Air convention.
     bool IsSectionEmpty(int sectionY) const {
-        int yStart = sectionY * 16;
-        if (yStart < 0 || yStart >= CHUNK_SIZE_Y) return true;
-        int yEnd = yStart + 16;
-        for (int by = yStart; by < yEnd; by++) {
-            for (int bz = 0; bz < CHUNK_SIZE_Z; bz++) {
-                for (int bx = 0; bx < CHUNK_SIZE_X; bx++) {
-                    if (!blocks[Index(bx, by, bz)].isAir()) return false;
-                }
-            }
+        if (sectionY < 0 || sectionY >= SECTION_COUNT) return true;
+        const Section& section = sections[sectionY];
+        if (section.cells.empty()) return true;
+
+        // Cheap exit when the palette itself is all air (after block breaks).
+        bool anyBlock = false;
+        for (const Block& block : section.palette) {
+            if (!block.isAir()) { anyBlock = true; break; }
+        }
+        if (!anyBlock) return true;
+
+        for (uint16_t index : section.cells) {
+            if (!section.palette[index].isAir()) return false;
         }
         return true;
     }
@@ -115,62 +115,144 @@ public:
         return InBounds(bx, by, bz) && blockEntities.count(Index(bx, by, bz)) != 0;
     }
 
-    // 0-15 each, kept separate - see LightSample's own comment.
+    // 0-15 each, kept separate
     uint8_t getSkyLight(int bx, int by, int bz) const {
-        if (!InBounds(bx, by, bz)) return 15; // Out-of-bounds reads as full-bright, matching the default fill.
-        return skyLight[Index(bx, by, bz)];
+        if (!InBounds(bx, by, bz)) return 15; // Out-of-bounds reads as full-bright, matching the default.
+        const Section& section = sections[by >> 4];
+        if (section.skyLight.empty()) return 15;
+        return GetNibble(section.skyLight, CellIndex(bx, by, bz));
     }
 
     uint8_t getBlockLight(int bx, int by, int bz) const {
         if (!InBounds(bx, by, bz)) return 0;
-        return blockLight[Index(bx, by, bz)];
+        const Section& section = sections[by >> 4];
+        if (section.blockLight.empty()) return 0;
+        return GetNibble(section.blockLight, CellIndex(bx, by, bz));
     }
 
-    // Both channels in one call - see LightSample's own comment for why this
-    // beats calling the two getters above separately when both are needed.
+    // Both channels in one call
     LightSample getLightSample(int bx, int by, int bz) const {
         if (!InBounds(bx, by, bz)) return LightSample{};
-        size_t index = Index(bx, by, bz);
-        return LightSample{ skyLight[index], blockLight[index] };
+        const Section& section = sections[by >> 4];
+        size_t cell = CellIndex(bx, by, bz);
+        return LightSample{
+            section.skyLight.empty() ? uint8_t{15} : GetNibble(section.skyLight, cell),
+            section.blockLight.empty() ? uint8_t{0} : GetNibble(section.blockLight, cell)
+        };
     }
 
     // Sky light is set directly (ChunkParser applies it whole-section, so
     // there's nothing to combine with yet); block light is applied after
-    // and only ever raises the value (a torch in an otherwise-dark cave) -
-    // both channels have their own array now, so this max() is just
-    // defensive against the same cell being touched twice, not a merge
-    // between the two channels the way it used to be.
+    // and only ever raises the value (a torch in an otherwise-dark cave).
     void setSkyLight(int bx, int by, int bz, uint8_t value) {
-        if (InBounds(bx, by, bz)) skyLight[Index(bx, by, bz)] = value;
+        if (!InBounds(bx, by, bz)) return;
+        SetLight(sections[by >> 4].skyLight, CellIndex(bx, by, bz), value, 15);
     }
 
-    // Overwrites (can lower) - for Update Light, unlike applyBlockLight's
-    // raise-only merge during initial chunk load.
+    // Overwrites (can lower)
     void setBlockLight(int bx, int by, int bz, uint8_t value) {
-        if (InBounds(bx, by, bz)) blockLight[Index(bx, by, bz)] = value;
+        if (!InBounds(bx, by, bz)) return;
+        SetLight(sections[by >> 4].blockLight, CellIndex(bx, by, bz), value, 0);
     }
 
     void applyBlockLight(int bx, int by, int bz, uint8_t value) {
-        if (InBounds(bx, by, bz)) {
-            uint8_t& cell = blockLight[Index(bx, by, bz)];
-            cell = std::max(cell, value);
+        if (!InBounds(bx, by, bz)) return;
+        std::vector<uint8_t>& light = sections[by >> 4].blockLight;
+        size_t cell = CellIndex(bx, by, bz);
+        uint8_t current = light.empty() ? uint8_t{0} : GetNibble(light, cell);
+        if (value > current) SetLight(light, cell, value, 0);
+    }
+
+    // Heap bytes held by block and light storage, for memory logging.
+    size_t MemoryBytes() const {
+        size_t bytes = 0;
+        for (const Section& section : sections) {
+            bytes += section.palette.capacity() * sizeof(Block);
+            bytes += section.cells.capacity() * sizeof(uint16_t);
+            bytes += section.skyLight.capacity() + section.blockLight.capacity();
         }
+        return bytes;
     }
 
 private:
+    static constexpr int SECTION_COUNT = CHUNK_SIZE_Y / 16;
+    static constexpr size_t SECTION_CELLS = 16 * 16 * 16;
+    static constexpr size_t LIGHT_BYTES = SECTION_CELLS / 2;
+
+    // Empty cells means the whole section is air; empty light means the
+    // default for that channel.
+    struct Section {
+        std::vector<Block> palette;
+        std::vector<uint16_t> cells;
+        std::vector<uint8_t> skyLight;
+        std::vector<uint8_t> blockLight;
+        uint16_t lastIndex = 0; // Runs of one block hit this before the palette search.
+    };
+
     int x, z; // Chunk coordinates
     std::chrono::steady_clock::time_point fadeStart{};
-    std::vector<Block> blocks;
-    std::vector<uint8_t> skyLight;
-    std::vector<uint8_t> blockLight;
+    std::array<Section, SECTION_COUNT> sections;
     std::unordered_set<size_t> blockEntities;
 
     static bool InBounds(int bx, int by, int bz) {
         return bx >= 0 && bx < CHUNK_SIZE_X && by >= 0 && by < CHUNK_SIZE_Y && bz >= 0 && bz < CHUNK_SIZE_Z;
     }
 
+    // Column-wide index, used for the block entity set.
     static size_t Index(int bx, int by, int bz) {
         return static_cast<size_t>(bx + bz * CHUNK_SIZE_X + by * CHUNK_SIZE_X * CHUNK_SIZE_Z);
+    }
+
+    // Index inside one section.
+    static size_t CellIndex(int bx, int by, int bz) {
+        return static_cast<size_t>(bx + bz * CHUNK_SIZE_X + (by & 15) * CHUNK_SIZE_X * CHUNK_SIZE_Z);
+    }
+
+    static uint8_t GetNibble(const std::vector<uint8_t>& nibbles, size_t cell) {
+        uint8_t packed = nibbles[cell >> 1];
+        return (cell & 1) ? (packed >> 4) : (packed & 0x0F);
+    }
+
+    // Allocates the section's light on the first value that differs from the default.
+    static void SetLight(std::vector<uint8_t>& nibbles, size_t cell, uint8_t value, uint8_t defaultValue) {
+        value &= 0x0F;
+        if (nibbles.empty()) {
+            if (value == defaultValue) return;
+            nibbles.assign(LIGHT_BYTES, static_cast<uint8_t>(defaultValue | (defaultValue << 4)));
+        }
+        uint8_t& packed = nibbles[cell >> 1];
+        packed = (cell & 1) ? static_cast<uint8_t>((packed & 0x0F) | (value << 4))
+                            : static_cast<uint8_t>((packed & 0xF0) | value);
+    }
+
+    static uint16_t PaletteIndex(Section& section, const Block& block) {
+        if (block == section.palette[section.lastIndex]) return section.lastIndex;
+        for (size_t i = 0; i < section.palette.size(); i++) {
+            if (block == section.palette[i]) {
+                section.lastIndex = static_cast<uint16_t>(i);
+                return section.lastIndex;
+            }
+        }
+        if (section.palette.size() >= 0xFFFF) CompactPalette(section);
+        section.palette.push_back(block);
+        section.lastIndex = static_cast<uint16_t>(section.palette.size() - 1);
+        return section.lastIndex;
+    }
+
+    // Drops palette entries no cell uses (edits leave stale ones behind).
+    static void CompactPalette(Section& section) {
+        std::vector<Block> compact;
+        std::vector<uint32_t> remap(section.palette.size(), UINT32_MAX);
+        for (uint16_t& cell : section.cells) {
+            uint32_t& mapped = remap[cell];
+            if (mapped == UINT32_MAX) {
+                mapped = static_cast<uint32_t>(compact.size());
+                compact.push_back(section.palette[cell]);
+            }
+            cell = static_cast<uint16_t>(mapped);
+        }
+        section.palette = std::move(compact);
+        section.lastIndex = 0;
     }
 };
 

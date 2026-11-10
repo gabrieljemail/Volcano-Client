@@ -22,6 +22,7 @@
 #include <stb_image.h>
 #include "../../resources/ImageLoad.hpp"
 #include "gui/Animation.hpp"
+#include "gui/screens/CreativeInventoryScreen.hpp"
 #include "gui/screens/InventoryScreen.hpp"
 #include "gui/models/GUIComponent.hpp"
 #include "gui/models/Button.hpp"
@@ -148,6 +149,7 @@ GUI::Screen* GUIController::pauseScreen = nullptr;
 GUI::Screen* GUIController::deathScreen = nullptr;
 GUI::GUIComponent* GUIController::deathMessageText = nullptr;
 GUI::Screen* GUIController::inventoryScreen = nullptr;
+GUI::Screen* GUIController::creativeScreen = nullptr;
 bool GUIController::chatInputOpen = false;
 bool GUIController::chatInputJustOpened = false;
 char GUIController::chatInputBuffer[256] = {};
@@ -246,9 +248,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     // The F3 overlay's built-in entries (mods add theirs via SetDebugDisplay).
     RegisterBuiltinDebugDisplays();
 
-    // Death screen - opened by Update() when GlobalState::playerDied is set
-    // (see NetworkClient's PlayerCombatKill handling). Not closable via Esc;
-    // Respawn is the only way out.
+    // Death screen
     deathScreen = CreateScreen("You Died!", /* closable */ false);
     deathMessageText = new GUI::GUIComponent(GUI::GUIComponentType::TEXT, "");
     auto* respawnButton = new GUI::Button("Respawn");
@@ -259,9 +259,9 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     deathScreen->components.push_back(deathMessageText);
     deathScreen->components.push_back(respawnButton);
 
-    // Inventory screen - "E" toggles it (see Update()), same as vanilla. It
-    // draws its own slot grid with Pincel; see screens/InventoryScreen.
+    // Inventory screens
     inventoryScreen = GUI::CreateInventoryScreen(state);
+    creativeScreen = GUI::CreateCreativeScreen(state);
 
     LoadStandaloneIcons();
 
@@ -272,10 +272,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
 // Loads every standalone HUD/GUI icon. Used by Init() and ReloadTextures().
 void GUIController::LoadStandaloneIcons()
 {
-    // Crosshair - see RenderCrosshair(). Loaded once here rather than
-    // lazily on first draw (like GetItemIcon's item-icon cache) since,
-    // unlike item icons, both variants are needed from the very first HUD
-    // frame and there are only ever exactly two of them.
+    // Crosshair
     crosshairIcon = LoadStandaloneIcon("resources/crosshair.png");
     crosshairEntityIcon = LoadStandaloneIcon("resources/crosshair-entity.png");
 
@@ -386,7 +383,7 @@ ImTextureID GUIController::TextureOf(const StandaloneIcon& icon)
 }
 
 // See the header's own comment. Returns a null ImTextureID (0) on any
-// Vulkan failure - callers skip drawing rather than pass that to AddImage.
+// Vulkan failure
 ImTextureID GUIController::GetItemIcon(uint16_t textureLayer)
 {
     auto cached = itemIconCache.find(textureLayer);
@@ -430,7 +427,7 @@ ImTextureID GUIController::IconForItem(const ItemStack& item)
 
     // Blocks and custom models draw as 3D icons; flat items keep their crisp
     // 2D sprite.
-    if (ImTextureID icon = ModelIconForItem(item.itemId, info->name)) return icon;
+    if (ImTextureID icon = ModelIconForItem(item.itemId, info->name, item.glint)) return icon;
     if (!info->hasTexture) return 0;
     return GetItemIcon(info->textureLayer);
 }
@@ -438,7 +435,7 @@ ImTextureID GUIController::IconForItem(const ItemStack& item)
 const GUI::Sprite* GUIController::GetItemSprite(const ItemStack& item)
 {
     if (item.IsEmpty()) return nullptr;
-    uint16_t id = static_cast<uint16_t>(item.itemId);
+    uint16_t id = static_cast<uint16_t>(item.itemId) | (item.glint ? 0x8000 : 0);
 
     auto found = itemSprites.find(id);
     if (found == itemSprites.end())
@@ -448,7 +445,7 @@ const GUI::Sprite* GUIController::GetItemSprite(const ItemStack& item)
         if (info != nullptr)
         {
             // The same choice IconForItem makes: the 3D model's icon if it has one, else the flat sprite.
-            ModelIconForItem(id, info->name);
+            ModelIconForItem(item.itemId, info->name, item.glint);
             const StandaloneIcon& model = modelIconCache[id].icon;
             if (model.image != VK_NULL_HANDLE)
             {
@@ -465,19 +462,19 @@ const GUI::Sprite* GUIController::GetItemSprite(const ItemStack& item)
     return found->second.IsEmpty() ? nullptr : &found->second;
 }
 
-ImTextureID GUIController::ModelIconForItem(uint16_t itemId, const std::string& itemName)
+ImTextureID GUIController::ModelIconForItem(uint16_t itemId, const std::string& itemName, bool glint)
 {
-    ModelIcon& entry = modelIconCache[itemId];
+    ModelIcon& entry = modelIconCache[static_cast<uint16_t>(itemId | (glint ? 0x8000 : 0))];
     if (!entry.resolved)
     {
         entry.resolved = true;
         if (state != nullptr && state->itemRenderer != nullptr && textureManager != nullptr)
         {
             const ItemModel* model = ItemModel::ForItem(itemName, *textureManager);
-            if (model != nullptr && model->GetType() != ItemModelType::ITEM)
+            if (model != nullptr && (glint || model->GetType() != ItemModelType::ITEM))
             {
                 ItemRenderer::IconImage image;
-                if (state->itemRenderer->RenderGuiIcon(itemName, image))
+                if (state->itemRenderer->RenderGuiIcon(itemName, image, glint))
                 {
                     entry.icon.image = image.image;
                     entry.icon.allocation = image.allocation;
@@ -516,9 +513,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
         }
     }
 
-    // Single 2D image, one layer, no mip chain - this is small UI art drawn
-    // at roughly its native size, not a world texture sampled at a range of
-    // distances the way TextureManager's array needs mips for.
+    // Single 2D image, one layer, no mip chain
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -543,7 +538,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
 
     // Upload via the same staging-buffer-then-copy path TextureManager::
     // UploadLayer uses (CreateBuffer/BeginOneShotCommands/
-    // TransitionImageLayout - see VulkanInit.hpp).
+    // TransitionImageLayout
     VkDeviceSize size = static_cast<VkDeviceSize>(width) * height * 4;
     AllocatedBuffer staging = CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
 
@@ -585,10 +580,7 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
 }
 
 // Centered on the display, drawn on ImGui's foreground draw list rather
-// than in a Begin/End window - it needs no chrome, background, or input
-// handling, just an image pinned to the exact center every frame regardless
-// of display size (unlike the hotbar/status HUD, which anchors off
-// HotbarOrigin()).
+// than in a Begin/End window
 void GUIController::RenderCrosshair()
 {
     // Native size of both source PNGs; drawn 1:1 rather than scaled by a
@@ -596,7 +588,7 @@ void GUIController::RenderCrosshair()
     constexpr float CROSSHAIR_SIZE = 32.0f;
 
     const StandaloneIcon& active = state->lookingAtEntity.load() ? crosshairEntityIcon : crosshairIcon;
-    if (active.descriptorSet == VK_NULL_HANDLE) return; // Missing/failed-to-load asset - draw nothing.
+    if (active.descriptorSet == VK_NULL_HANDLE) return; // Missing/failed-to-load asset
 
     ImTextureID texture = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(active.descriptorSet));
     ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -687,8 +679,7 @@ void GUIController::Update(float deltaTime)
 {
     if (!initialized) return;
 
-    // Death takes over whatever's on screen - including the pause menu, if
-    // that happened to be open - same as vanilla's death screen does.
+    // Death takes over whatever's on screen
     if (state->playerDied.exchange(false))
     {
         std::string message;
@@ -740,10 +731,7 @@ void GUIController::Update(float deltaTime)
         OpenScreen(pauseScreen);
     }
 
-    // "T" opens the chat input box, same key Minecraft uses - but not while
-    // a Screen already owns input, and not if it's already open (PRESS is
-    // edge-triggered so this only fires once per keypress anyway, but the
-    // guard makes the intent explicit).
+    // "T" opens the chat input box, same key Minecraft uses
     if (!chatInputOpen && activeScreen == nullptr && !state->input->IsKeyDown(GLFW_KEY_F3) // F3+T reloads resources.
         && state->input->WasActivated("OpenChat"))
     {
@@ -758,16 +746,19 @@ void GUIController::Update(float deltaTime)
         CloseChatInput();
     }
 
-    // "E" toggles the inventory screen, same key Minecraft uses - opens it
-    // only while nothing else owns input (matching "T" above), closes it
-    // again on a second press. Esc also closes it via the generic
-    // activeScreen->closable branch above, same as any other closable
-    // screen - no separate handling needed for that direction.
+    // "E" toggles the inventory screen, same key Minecraft uses. Creative mode
+    // gets its own picker instead of the survival inventory.
     if (activeScreen == nullptr && !chatInputOpen && state->input->WasActivated("ToggleInventory"))
     {
-        OpenScreen(inventoryScreen);
+        OpenScreen(state->localGameMode.load() == 1 ? creativeScreen : inventoryScreen);
     }
-    else if (activeScreen == inventoryScreen && state->input->WasActivated("ToggleInventory"))
+    // While a Pincel input has focus (e.g. the creative search field), "E" is
+    // a typed character, not the inventory toggle - WantsKeyboard reflects the
+    // canvas state from the last Update, one frame stale but always current
+    // while a field stays focused.
+    else if ((activeScreen == inventoryScreen || activeScreen == creativeScreen)
+        && !(controlRenderer != nullptr && controlRenderer->WantsKeyboard())
+        && state->input->WasActivated("ToggleInventory"))
     {
         CloseScreen();
     }
@@ -1044,10 +1035,7 @@ void GUIController::RegisterBuiltinDebugDisplays()
     AddBuiltin<std::string>("Performance", "Present Mode", []
     {
         // GlobalState::presentMode is the swapchain's actual active
-        // VkPresentModeKHR - this client only ever requests FIFO or IMMEDIATE
-        // (Graphics.VSync), but reports whatever vk-bootstrap actually
-        // granted, so an unsupported request showing up here as something
-        // else is visible rather than silently wrong.
+        // VkPresentModeKHR
         switch (static_cast<VkPresentModeKHR>(state->presentMode))
         {
             case VK_PRESENT_MODE_FIFO_KHR: return std::string("VSync (FIFO)");
@@ -1256,6 +1244,7 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
     constexpr float MAX_DISTANCE = 100.0f;
     constexpr float MAX_DISTANCE_SQUARED = MAX_DISTANCE * MAX_DISTANCE;
     constexpr float HEAD_MARGIN = 0.3f; // Blocks above the bounding box.
+    constexpr float NAMETAG_LIFT = 4.0f; // Pixels above the head, so a head tilted up doesn't cover it.
     constexpr float SCREEN_MARGIN = 1.3f; // NDC extent kept, so wide tags near an edge still draw.
     constexpr uint64_t PRUNE_INTERVAL = 120;
     constexpr size_t MAX_TAGS = 24; // Nearest only; every tag is two lines of glyph quads plus shadows.
@@ -1273,6 +1262,9 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
         float fontSize = 0.0f;
         std::string lines[2];
         float widths[2]{};
+        std::vector<ChatSegment> nameSegments; // A player's team-decorated name; empty to draw lines[0].
+        bool hidden = false;                  // The team hides its members' tags.
+        uint32_t teamsVersion = 0;
         uint64_t lastUsed = 0;
     };
     struct Candidate
@@ -1304,6 +1296,7 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
     bool occlusionCulling = std::get<bool>(state->config->Get("Graphics.EntityOcclusionCulling", false));
     // Debug.EntityTags: every entity gets its type and coordinates. Otherwise only players are tagged, by name.
     bool debugTags = std::get<bool>(state->config->Get("Debug.EntityTags", false));
+    const uint32_t teamsVersion = state->teamsVersion.load();
 
     // Cheap tests only; text is built afterward for the nearest few.
     auto consider = [&](const Entity& entity, const std::string* name)
@@ -1379,10 +1372,11 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
 
             TagText& text = cache[entity.id];
             text.lastUsed = frame;
-            if (!text.built || text.type != entity.type || text.debugText != debugTags || text.detailed != detailed
+            if (!text.built || text.teamsVersion != teamsVersion || text.type != entity.type || text.debugText != debugTags || text.detailed != detailed
                 || (detailed && text.shownPosition != entity.position) || text.fontSize != fontSize)
             {
-                bool typeChanged = !text.built || text.type != entity.type || text.debugText != debugTags;
+                bool typeChanged = !text.built || text.teamsVersion != teamsVersion || text.type != entity.type || text.debugText != debugTags;
+                text.teamsVersion = teamsVersion;
                 text.debugText = debugTags;
                 text.built = true;
                 text.detailed = detailed;
@@ -1403,6 +1397,28 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
                         text.lines[0] = candidate.name != nullptr ? *candidate.name : std::string();
                     }
                     text.widths[0] = ImGui::CalcTextSize(text.lines[0].c_str()).x;
+
+                    // Players wear their team's prefix, color and suffix.
+                    text.nameSegments.clear();
+                    text.hidden = false;
+                    if (!debugTags && candidate.name != nullptr && !candidate.name->empty())
+                    {
+                        static const uint32_t TEAM_COLORS[16] = { 0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA,
+                            0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF };
+                        std::lock_guard<std::mutex> teamLock(state->teamsMutex);
+                        for (const auto& [teamName, team] : state->teams)
+                        {
+                            if (std::find(team.members.begin(), team.members.end(), *candidate.name) == team.members.end()) continue;
+                            text.hidden = team.hideNameTag;
+                            text.nameSegments = team.prefix;
+                            text.nameSegments.push_back(ChatSegment{ *candidate.name, team.color >= 0 ? TEAM_COLORS[team.color] : 0xFFFFFFu });
+                            text.nameSegments.insert(text.nameSegments.end(), team.suffix.begin(), team.suffix.end());
+                            break;
+                        }
+                        float width = 0.0f;
+                        for (const ChatSegment& segment : text.nameSegments) width += ImGui::CalcTextSize(segment.text.c_str()).x;
+                        if (!text.nameSegments.empty()) text.widths[0] = width;
+                    }
                 }
 
                 if (detailed)
@@ -1414,7 +1430,7 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
                 }
             }
 
-            visible.push_back({ candidate.screen, &text, detailed ? 2 : 1 });
+            if (!text.hidden) visible.push_back({ candidate.screen, &text, detailed ? 2 : 1 });
         }
     }
 
@@ -1424,8 +1440,18 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
         for (int i = 0; i < tag.lineCount; i++)
         {
             const std::string& line = tag.text->lines[i];
-            float lineY = tag.screen.y - fontSize * static_cast<float>(tag.lineCount - i);
+            float lineY = tag.screen.y - NAMETAG_LIFT - fontSize * static_cast<float>(tag.lineCount - i);
             ImVec2 position(std::floor(tag.screen.x - tag.text->widths[i] * 0.5f), std::floor(lineY));
+            if (i == 0 && !tag.text->nameSegments.empty())
+            {
+                for (const ChatSegment& segment : tag.text->nameSegments)
+                {
+                    ImU32 color = IM_COL32((segment.colorRGB >> 16) & 0xFF, (segment.colorRGB >> 8) & 0xFF, segment.colorRGB & 0xFF, 255);
+                    drawList->AddText(nullptr, 0.0f, position, color, segment.text.data(), segment.text.data() + segment.text.size());
+                    position.x += ImGui::CalcTextSize(segment.text.c_str()).x;
+                }
+                continue;
+            }
             drawList->AddText(nullptr, 0.0f, position, IM_COL32_WHITE, line.data(), line.data() + line.size());
         }
     }
@@ -1779,7 +1805,7 @@ void GUIController::RenderComponent(GUI::GUIComponent* component, float width, f
 }
 
 // Draw the active Screen fullscreen, title first, then its components
-// stacked and centered - the ImGui equivalent of Minecraft's GuiScreen.
+// stacked and centered
 void GUIController::RenderScreen(GUI::Screen& screen)
 {
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
@@ -1793,9 +1819,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     bool screenJustOpened = lastScreen != &screen;
     lastScreen = &screen;
     if (screenJustOpened) ImGui::SetNextWindowFocus();
-    // No window background - the engine's world passes draw the 3D scene
-    // into this same render pass before GUIController::Render runs, so the
-    // world shows through behind the screen's own components.
+    // No window background
     ImGui::Begin("##screen", nullptr,
         ImGuiWindowFlags_NoTitleBar |
         ImGuiWindowFlags_NoResize |
@@ -1845,7 +1869,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
 
     // customContent (see Screen::customContent's own comment) replaces the
     // generic centered TEXT/BUTTON/INPUT stack entirely for a screen that
-    // needs its own layout - the inventory screen's slot grid, so far.
+    // needs its own layout
     if (screen.customContent)
     {
         screen.customContent();
@@ -1930,10 +1954,7 @@ void GUIController::RenderScreen(GUI::Screen& screen)
     ImGui::End();
 }
 
-// Vanilla-style Tab-list overlay - just names, no ping/gamemode columns (see
-// GlobalState::playerList's own comment for where the data comes from).
-// Only called while Tab is held (see Render()); NoInputs so it never steals
-// mouse focus from whatever's under it.
+// Vanilla-style Tab-list overlay
 void GUIController::RenderPlayerListWindow()
 {
     std::vector<std::string> names;
@@ -1964,11 +1985,7 @@ void GUIController::RenderPlayerListWindow()
     ImGui::End();
 }
 
-// Hotbar/armor/status-bar/movement-state geometry - kept together so the
-// four HUD pieces that key off "where's the hotbar" (RenderHotbarAndArmor,
-// RenderPlayerStatusBars, RenderMovementStatePanel, via HotbarOrigin below)
-// can't drift out of sync with each other the way four independently
-// hand-tuned pixel offsets eventually would.
+// Hotbar/armor/status-bar/movement-state geometry
 namespace {
     // Vanilla GUI geometry in GUI units: 1 unit = 1 texture pixel, and
     // Graphics.GUIScale scales the whole thing (see ApplyGUIScale).
@@ -2058,18 +2075,14 @@ ImVec2 GUIController::GetHotbarOrigin()
     return HotbarOrigin();
 }
 
-// Top-left of the hotbar - see the header comment on why every other HUD
-// piece in this group derives its position from this single call rather
-// than each re-deriving "bottom center" independently.
+// Top-left of the hotbar
 ImVec2 GUIController::HotbarOrigin()
 {
     return ResolveAnchor(GUI::ScreenAnchor::BOTTOM, ImVec2(Art(HOTBAR_WIDTH), Art(HOTBAR_HEIGHT)), ImVec2(0.0f, Art(HUD_BOTTOM_MARGIN)));
 }
 
 // Dark navy panels with a orange border tint, laid on top of StyleColorsDark.
-// Called once at Init - component-level drawing (DrawStyledButton) pulls
-// its own hand-picked colors rather than reading these back, since ImGui's
-// built-in widget colors don't cover custom-drawn glow/border fills.
+// Called once at Init
 void GUIController::ApplyVolcanoTheme()
 {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -2235,7 +2248,7 @@ bool GUIController::DrawStyledButton(const std::string& label, ImVec2 size)
 }
 
 // Create a new GUI window, pinned to a screen anchor + offset rather than
-// an absolute position - see GUI::ScreenAnchor and ResolveAnchor().
+// an absolute position
 GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, GUI::ScreenAnchor anchor,
                                              float offsetX, float offsetY)
 {
@@ -2254,7 +2267,7 @@ GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, GUI::Screen
 }
 
 // Resolves anchor + inward pixel offset into an absolute top-left position
-// against the current ImGui display size - see the header comment.
+// against the current ImGui display size
 ImVec2 GUIController::ResolveAnchor(GUI::ScreenAnchor anchor, ImVec2 size, ImVec2 offset)
 {
     ImVec2 display = ImGui::GetIO().DisplaySize;
@@ -2336,8 +2349,7 @@ void GUIController::CloseInventoryWindow()
 // Show a screen fullscreen, hiding the HUD and releasing the mouse cursor
 // so ImGui (rather than the fly-cam) drives it. GUIController runs on the
 // render thread, but GLFW only guarantees glfwSetInputMode is safe from the
-// main (window-owning) thread - see GlobalState::pendingCursorMode, applied
-// by VolcanoClient.cpp's main loop.
+// main (window-owning) thread
 void GUIController::OpenScreen(GUI::Screen* screen)
 {
     if (activeScreen == inventoryScreen && screen != inventoryScreen) CloseInventoryWindow();
@@ -2371,10 +2383,7 @@ void GUIController::CloseScreen()
 }
 
 // Raise the chat input box and free the cursor, same reasoning OpenScreen
-// gives for doing so - mouse-look shouldn't fight with typing, and
-// RenderThread::PollInputs is the piece that actually stops reading
-// movement/camera input while this is open (see its own IsChatInputOpen()
-// check, right alongside the existing IsScreenOpen() one).
+// gives for doing so
 void GUIController::OpenChatInput(const char* initialText)
 {
     chatInputOpen = true;

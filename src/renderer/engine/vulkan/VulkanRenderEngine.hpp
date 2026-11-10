@@ -151,13 +151,10 @@ private:
     bool initialized = false;
     bool guiAttached = false;
 
-    // Not one of RenderEngine's own passes - see its own comment for why
-    // (compute can't run inside this engine's single render pass instance).
-    // Created/destroyed alongside CreatePasses()/DestroyPasses(); recorded
-    // directly from SubmitFrame, after EndMainPass.
+    // Not one of RenderEngine's own passes
     Passes::HiZBuildPass hizBuildPass;
 
-    // Built-in passes, in draw order - see RenderEngine::AddPass for names.
+    // Built-in passes, in draw order
     void RegisterBuiltInPasses();
 
     // SubmitFrame(), step by step.

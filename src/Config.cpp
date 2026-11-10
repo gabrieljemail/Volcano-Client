@@ -129,8 +129,7 @@ ConfigValue Config::Get(const std::string& key, const ConfigValue& fallback)
     ConfigValue value;
     if (node != nullptr && ExtractMatching(*node, fallback, value)) return value;
 
-    // Unset or invalid - fall back to the caller's default, and persist it
-    // so settings.json (and every later Get() for this key) reflects it.
+    // Unset or invalid
     Assign(data, key, ToJson(fallback));
     Save();
     return fallback;

@@ -41,6 +41,9 @@
 #include "renderer/gui/screens/MainMenuScreen.hpp"
 #include "renderer/gui/screens/PauseScreen.hpp"
 #include "renderer/gui/screens/ServerList.hpp"
+#include "network/SkinFetcher.hpp"
+#include "network/microsoft/MSAccountManager.hpp"
+#include "renderer/gui/screens/WorldManager.hpp"
 #include "renderer/gui/screens/SettingsScreen.hpp"
 #include "renderer/gui/models/TextInput.hpp"
 #include "renderer/gui/models/Button.hpp"
@@ -101,6 +104,13 @@ int main(int argc, char** argv)
     Volcano::ResourceManager resourceManager(&state);
     state.resourceManager = &resourceManager;
 
+    // Microsoft accounts (the switcher in the menus' top right) and the skin downloader.
+    Volcano::MSAccountManager accountManager(state.config);
+    accountManager.Load();
+    state.accountManager = &accountManager;
+    Volcano::SkinFetcher skinFetcher(state.config);
+    state.skinFetcher = &skinFetcher;
+
     // Performance.HighPriority: run one step above normal so other apps
     // compete less with the render thread on low-core machines. Set before
     // any thread is created so every thread inherits it.
@@ -109,6 +119,16 @@ int main(int argc, char** argv)
         if (!Volcano::Platform::OS::SetAboveNormalPriority())
         {
             Volcano::Log::Info("Couldn't raise process priority; running at normal priority.");
+        }
+    }
+
+    // Performance.MemoryPriority: 1 (trimmed first) to 5 (the system default). Lower values let the system page this
+    // process out sooner when RAM is tight; 5 leaves it alone.
+    {
+        int memoryPriority = static_cast<int>(std::get<uint32_t>(state.config->Get("Performance.MemoryPriority", uint32_t{5})));
+        if (memoryPriority != 5 && !Volcano::Platform::OS::SetMemoryPriority(memoryPriority))
+        {
+            Volcano::Log::Info("Couldn't set the memory priority; leaving it at the default.");
         }
     }
 
@@ -184,25 +204,27 @@ int main(int argc, char** argv)
     Volcano::Player player;
     state.player = &player;
 
-    // Input handler - must be created before render thread starts
+    // Input handler
     Volcano::InputHandler input(state.window);
     state.input = &input;
     if (std::get<bool>(state.config->Get("Controls.Mouse.RawInput", true))) input.EnableRawMouse();
 
     // Register camera inputs. Sensitivity (degrees per pixel of mouse motion)
-    // is the ONLY scaling applied to mouse look - RenderThread::PollInputs
-    // passes 1.0f into Camera::ApplyMouseDelta so there's a single knob here,
-    // not two multiplied together.
+    // is the ONLY scaling applied to mouse look
     input.RegisterAxis("Camera.X", InputAxis{ -1.0f, 1.0f, 0.0f, 0.15f, 0, 0, AxisSourceType::MouseX, false });
     input.RegisterAxis("Camera.Y", InputAxis{ -1.0f, 1.0f, 0.0f, 0.15f, 0, 0, AxisSourceType::MouseY, false });
 
     // Movement, actions and hotbar keys are rebindable (see KeyBindings.hpp):
     // the Move.* axes start with no keys and Apply fills them in from
     // settings.json's Controls.Keys.*, as it does every action. Movement is
-    // client-side, matching Minecraft - the server only reconciles it.
+    // client-side, matching Minecraft
     input.RegisterAxis("Move.Forward", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, 0, 0, AxisSourceType::KeyPair, false });
     input.RegisterAxis("Move.Right", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, 0, 0, AxisSourceType::KeyPair, false });
     Volcano::KeyBindings::Apply(*state.config, input);
+    // Milliseconds between two presses that still count as a double-tap
+    // (InputHandler's DOUBLE_TAP trigger - fly toggle, double-click, ...).
+    input.SetDoubleTapWindow(
+        std::get<uint32_t>(state.config->Get("Controls.DoubleTapWindow", uint32_t{250})) / 1000.0);
 
     // Fixed: RELEASE so F3+Z (wireframe, see RenderThread::PollInputs) can
     // cancel it, which only works with F3 itself.
@@ -228,9 +250,7 @@ int main(int argc, char** argv)
     modLoader.Fire(Volcano::EventType::TEXTURES_LOADED);
 
     // Resolves item icon texture layers against the array textureManager
-    // just built - must run after LoadResourcePack(), not alongside
-    // BlockRegistry/EntityRegistry::Init() above (which only need JSON,
-    // not the texture array).
+    // just built
     Volcano::ItemRegistry::Init(textureManager);
     Volcano::SplashScreen::SetProgress(0.88f);
 
@@ -284,8 +304,7 @@ int main(int argc, char** argv)
     // Singleplayer screen: one button per settings.json's
     // Network.LocalServerDirs entry, each launching that directory's
     // server.jar on Network.LoopbackPort and connecting to it exactly like
-    // any other server - see NetworkThread's localServerDir constructor
-    // argument. Its buttons are filled in further down.
+    // any other server
     Volcano::GUI::Screen* singleplayerScreen = Volcano::GUIController::CreateScreen("Singleplayer", /* closable */ false);
 
     // Shown from the moment a connection attempt starts (singleplayer or
@@ -342,44 +361,36 @@ int main(int argc, char** argv)
         connectToServer(addressInput->GetValue());
     }));
 
-    // Built once here (the LocalServerDirs list isn't expected to change at
-    // runtime) rather than re-scanning it on every screen open.
+    // Singleplayer: the world list (WorldManager). Play starts the world's folder as a local server through
+    // the same NetworkThread path as before, with the world's own Java settings.
     uint16_t loopbackPort = static_cast<uint16_t>(std::get<uint32_t>(state.config->Get("Network.LoopbackPort", uint32_t{25565})));
+    Volcano::GUI::Screen* mainMenuForWorlds = nullptr;
+    Volcano::GUI::WorldListActions worldActions;
+    worldActions.play = [&state, &network, usernameInput, loopbackPort, loadingScreen](const Volcano::GUI::World& world) {
+        std::string username = usernameInput->GetValue();
+        if (username.empty()) return;
 
-    for (const std::string& serverDir : state.config->GetStringArray("Network.LocalServerDirs"))
-    {
-        if (!std::filesystem::exists(std::filesystem::path(serverDir) / "server.jar"))
-        {
-            Volcano::Log::Error("Singleplayer: no server.jar in " + serverDir + ", skipping");
-            continue;
-        }
+        // A relative Java path would be looked up from the world's folder, where the server runs.
+        std::filesystem::path javaPath(world.jvmPath);
+        if (javaPath.has_parent_path() && javaPath.is_relative()) javaPath = std::filesystem::absolute(javaPath);
 
-        std::string worldName = std::filesystem::path(serverDir).filename().string();
-        auto* worldButton = new Volcano::GUI::Button(worldName);
-        worldButton->AddClickHandler(new std::function<void()>(
-            [&state, &network, usernameInput, serverDir, loopbackPort, loadingScreen] {
-                std::string username = usernameInput->GetValue();
-                if (username.empty()) return;
+        state.SetConnectionPhase(Volcano::ConnectionPhase::StartingServer);
+        network = std::make_unique<Volcano::NetworkThread>(&state, "127.0.0.1", loopbackPort, username, world.Path().string());
+        network->javaPathOverride = javaPath.string();
+        network->javaArgumentsOverride = world.jvmArgs;
+        network->Start();
 
-                state.SetConnectionPhase(Volcano::ConnectionPhase::StartingServer);
-                network = std::make_unique<Volcano::NetworkThread>(&state, "127.0.0.1", loopbackPort, username, serverDir);
-                network->Start();
-
-                Volcano::GUIController::OpenScreen(loadingScreen);
-            }));
-        singleplayerScreen->components.push_back(worldButton);
-    }
+        Volcano::GUIController::OpenScreen(loadingScreen);
+    };
+    worldActions.back = [&mainMenuForWorlds] { Volcano::GUIController::OpenScreen(mainMenuForWorlds); };
+    Volcano::GUI::ConfigureWorldScreen(singleplayerScreen, &state, worldActions);
 
     connectScreen->components.push_back(disconnectReasonText);
     connectScreen->components.push_back(addressInput);
     connectScreen->components.push_back(usernameInput);
     connectScreen->components.push_back(connectButton);
 
-    // Main menu: the actual startup screen and navigation hub now - see
-    // MainMenuScreen.hpp. Built after singleplayerScreen/connectScreen
-    // (its Singleplayer/Multiplayer buttons open them directly), so their
-    // own Back buttons (added right after, below) can close the loop back
-    // to it instead of each other.
+    // Main menu: the actual startup screen and navigation hub now
     Volcano::GUI::Screen* settingsScreen = Volcano::GUI::CreateSettingsScreen(&state);
     // Multiplayer opens the saved-server list; Direct Connect from there opens
     // connectScreen. Its Back needs the main menu, which is built just after.
@@ -391,14 +402,10 @@ int main(int argc, char** argv)
     Volcano::GUI::Screen* serverListScreen = Volcano::GUI::CreateServerList(serverListActions);
 
     mainMenuScreen = Volcano::GUI::CreateMainMenuScreen(&state, singleplayerScreen, serverListScreen, settingsScreen);
+    mainMenuForWorlds = mainMenuScreen;
 
     // Pause menu (Esc in a world). Servers and Disconnect both leave the
-    // current session the same way - RequestStop, show the loading screen
-    // as "Disconnecting...", and let the main loop below finish the job once
-    // the network thread (and, in singleplayer, the local server, which can
-    // take a while to save and exit) has actually wound down; resetting the
-    // world any earlier would let still-arriving packets repopulate it. They
-    // differ only in where the player lands afterward.
+    // current session the same way
     Volcano::GUI::Screen* disconnectDestination = nullptr;
     auto beginDisconnect = [&state, &network, &disconnectDestination, loadingScreen](Volcano::GUI::Screen* destination) {
         disconnectDestination = destination;
@@ -410,11 +417,6 @@ int main(int argc, char** argv)
         [beginDisconnect, serverListScreen] { beginDisconnect(serverListScreen); },
         [settingsScreen] { Volcano::GUI::OpenSettingsScreen(settingsScreen, Volcano::GUIController::GetPauseScreen()); },
         [beginDisconnect, mainMenuScreen] { beginDisconnect(mainMenuScreen); }));
-
-    auto* singleplayerBackButton = new Volcano::GUI::Button("Back");
-    singleplayerBackButton->AddClickHandler(new std::function<void()>(
-        [mainMenuScreen] { Volcano::GUIController::OpenScreen(mainMenuScreen); }));
-    singleplayerScreen->components.push_back(singleplayerBackButton);
 
     auto* connectBackButton = new Volcano::GUI::Button("Back");
     connectBackButton->AddClickHandler(new std::function<void()>(
@@ -440,9 +442,7 @@ int main(int argc, char** argv)
     {
         // GUIController and NotifyFramePresented run in this same loop now,
         // but GLFW still only guarantees glfwSetInputMode is safe from the
-        // thread that created the window - this one, same as before, just
-        // no longer a *different* thread than the one that just ran
-        // PollInputs/DrawFrame - see GlobalState::pendingCursorMode.
+        // thread that created the window
         if (int mode = state.pendingCursorMode.exchange(-1); mode != -1)
         {
             glfwSetInputMode(state.window, GLFW_CURSOR, mode);
@@ -477,9 +477,7 @@ int main(int argc, char** argv)
             Volcano::Log::Info("Returned to connect screen: " + reason);
             modLoader.Fire(Volcano::EventType::LEAVE_PLAY_STATE);
 
-            // See GlobalState::ResetWorldState's own comment - same reset a
-            // mid-session dimension change (PlayS2C::Respawn) uses, just
-            // followed here by actually reopening the connect screen.
+            // See GlobalState::ResetWorldState's own comment
             state.SetConnectionPhase(Volcano::ConnectionPhase::Idle);
             state.ResetWorldState();
 

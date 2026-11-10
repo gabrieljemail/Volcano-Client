@@ -15,19 +15,7 @@
 namespace Volcano {
 
 // A secondary-trigger click that landed on a block while holding something
-// placeable (see InteractionManager::SecondaryTriggerStart) - placing a
-// block, or using a bucket/bonemeal/dye/etc. against one.
-//
-// `position`/`face` are the EXISTING block being clicked and which of its
-// faces (straight off TargetedBlock - see RaycastBlocks), not the new cell
-// the placed block will occupy; the server derives that from position+face
-// itself.
-//
-// If `predictedStateId` is set (the held item is a block), the new block is
-// also placed locally right away. It's the block's default state, so
-// orientation (log axis, stair facing, ...) can be wrong until the server's
-// Block Update arrives. Vanilla sends that update for the target cell
-// whether the place succeeded or not, so a rejected place gets undone too.
+// placeable (see InteractionManager::SecondaryTriggerStart)
 struct PlaceBlockEvent {
     glm::ivec3 position;
     glm::ivec3 face;
@@ -39,11 +27,7 @@ struct PlaceBlockEvent {
         // Cursor: where within `face` the click landed, 0..1 on each axis.
         // RaycastBlocks doesn't track the exact 3D hit point (only the
         // distance along the ray), so this approximates "dead center of the
-        // clicked face" instead of real per-pixel precision - fine for
-        // which-cell-does-the-new-block-go-in (position+face already answer
-        // that), only actually imprecise for the handful of blocks whose
-        // placement orientation reads the cursor sub-position too (e.g. a
-        // trapdoor's exact hinge pixel), not just position+face+look-yaw.
+        // clicked face" instead of real per-pixel precision
         glm::vec3 cursor(0.5f, 0.5f, 0.5f);
         if (face.x != 0) cursor.x = face.x > 0 ? 1.0f : 0.0f;
         if (face.y != 0) cursor.y = face.y > 0 ? 1.0f : 0.0f;

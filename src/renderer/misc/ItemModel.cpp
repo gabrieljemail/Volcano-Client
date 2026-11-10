@@ -156,7 +156,7 @@ public:
 
 private:
     // Front/back plus one side quad per exposed edge pixel, so the sprite
-    // has thickness - vanilla's look for flat items.
+    // has thickness
     static void BuildExtruded(const ModelLoader::Model& model, const TextureManager& textures, ItemModel& item)
     {
         const float z0 = 0.5f - EXTRUDE_THICKNESS * 0.5f;

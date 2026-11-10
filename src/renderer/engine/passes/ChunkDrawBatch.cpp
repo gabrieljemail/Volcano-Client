@@ -43,9 +43,24 @@ void ChunkDrawBatch::Destroy()
     }
 }
 
-uint64_t ChunkDrawBatch::Draw(VkCommandBuffer cmd, uint32_t frameIndex, const std::vector<const Mesh*>& meshes, VkDeviceSize vertexStride)
+uint64_t ChunkDrawBatch::Draw(VkCommandBuffer cmd, uint32_t frameIndex, const std::vector<const Mesh*>& givenMeshes, VkDeviceSize vertexStride,
+    bool groupByBuffer)
 {
-    if (meshes.empty()) return 0;
+    if (givenMeshes.empty()) return 0;
+
+    static thread_local std::vector<const Mesh*> grouped;
+    const std::vector<const Mesh*>* source = &givenMeshes;
+    if (groupByBuffer)
+    {
+        grouped = givenMeshes;
+        std::stable_sort(grouped.begin(), grouped.end(), [](const Mesh* a, const Mesh* b)
+        {
+            if (a->vertexBuffer != b->vertexBuffer) return a->vertexBuffer < b->vertexBuffer;
+            return a->indexBuffer < b->indexBuffer;
+        });
+        source = &grouped;
+    }
+    const std::vector<const Mesh*>& meshes = *source;
 
     const uint32_t slot = frameIndex % FRAMES;
     auto* instanceData = static_cast<glm::vec4*>(instancesMapped[slot]);

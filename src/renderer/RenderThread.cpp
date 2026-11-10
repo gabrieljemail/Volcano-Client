@@ -11,6 +11,7 @@
 #include <GLFW/glfw3.h>
 #include "../Math.hpp"
 #include "RenderThread.hpp"
+#include "VulkanInit.hpp"
 #include "gui/GUIController.hpp"
 #include "../TickLoop.hpp"
 #include "../ModLoader.hpp"
@@ -29,6 +30,7 @@ namespace Volcano {
 // needs from it.
 void SendHeldItemSlot(GlobalState* state, uint8_t slot);
 void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position, glm::ivec3 face);
+void SendPlayerAbilities(GlobalState* state, bool flying);
 }
 
 namespace Volcano {
@@ -61,8 +63,7 @@ void RenderThread::RunFrame()
     DrawFrame();
     // Both PollInputs (F11, TickLoop's jump check) and DrawFrame (via
     // GUIController::Update()'s Escape check) read this frame's
-    // press/release edges above - only clear them now that both have
-    // had their chance, not before.
+    // press/release edges above
     state->input->EndFrame();
 
     // Everything above except pacing, split into real CPU work and time
@@ -82,7 +83,7 @@ void RenderThread::RunFrame()
 
 void RenderThread::Shutdown()
 {
-    // Waits for the GPU before destroying anything - see StopRendering.
+    // Waits for the GPU before destroying anything
     state->renderEngine->StopRendering();
 }
 
@@ -210,19 +211,13 @@ void RenderThread::PollInputs()
         sprintToggled = !sprintToggled;
     }
 
-    // F9 rebuilds every render pass's pipelines from disk - picks up edited
-    // shader pack (or built-in) .spv files without restarting. Applied at
-    // the start of the next frame, between frames, by the engine itself.
+    // F9 rebuilds every render pass's pipelines from disk
     if (state->input->WasActivated("ReloadShaders"))
     {
         state->renderEngine->RequestShaderReload();
     }
 
-    // "G" toggles Graphics.Lighting - see SceneView::lightingEnabled, read
-    // fresh from config every frame in BuildSceneView, so flipping it
-    // here just needs to persist the new value. Gated on chat/screen being
-    // closed so typing "g" into the chat box or a text field doesn't also
-    // toggle it.
+    // "G" toggles Graphics.Lighting
     if (!GUIController::IsChatInputOpen() && !GUIController::IsScreenOpen()
         && state->input->WasActivated("ToggleLighting"))
     {
@@ -246,6 +241,18 @@ void RenderThread::PollInputs()
     // mid-air and a pending teleport never lands until the screen closes.
     bool inputAllowed = !GUIController::IsScreenOpen() && !GUIController::IsChatInputOpen();
 
+    // Double-tap the Fly binding (InputHandler's DOUBLE_TAP trigger, see
+    // KeyBindings) to toggle flight. Requires the server's MayFly ability
+    // (PlayS2C::PlayerAbilities) and a live world; not while riding, since
+    // the vehicle owns movement then.
+    if (inputAllowed && state->worldReady.load() && state->ridingEntityId.load() < 0
+        && state->mayFly.load() && state->input->WasActivated("Fly"))
+    {
+        bool nowFlying = !state->tickLoop->IsFlying();
+        state->tickLoop->SetFlying(nowFlying);
+        SendPlayerAbilities(state, nowFlying);
+    }
+
     // Hotbar slot selection ("1".."9" - see their registration in
     // VolcanoClient.cpp). Gated the same way "G"/ToggleLighting is: typing a
     // digit into chat or a text field must not also swap the held slot.
@@ -267,11 +274,26 @@ void RenderThread::PollInputs()
             SendHeldItemSlot(state, static_cast<uint8_t>(slot));
             break; // Two number keys can't both have been pressed the same frame in practice; stop at the first.
         }
+
+        // Scrolling moves the hotbar selection.
+        double strength = std::get<uint32_t>(state->config->Get("Controls.ScrollSpeed", 100U));
+        // When false, scrolling down goes to the next slot. When true, this is reversed.
+        bool direction = std::get<bool>(state->config->Get("Controls.ScrollDirection", false));
+        double scroll = state->input->GetScrollDeltaY() * strength;
+        if (scroll != 0.0)
+        {
+        	int dir = scroll > 0.0 ? (direction ? 1 : -1) : (direction ? -1 : 1);
+         	uint8_t slot;
+          	{
+           		std::lock_guard<std::mutex> lock(state->inventory.mutex);
+             	slot = static_cast<uint8_t>((state->inventory.selectedHotbarSlot + 9 + dir) % 9);
+              	state->inventory.selectedHotbarSlot = slot;
+           	}
+            SendHeldItemSlot(state, slot);
+        }
     }
 
-    // Drop key: a tap drops one item, holding it (or Ctrl) drops the stack - see
-    // DropKeyTracker. The count is reduced locally at once; the server's slot
-    // update corrects it. Spectators have nothing to drop.
+    // Drop key: a tap drops one item, holding it (or Ctrl) drops the stack
     static DropKeyTracker dropKey;
     if (inputAllowed && state->localGameMode.load() != 3)
     {
@@ -324,12 +346,18 @@ void RenderThread::PollInputs()
     {
         state->tickLoop->RequestJump();
     }
+    // Effective sprint (plain held key, or the ToggleSprint latch) doubles
+    // as the flight speed boost; Move.FlyBoost is a separate key for players
+    // who'd rather not share it.
+    bool effectiveSprint = toggleSprint ? sprintToggled : state->input->IsActive("Sprint");
+    state->tickLoop->SetFlyBoost(inputAllowed
+        && (effectiveSprint || state->input->IsActive("Move.FlyBoost")));
     state->tickLoop->PublishInput(
         inputAllowed,
         state->input->GetAxis("Move.Forward"),
         state->input->GetAxis("Move.Right"),
         state->input->IsActive("Sneak"),
-        toggleSprint ? sprintToggled : state->input->IsActive("Sprint"),
+        effectiveSprint,
         inputAllowed && state->input->IsActive("JumpHold"));
     state->tickLoop->Tick();
 }
@@ -379,7 +407,8 @@ void RenderThread::DrawFrame()
     double frameWorkTime = std::chrono::duration<double, std::milli>(workEnd - workStart).count();
     averageWorkTime = (averageWorkTime * 0.9) + (frameWorkTime * 0.1);
     // Re-read each frame so the Max FPS setting applies live.
-    uint16_t targetFPS = state->targetFPS;
+    bool reduceFPS = (glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_FALSE) || (glfwGetWindowAttrib(window, GLFW_HOVERED) == GLFW_FALSE);
+    uint16_t targetFPS = reduceFPS ? 5 : state->targetFPS;
     targetFrameTime = 1000.0 / static_cast<double>(targetFPS > 0 ? targetFPS : 60);
     nextFrameTarget += std::chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
 
@@ -415,14 +444,7 @@ constexpr glm::vec3 SKY_TOP_DAY(0.471f, 0.655f, 1.0f);
 constexpr glm::vec3 SKY_HORIZON_NIGHT(0.02f, 0.02f, 0.05f);
 constexpr glm::vec3 SKY_HORIZON_DAY(0.753f, 0.847f, 1.0f);
 
-// C++ mirror of terrain.frag's NotGamma - see its own comment for the
-// curve's shape and where it comes from (the real notGamma(vec3) in
-// resources/minecraft/assets/minecraft/shaders/core/lightmap.fsh). Used
-// here to apply the same "Bright" curve to the sky clear color that the
-// shader applies to per-block lighting, so raising Graphics.Brightness
-// actually lifts the night sky instead of leaving it exactly as dark as a
-// pure day/night color lerp would - the "clear color interpolation is
-// linear" gap this was added to close.
+// C++ mirror of terrain.frag's NotGamma
 float NotGamma(float level)
 {
     float inverted = 1.0f - level;
@@ -438,6 +460,39 @@ glm::mat4 ViewBobMatrix(const TickLoop::ViewBob& bob)
     glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(std::sin(phase) * h * 0.5f, -std::abs(std::cos(phase) * h), 0.0f));
     m = glm::rotate(m, glm::radians(std::sin(phase) * h * 3.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     m = glm::rotate(m, glm::radians(std::abs(std::cos(phase - 0.2f) * h) * 5.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    return m;
+}
+
+// Vanilla's GameRenderer.bobHurt: a hit rolls the view away from where it came from (14 degrees, scaled by the
+// Damage Tilt setting), and a dying player's view rolls a few degrees as it settles.
+glm::mat4 CameraTiltMatrix(GlobalState* state)
+{
+    int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    glm::mat4 m(1.0f);
+
+    int64_t deathNs = state->localDeathNs.load();
+    if (deathNs != 0)
+    {
+        float ticks = static_cast<float>(nowNs - deathNs) * 1e-9f * 20.0f;
+        m = glm::rotate(m, glm::radians(40.0f - 8000.0f / (ticks + 200.0f)), glm::vec3(0.0f, 0.0f, 1.0f));
+    }
+
+    int64_t hurtNs = state->localHurtNs.load();
+    float strength = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.DamageTilt", uint32_t{100}))) / 100.0f;
+    if (hurtNs != 0 && strength > 0.0f)
+    {
+        constexpr float HURT_TICKS = 10.0f;
+        float remaining = HURT_TICKS - static_cast<float>(nowNs - hurtNs) * 1e-9f * 20.0f;
+        if (remaining > 0.0f)
+        {
+            float t = remaining / HURT_TICKS;
+            t = std::sin(t * t * t * t * glm::pi<float>());
+            float direction = glm::radians(state->localHurtDirection.load());
+            m = glm::rotate(m, -direction, glm::vec3(0.0f, 1.0f, 0.0f));
+            m = glm::rotate(m, glm::radians(-t * 14.0f * strength), glm::vec3(0.0f, 0.0f, 1.0f));
+            m = glm::rotate(m, direction, glm::vec3(0.0f, 1.0f, 0.0f));
+        }
+    }
     return m;
 }
 
@@ -478,12 +533,30 @@ Engine::SceneView RenderThread::BuildSceneView()
     // View bobbing, applied in front of the camera as vanilla's bobView does.
     // The camera position then comes from the bobbed view, so passes that draw
     // camera-relative (particles, clouds) stay lined up with the terrain.
-    if (std::get<bool>(state->config->Get("Graphics.ViewBobbing", true)))
+    // The death clock starts when health reaches 0 and stops when it comes back.
     {
-        scene.viewBob = ViewBobMatrix(state->tickLoop->GetViewBob());
-        scene.view = scene.viewBob * scene.view;
-        scene.cameraPosition = glm::vec3(glm::inverse(scene.view)[3]);
+        bool dead = false;
+        {
+            std::lock_guard<std::mutex> lock(state->healthMutex);
+            dead = state->health <= 0.0f;
+        }
+        int64_t started = state->localDeathNs.load();
+        if (dead && started == 0)
+        {
+            state->localDeathNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        }
+        else if (!dead && started != 0)
+        {
+            state->localDeathNs.store(0);
+        }
     }
+
+    // Damage and death tilt, then the walk's sway (vanilla applies them in that order).
+    bool bobbing = std::get<bool>(state->config->Get("Graphics.ViewBobbing", true));
+    scene.viewBob = CameraTiltMatrix(state) * (bobbing ? ViewBobMatrix(state->tickLoop->GetViewBob()) : glm::mat4(1.0f));
+    scene.view = scene.viewBob * scene.view;
+    scene.cameraPosition = glm::vec3(glm::inverse(scene.view)[3]);
 
     // Read once and shared between skyColor below and the UBO fields further
     // down (VulkanRenderEngine::SubmitFrame), rather than two separate config
@@ -530,9 +603,7 @@ Engine::SceneView RenderThread::BuildSceneView()
 
     // Same γ/NotGamma blend terrain.frag applies to per-block lighting, so
     // raising Graphics.Brightness lifts the night sky too instead of only
-    // affecting terrain - this is the "clear color interpolation is linear"
-    // gap. Skipped entirely (not just blended toward brightnessFactor=0)
-    // when lighting is off, matching "G"'s existing all-or-nothing meaning.
+    // affecting terrain
     float skyColorBrightness = lightingEnabled
         ? glm::mix(scene.dayBrightness, NotGamma(scene.dayBrightness), brightnessFactor)
         : scene.dayBrightness;
@@ -562,11 +633,9 @@ glm::mat4 RenderThread::BuildProjection(const Engine::RenderExtent& extent)
     float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height > 0 ? extent.height : 1);
     float baseFov = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOV", uint32_t{80})));
 
-    // Flying doesn't exist yet (no fly toggle - same placeholder
-    // GUIController's movement-state panel uses) so only sprinting drives
-    // this for now; whoever adds flight just needs to flip isFlying here,
-    // the easing below already handles either.
-    constexpr bool isFlying = false;
+    // Sprinting or flying drives the FOV kick; the snapshot's mode already
+    // reflects whichever movement mode FixedStep is in.
+    bool isFlying = state->tickLoop->GetMovementSnapshot().mode == MoveMode::Fly;
     bool boosted = isFlying || state->tickLoop->GetMovementSnapshot().sprinting;
     float targetFovOffset = boosted
         ? static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOVEffects", uint32_t{10})))
@@ -581,8 +650,7 @@ glm::mat4 RenderThread::BuildProjection(const Engine::RenderExtent& extent)
     currentFovOffset = glm::mix(currentFovOffset, targetFovOffset,
         1.0f - std::exp(-FOV_EASE_RATE * frameDeltaTime));
 
-    // Vulkan's clip space has Y pointing down - flip it so the image lands
-    // right-side-up.
+    // Vulkan's clip space has Y pointing down
     glm::mat4 p = glm::perspective(glm::radians(baseFov + currentFovOffset), aspect, 0.05f, 1000.0f);
     p[1][1] *= -1.0f;
     return p;

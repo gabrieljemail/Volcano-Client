@@ -6,22 +6,15 @@
 
 namespace Volcano {
 
-// One inventory slot's contents - mirrors the protocol's Slot data
-// structure (a present flag, item id, and count) closely enough for this
-// client's needs; the data-components/NBT part of Slot (enchantments, custom
-// names, ...) isn't modeled yet (NetworkClient currently decodes item id and
-// count only). A default-constructed
-// ItemStack is an empty slot - itemId 0 doubles as "no item" (item id 0 is
-// "minecraft:air" in minecraft-data's items.json, so this needs no separate
-// bool to stay in sync with count the way a real Slot's "Present" flag
-// would), matching the itemId/visualId-0-means-nothing convention
-// BlockRegistry already uses for block state ids.
+// One inventory slot's contents
 struct ItemStack {
     int32_t itemId = 0;
     uint8_t count = 0;
     // From the damage / max_damage components; -1 when the stack carried none.
     int32_t damage = -1;
     int32_t maxDamage = -1;
+    // Draws the enchantment glint: enchanted, or forced on/off by the glint override component.
+    bool glint = false;
 
     bool IsEmpty() const { return itemId == 0 || count == 0; }
 };

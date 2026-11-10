@@ -7,11 +7,7 @@
 
 namespace Volcano::Engine::Passes {
 
-// ImGui draw data (HUD, chat, screens, debug overlay) - always last so it
-// sits on top of everything, including a shader pack overlay. The ImGui
-// backend's own lifetime is the engine's (RenderEngine::AttachGUI /
-// StopRendering), not this pass's: GUIController needs the texture manager
-// that only exists after startup loading, well after passes are created.
+// ImGui draw data (HUD, chat, screens, debug overlay)
 class GUIPass : public RenderPass {
 public:
     static constexpr const char* NAME = "GUI";

@@ -9,7 +9,7 @@ This document describes the current project state of Volcano Client. Bugs and fe
 
 ## Roadmap
 Remaining work, roughly in milestone order. **(M2)** marks what milestone 2 needs.
-* [ ] Item and falling block entity models **(M2)**
+* [~] Falling block entity models **(M2)** (item entity models exist)
 * [ ] More humanoid and quadruped entity models **(M2)**: bats, fish, phantoms, the Nether and End mobs, bosses
 * [ ] Absorption hearts and the status effect HUD (icons, plus effect-driven FOV and screen changes)
 * [ ] Flowing fluid animation (flow direction textures)
@@ -17,8 +17,7 @@ Remaining work, roughly in milestone order. **(M2)** marks what milestone 2 need
 * [ ] Chunk fade-in
 * [ ] Fix combat (knockback direction, see PvP notes)
 * [ ] Weather, biome tints and the Nether/End dimension visuals
-* [ ] Dyed leather, armor trims and enchant glint
-* [ ] TLS support with Mojang accounts
+* [ ] Dyed leather and armor trims. Enchant glint is done on held items and worn armor ; GUI icons get a static baked glint; still missing on dropped items (the entity data only carries the item id).
 * [ ] Automatic singleplayer server generator
 
 ## Current State
@@ -67,15 +66,14 @@ Completion: **about 60% Complete.** (Estimate; milestone 2 is mostly entity cove
 * First-launch onboarding (graphics, audio, keybinds) in `src/Onboarding.hpp`
 
 #### Not implemented:
-* Music, jukebox records and note blocks
+* Jukebox records and note blocks (music itself is in)
 * Smooth lighting/SSAO (LATE)
 * Resource pack reloading from server-pushed packs (they are currently ignored entirely)
 * Mod loading (LATE): loader, versioned C API, events, packet/sound listeners, HUD elements and example mod (sdk/) exist; client commands, persisted keybindings, mod settings entries and item-behavior registry do not
 * Blocking with shields, bows/tridents
-* Combat visuals: hurt camera tilt, hit particles (crits are in)
 * Dynamic motion sampled animations
 * Ctrl+Enter to send a command as plain chat; server-side command suggestions (ask_server parsers)
-* Block-break and ambient particles
+* Ambient particles
 * Elytra, absorption hearts, status effect HUD
 
 ## Bugs
@@ -105,6 +103,10 @@ Completion: **about 60% Complete.** (Estimate; milestone 2 is mostly entity cove
 * **`Helpers.hpp` didn't compile** (missing semicolons after `Quat3`/`Quat4`, non-static `constexpr` members on the `Matrix3i`/`3f`/`4i`/`4f` structs) — only surfaced now because nothing had included the file since these structs were added to it until `InteractionManager.hpp` did. -- *`Helpers.hpp`*
 * **Step-up applied while airborne, not just on the ground.** `MoveAxis` tried `TryStepUp` on any blocked horizontal move regardless of `grounded`, so jumping/falling into a solid face let the player climb it a `STEP_HEIGHT` (0.6-block) hop at a time instead of colliding with it like a wall. Now gated on `grounded`. -- *`TickLoop.cpp`*
 * **Ghost chunk geometry after a dimension change** (e.g. dying and respawning back at the world spawn) — the old dimension's chunks, entities, and both render lists just kept rendering forever, since nothing ever cleared them. The server's `Respawn` packet (sent on every dimension change, not only death) was previously unhandled entirely. The disconnect-screen reset (world/render-list/entity clear, already existed, only ever ran when returning to the connect screen) is now a shared `GlobalState::ResetWorldState()`, called on `Respawn` too — same reset, but without reopening the connect screen, so the session stays connected while the new dimension's chunks stream in. **Not yet verified against a live respawn/dimension change** — only that it builds and the reset is a safe no-op mid-connect-screen-return (its original call site). -- *`GlobalState.hpp`, `VolcanoClient.cpp`, `NetworkClient.cpp`, `PacketIds.hpp`*
+
+## Low-RAM work (2026-10-31)
+* **Chunk storage is sectioned and palettized.** A column was a flat 98,304-cell `Block` array (20 bytes each) plus two light arrays, about 2.1 MB per column (~620 MB at render distance 8). Each 16-tall section now holds a palette plus 16-bit cell indices, allocated only once it has a non-air block, and light as nibbles, allocated only when it differs from the default. A typical terrain column measures 56 KB in a standalone randomized test against the flat layout (0 mismatches). Public `Chunk` accessors are unchanged. **Not checked in the real client yet**: compare `VolcanoClient.exe` memory at the same spot and render distance. -- *`Chunk.hpp`, `Block.hpp` (defaulted `operator==`)*
+* Ideas not done yet: free songs after they play (OpenAL buffers are never deleted), a low-RAM onboarding preset that caps render distance, a smaller singleplayer `-Xmx` on 4 GB machines, a texture layer size cap.
 
 ## Fixed since last update (2026-10-27)
 * **Mobs vanished after being hit or landing.** Position sync, teleport, vehicle move and explosion packets built a vector from three `ReadDouble()` calls in one argument list. C++ leaves that evaluation order unspecified and clang in MSVC mode runs it right to left, so x and z were swapped and the mob landed about 4,200 blocks away. A `ReadVec3` helper reads them as separate statements at all six sites. Probably also the cause of the old "entities inside walls" note. -- *`NetworkClient.cpp`*
@@ -188,15 +190,15 @@ What was listed here on 2026-10-16 has mostly landed (see Current State). What i
 [ ] Models and textures for mobs that still draw as boxes: bats, fish, phantoms, wandering traders, the Nether and End mobs, bosses.
 [ ] Baby variants, sheep dye colors, spider and enderman eyes, villager professions, the slime outer cube.
 [ ] Entity animation beyond walk, head look and swing: bow draw, creeper swell, death and damage tilt.
-[ ] Object entities: arrow and other projectile models, item frames, armor stands, paintings, minecarts, end crystals, leashes, fishing bobbers.
+[ ] Object entities: falling blocks, arrow and other projectile models, item frames, armor stands, paintings, minecarts, end crystals, leashes, fishing bobbers.
 [ ] Dropped items: the vanilla bob and spin, the pickup fly-to-player animation (Collect packet).
 [ ] Entity metadata beyond a few fields: on fire, glowing, sleeping.
-[ ] Armor: dyed leather (dye is a data component the client doesn't read), trims, enchant glint, elytra, baby/horse armor.
+[ ] Armor: dyed leather (dye is a data component the client doesn't read), trims, elytra, baby/horse armor. Enchant glint is in for held items, worn armor and GUI icons (see 2026-11-02); dropped items still lack it.
 
 ### World rendering
 [ ] Flowing fluid textures and submerged fog/tint.
-[ ] Block-break crack overlay; selection outline polish for non-cubes.
-[ ] Particles: block break and hit, damage, smoke, explosions, rain splashes, portals, ambient.
+[~] Block-break crack overlay is in (verified live); cracks follow the collision boxes, not the model. Selection outline polish for non-cubes is still open.
+[~] Particles: hit, damage and server-sent ones are in. Check smoke, explosions, rain splashes, portals and ambient.
 [ ] Weather (rain, snow, thunder), stars, sky color per biome.
 [ ] Biome tints for grass, foliage and water (tints.json is bundled; check it is applied everywhere).
 [ ] Nether and End: dimension change visuals, portal overlay, world border.
@@ -218,7 +220,7 @@ What was listed here on 2026-10-16 has mostly landed (see Current State). What i
 [ ] Note blocks, jukebox records, music discs.
 
 ### Networking and platform
-[ ] Online-mode login (Mojang session auth) and secure chat keys.
+[~] Online-mode login is in and joins work; secure chat keys are not.
 [ ] Resource pack prompts and downloads.
 [ ] Linux build and test pass (an Alpine/Weston test is planned; `execinfo.h` needs a musl guard); controller support.
 
@@ -233,3 +235,41 @@ What was listed here on 2026-10-16 has mostly landed (see Current State). What i
 [x] Drop key: tap drops one item, hold (0.35 s) or Ctrl drops the stack (`DropKey.hpp`). Not tested against a server yet.
 [x] Inventory clicks: Shift+Click, hotbar-key swap and drop-over-slot send the protocol click modes 1/2/4 with no local prediction, so slots update when the server answers. Not tested against a server yet.
 [ ] Inventory double-click gather, drag-split, creative inventory clicks.
+
+## Accounts and skins (2026-10-30, built; not tested live)
+[x] Microsoft sign-in: device code -> Xbox -> XSTS -> Minecraft (src/network/microsoft/MSAccountManager). Accounts persist in accounts.json (refresh tokens, plain text). Needs Auth.ClientId in settings.json (your own Entra app registration, public client, XboxLive.signin scope).
+[x] Account switcher in the top right of the menus (src/renderer/gui/AccountSwitcher): Offline, each account, remove, Add account.
+[x] Online-mode login: Encryption Request, session server join, AES/CFB8 on Connection.
+[x] Skins: the textures property from Player Info Update / Login Success (online servers and offline-mode skin plugins alike), and the signed-in account's own skin for the local player. SkinFetcher downloads on a worker thread (https; Mojang hosts plus Skins.AllowedHosts). Slim and wide player models, outer skin layer.
+[ ] First-person hand always uses the wide arm mesh, so slim skins look slightly stretched there.
+[x] Verified live: online server join, skins on a skin-plugin (SkinsRestorer) server and on an online server.
+[ ] Verify live: device-code sign-in from scratch.
+
+## Session 2026-11-02
+Everything below was checked in the running client by the user and works.
+
+### Verified
+* **Skins were all rejected**: Mojang and SkinsRestorer texture URLs are `http://`, and `SkinFetcher` only accepted `https://`. It now accepts both and upgrades Mojang's hosts to https. -- *`SkinFetcher.cpp`*
+* **Block-break crack overlay** drawn inside the selection pass (no new pass): `destroy_stage_0..9` over each collision box, vanilla's `dst * src * 2` blend, driven by the mining timer. It vanished after stage 4 because the shared skin descriptor pool ran out (56 sets); the pool is now 152. Other players' cracks come from Block Break Animation (0x05). -- *`SelectionRenderer.cpp`, `EntityRenderer.cpp`, `crack.vert/.frag`, `NetworkClient.cpp`*
+* **Chunk draw batching:** a RenderDoc capture showed 252 indirect calls for 387 draws because the mesh list wasn't grouped by slab buffer. Opaque lists (terrain, non-cubic cutout) are now sorted by buffer pair first: 27 calls for 348 draws. The translucent list keeps its order. -- *`ChunkDrawBatch.cpp`*
+* **Account button shows the signed-in account's face**; the dropdown is wider. Heads come from `SkinFetcher::TryGetHead` (8x8 face plus hat layer, requested under `head:` keys). -- *`AccountPanel.cpp`, `SkinFetcher.cpp`*
+
+### Also verified
+* **Enchantment glint** on held items, worn armor and GUI icons. Slots now read `enchantments`, `stored_enchantments` and the glint override into `ItemStack::glint`. Smooth tiled sheets, Minecraft's glint blend, armor masked by the armor texture's alpha. GUI icons bake one static frame. Dropped items don't have it (entity data carries only the item id). -- *`SlotSkipper.cpp`, `ItemRenderer.cpp`, `EntityRenderer.cpp`, `item_glint.frag`, `entity_glint.frag`, `GUIController.cpp`*
+* **Server nametags:** Update Teams (0x6D) is parsed; a player's tag is team prefix + name in the team color + suffix, and a team set to hide names hides the tag. Tags sit 4 px higher. -- *`NetworkClient.cpp`, `GUIController.cpp`, `GlobalState.hpp`*
+* **Head and body turn apart for every remote entity**, like the local player: Set Head Rotation (0x53) is read, `BodyRotation` runs per entity, head pitch follows the entity's pitch, and the shadow pass uses the same pose. -- *`EntityRenderer.cpp`, `Entity.hpp`, `NetworkClient.cpp`*
+* **Login:** Login Plugin Request (0x04) is answered "not understood" and Cookie Request (0x05) with an empty cookie, which were the likely cause of the "not supported yet" error on online servers. The unknown-packet error now names the packet id, and the signed-out message tells you to sign in. -- *`NetworkClient.cpp`*
+* **Slab memory:** the block size is 4 MB (was 16), since six slabs each pinned one block (96 MB at 16). A failed growth now says whether it was the size limit, the RAM headroom or the GPU allocation. Raising render distance grows the block count and the draw calls again. -- *`SlabBuffer.cpp`*
+* **Window icon** from `resources/logo.png` (title bar and taskbar; the exe's own file icon needs an `.rc`). `OS::ShowYesNoDialog`, `Performance.MemoryPriority` (1-5, default 5, Windows). -- *`VulkanInit.cpp`, `OS*.cpp`, `VolcanoClient.cpp`*
+
+### Open from this session
+[ ] Share one quad index buffer across meshes and defragment the slabs, like Sodium (the real memory saving). Index data is about a third of per-quad bytes.
+[ ] Dropped-item glint (needs enchantments in the entity metadata).
+[ ] Dyed leather and armor trims.
+[ ] Pass-level profiling: the debug menu's per-pass timings plus a frame profiler (Tracy) to find the real hot spots; the frame pacing spin loop is the first suspect for CPU use at a capped FPS.
+[ ] Exe icon (`.rc` plus `.ico`).
+[ ] Clear `blockBreaks` on a world reset.
+
+### Pincel dirty rectangles and async UI upload (2026-11-02, built, not run in the client)
+* Pincel repaints only what differs: it compares the new draw commands with the ones on the texture, clears and replays just the changed region (clipped), and reports it as `Texture::dirty` (ABI version 3). A change over half the canvas, a resize, a scroll or a background or font change redraws everything. A property test makes 300 random edits and checks the partial result is pixel-identical to a full redraw. `PincelBench` (Pincel `src/bench`) times it headless: a one-slot change 6.1 -> 0.5 ms at 1366x768.
+* `PincelSurface::Upload` no longer waits for the GPU: a ring of 3 staging buffers, command buffers and fences, barriers for ordering, and a sub-rectangle copy when the previous version was uploaded too. It used to submit and `vkQueueWaitIdle` on every UI change. **Check live**: inventory FPS, hover fades, resizing the window, and the `[UI]` log lines; if anything flickers or shows stale pixels, run with the validation layers.

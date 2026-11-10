@@ -1,7 +1,10 @@
 {
     "_comment": "Textured box mobs, keyed by entity type name (entities.json). model: file in this folder. skin: path under textures/entity/. scale: optional uniform scale about the feet. layers: optional extra { model, skin } drawn after the base (e.g. sheep wool). A listed name takes this path whatever its EntityRegistry shape.",
     "mobs": {
-        "player":    { "model": "humanoid.json", "skin": "player/wide/steve.png", "armor": true },
+        "player":      { "model": "player.json", "skin": "player/wide/steve.png", "armor": true,
+                         "layers": [ { "model": "player_overlay.json", "skin": "player/wide/steve.png" } ] },
+        "player_slim": { "model": "player_slim.json", "skin": "player/slim/steve.png", "armor": true,
+                         "layers": [ { "model": "player_overlay_slim.json", "skin": "player/slim/steve.png" } ] },
         "mannequin": { "model": "humanoid.json", "skin": "player/wide/steve.png", "armor": true },
         "zombie":    { "model": "humanoid.json", "skin": "zombie/zombie.png", "armor": true },
         "husk":      { "model": "humanoid.json", "skin": "zombie/husk.png", "armor": true, "scale": 1.0625 },
@@ -17,6 +20,11 @@
         "sheep":     { "model": "sheep.json",    "skin": "sheep/sheep.png",
                        "layers": [ { "model": "sheep_wool.json", "skin": "sheep/sheep_wool.png" } ] },
         "enderman":  { "model": "enderman.json", "skin": "enderman/enderman.png" },
+        "phantom":   { "model": "phantom.json", "skin": "phantom/phantom.png", "pitch": "look" },
+        "arrow":          { "model": "arrow.json", "skin": "projectiles/arrow.png", "scale": 0.9, "pitch": "projectile" },
+        "spectral_arrow": { "model": "arrow.json", "skin": "projectiles/arrow_spectral.png", "scale": 0.9, "pitch": "projectile" },
+        "wind_charge":        { "model": "wind_charge.json", "skin": "projectiles/wind_charge.png" },
+        "breeze_wind_charge": { "model": "wind_charge.json", "skin": "projectiles/wind_charge.png" },
         "villager":  { "model": "villager.json", "skin": "villager/villager.png", "scale": 0.9375 },
         "zombie_villager": { "model": "zombie_villager.json", "skin": "zombie_villager/zombie_villager.png" },
         "wolf":      { "model": "wolf.json",     "skin": "wolf/wolf.png" },

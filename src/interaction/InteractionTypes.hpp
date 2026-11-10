@@ -25,15 +25,11 @@ enum class DigStatus : int32_t {
     FinishDigging = 2,
     DropItemStack = 3,
     DropItem = 4,
-    ReleaseUseItem = 5, // Early-release of a continuous use (a drawn bow, food, a shield) - SecondaryTriggerRelease.
-    SwapItemInHand = 6, // Swaps mainhand <-> offhand (vanilla's default 'F' keybind) - not wired to any input yet.
+    ReleaseUseItem = 5, // Early-release of a continuous use (a drawn bow, food, a shield)
+    SwapItemInHand = 6, // Swaps mainhand <-> offhand (vanilla's default 'F' keybind)
 };
 
-// Vanilla's net.minecraft.core.Direction enum ordinal - DOWN, UP, NORTH,
-// SOUTH, WEST, EAST - unchanged since the digging packet's face byte was
-// introduced (Beta 1.8) and reused as-is by packet_block_place's `direction`
-// field. Every one of TargetedBlock::face's 6 possible unit-normal values
-// maps to exactly one of these.
+// Vanilla's net.minecraft.core.Direction enum ordinal
 inline int32_t DirectionToProtocolId(const glm::ivec3& dir)
 {
     if (dir.y < 0) return 0; // DOWN

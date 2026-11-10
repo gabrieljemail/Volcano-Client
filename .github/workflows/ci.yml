@@ -1,0 +1,143 @@
+name: Volcano Client CI
+
+# Compiles the client (and Pincel, its UI library) on every push and on pull requests to main. The client can't be run
+# here (it needs a GPU, a window and the game's assets), so a green build means it compiles and links.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  windows:
+    name: Windows (clang)
+    runs-on: windows-latest
+    steps:
+      # CMakeLists.txt looks for Pincel beside the client: <workspace>/Pincel and <workspace>/volcano-client.
+      - name: Check out the client
+        uses: actions/checkout@v4
+        with:
+          path: volcano-client
+
+      - name: Check out Pincel
+        uses: actions/checkout@v4
+        with:
+          repository: gabrieljemail/Pincel
+          path: Pincel
+
+      # Puts the MSVC headers and import libraries in the environment; clang uses them in MSVC-compatible mode.
+      - name: MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Pincel/src/pincel/rust
+
+      # Vulkan headers, the loader and glslangValidator (the build compiles the shaders).
+      - name: Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.357.0
+          install_runtime: true
+          cache: true
+
+      - name: OpenSSL
+        shell: pwsh
+        run: |
+          choco install openssl --no-progress -y
+          "OPENSSL_ROOT_DIR=C:/Program Files/OpenSSL-Win64" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build Pincel
+        shell: pwsh
+        run: |
+          cmake -S Pincel -B Pincel -G Ninja `
+            -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE `
+            -DCMAKE_C_COMPILER="C:/Program Files/LLVM/bin/clang.exe" `
+            -DCMAKE_CXX_COMPILER="C:/Program Files/LLVM/bin/clang++.exe" `
+            -DPINCEL_BUILD_EXAMPLE=OFF
+          cmake --build Pincel --target pincel
+
+      # GLFW, ZLIB, Asio and OpenAL are downloaded and built by cmake/Dependencies.cmake (VOLCANO_LIBS_DIR is empty here).
+      - name: Configure the client
+        shell: pwsh
+        run: |
+          cmake -S volcano-client -B volcano-client/build -G Ninja `
+            -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE `
+            -DCMAKE_CXX_COMPILER="C:/Program Files/LLVM/bin/clang++.exe" `
+            -DVOLCANO_LIBS_DIR=
+
+      - name: Build the client
+        run: cmake --build volcano-client/build
+
+      - name: Upload the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: VolcanoClient-windows
+          path: volcano-client/build/VolcanoClient.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # Not yet checked on a real Linux machine (the Alpine test is still to do), so a failure here doesn't fail the run.
+  linux:
+    name: Linux (clang, experimental)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Check out the client
+        uses: actions/checkout@v4
+        with:
+          path: volcano-client
+
+      - name: Check out Pincel
+        uses: actions/checkout@v4
+        with:
+          repository: gabrieljemail/Pincel
+          path: Pincel
+
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang lld \
+            libvulkan-dev glslang-tools libglm-dev \
+            libssl-dev zlib1g-dev libasio-dev libopenal-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxkbcommon-dev libwayland-dev wayland-protocols
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Pincel/src/pincel/rust
+
+      - name: Build Pincel
+        run: |
+          cmake -S Pincel -B Pincel -G Ninja \
+            -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DPINCEL_BUILD_EXAMPLE=OFF
+          cmake --build Pincel --target pincel
+
+      - name: Configure the client
+        run: |
+          cmake -S volcano-client -B volcano-client/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DVOLCANO_LIBS_DIR=
+
+      - name: Build the client
+        run: cmake --build volcano-client/build

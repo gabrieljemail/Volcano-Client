@@ -41,16 +41,14 @@ struct PackedVertex {
             | ((shininess & 0x7u) << 24);
 
         // word2: u (8 bits), v (8 bits), padding (16 bits)
-        // u/v are raw block-space tile counts (not normalized 0-1) - see
-        // terrain.vert, which relies on this for greedy-meshed quads to tile
-        // their texture instead of stretching across the merged rect.
+        // u/v are raw block-space tile counts (not normalized 0-1)
         vert.word2 = (static_cast<uint32_t>(u) & 0xFFu)
             | ((static_cast<uint32_t>(v) & 0xFFu) << 8);
 
         return vert;
     }
 
-    // 12-byte stride (3 x uint32_t) - optimized for iGPU cache lines
+    // 12-byte stride (3 x uint32_t)
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription bindingDescription{};
         bindingDescription.binding = 0;

@@ -69,13 +69,13 @@ const std::string& GetFaceTextureName(uint16_t visualId, int faceIndex);
 uint16_t VisualIdForName(const std::string& blockName);
 
 // How a NonCubeVisual should be drawn by NonCubicMesher. (Collision no longer
-// comes from these visuals - see MapStateIdCollisionShape.)
+// comes from these visuals
 enum class NonCubeShape : uint8_t {
     Cross,           // Two (or more) intersecting billboard planes: grass, flowers, saplings, ...
     Partial,         // One or more axis-aligned boxes smaller than a full block: slabs, carpets, snow layers, ...
     TransparentCube, // A full unit cube, but not opaque: glass, slime, ice, ...
     Liquid,          // A flat-topped box whose height depends on the block's fluid "level" state: water. Drawn
-                      // genuinely alpha-blended (depth write off) rather than cutout - see NonCubicMesher.
+                      // genuinely alpha-blended (depth write off) rather than cutout
 };
 
 // One axis-aligned box within a Partial/TransparentCube visual, in the same
@@ -107,13 +107,7 @@ struct NonCubeVisual {
     float fluidHeight = 0.0f;
 };
 
-// Maps a protocol block-state id to a non-cube visual id - an index into an
-// interned table of NonCubeVisuals - for any block that didn't resolve to an
-// opaque full-cube visual via MapStateId. 0 means nothing to draw this way
-// either (true air, an out-of-range id, or a shape this pass still doesn't
-// handle - lava and multipart blockstates like fences/walls/redstone). Water
-// is the one fluid resolved this pass (NonCubeShape::Liquid, static -
-// flow/waterlogged interaction still isn't modeled).
+// Maps a protocol block-state id to a non-cube visual id
 uint16_t MapStateIdNonCube(int32_t stateId);
 
 // Looks up a previously-resolved non-cube visual by id. Returns a
@@ -121,10 +115,7 @@ uint16_t MapStateIdNonCube(int32_t stateId);
 // for id 0 or any id outside the interned table.
 const NonCubeVisual& GetNonCubeVisual(uint16_t nonCubeVisualId);
 
-// One axis-aligned collision box in LOCAL block-space, 0..1 per axis - add
-// directly to a block's integer world origin to place it. May extend past 1
-// on Y: fences, walls and fence gates collide up to 1.5 (see TickLoop's scan
-// ranges, which look one cell below the player's AABB for exactly this).
+// One axis-aligned collision box in LOCAL block-space, 0..1 per axis
 struct AABB {
     glm::vec3 min{0.0f};
     glm::vec3 max{0.0f};
@@ -142,22 +133,10 @@ struct CollisionBoxes {
 };
 
 // Maps a protocol block-state id to its collision-shape id in minecraft-data's
-// blockCollisionShapes.json - the same per-state shapes the server collides
-// against. 0 means no collision. Returns Block::UNKNOWN_COLLISION_SHAPE for
-// an out-of-range id, or if that file failed to load.
+// blockCollisionShapes.json
 uint16_t MapStateIdCollisionShape(int32_t stateId);
 
-// Real collision geometry for one block, from its collisionShapeId - NOT from
-// its render model. Deriving it from the model (as this used to) left every
-// block without drawable model elements with no collision: shulker boxes,
-// chests, beds, signs, skulls, and anything else a block-entity renderer
-// draws, plus fences/walls (multipart blockstates this registry doesn't
-// resolve visuals for). The server still treats all of those as solid, so
-// standing on one meant sinking into it client-side and being teleported
-// back every tick. Blocks with UNKNOWN_COLLISION_SHAPE (the offline debug
-// world, or collision data that failed to load) fall back to "opaque full
-// cube or nothing". Shared by TickLoop's physics collision and (later)
-// block-selection raycasting so both agree on the exact same shape.
+// Real collision geometry for one block, from its collisionShapeId
 CollisionBoxes GetCollisionBoxes(const Block& block);
 
 // Outline/raycast geometry is distinct from physics collision: rendered

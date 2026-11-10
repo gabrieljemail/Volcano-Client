@@ -42,8 +42,7 @@ inline std::atomic<uint64_t> renderFrameCounter{0};
 // buffers - drawers must bind per buffer (see ChunkDrawBatch).
 //
 // Freed regions go on a free list (first-fit, adjacent ranges coalesced)
-// after a short delay - see FREE_DELAY_FRAMES - rather than being leaked
-// forever. Thread-safe: MeshingThread allocates/frees, the HUD reads stats.
+// after a short delay
 class SlabBuffer {
 public:
     // Frames a freed region waits before reuse: the render engine keeps at
@@ -52,7 +51,8 @@ public:
     static constexpr uint64_t FREE_DELAY_FRAMES = 3;
 
     // Size of one block. A request bigger than this gets a block of its own size.
-    static constexpr VkDeviceSize BLOCK_SIZE = 16ull * 1024 * 1024;
+    // Small, because every slab keeps one block for good: with six slabs, 16 MB blocks pinned 96 MB of RAM even in an empty world.
+    static constexpr VkDeviceSize BLOCK_SIZE = 4ull * 1024 * 1024;
 
     // Sets the cap on total committed bytes and the usage bits every block is
     // created with (e.g. vertex and/or index buffer bits). Allocates nothing yet.
@@ -66,7 +66,7 @@ public:
     bool Allocate(const void* data, VkDeviceSize size, VkDeviceSize alignment, VkBuffer& outBuffer, VkDeviceSize& outOffset);
 
     // Returns [offset, offset + size) of `buffer` - exactly what Allocate
-    // handed out - to the slab, reusable after FREE_DELAY_FRAMES more frames.
+    // handed out
     void Free(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size);
 
     // Whether `buffer` is one of this slab's blocks.
@@ -91,6 +91,7 @@ private:
     static void InsertFreeLocked(Block& block, VkDeviceSize offset, VkDeviceSize size);
     bool AllocateFromBlockLocked(Block& block, const void* data, VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize& outOffset);
     Block* AddBlockLocked(VkDeviceSize minimumSize);
+    const char* growFailure = ""; // Why the last AddBlockLocked said no, for the log.
     void DestroyBlockLocked(Block& block);
 
     VkBufferUsageFlags usage = 0;

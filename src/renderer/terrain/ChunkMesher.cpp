@@ -25,26 +25,7 @@ static bool slabsInitialized = false;
 
 // Scales this mesher's base slab size by how many chunk columns
 // Graphics.RenderDistance actually loads - (2*RD+1)^2, the same square-view
-// accounting vanilla's own simulation distance uses - rather than a single
-// fixed budget that's only right for whatever distance it happened to be
-// tuned at. Every factor lives in settings.json (Graphics.SlabSize.*) rather
-// than being hardcoded, since the right numbers depend entirely on the
-// machine: this is a single VkDeviceMemory allocation out of the
-// host-visible heap SlabBuffer maps persistently (CreateBuffer's isUMA
-// flag), which on an integrated/UMA GPU is real system RAM, and on a
-// discrete GPU without resizable BAR is often capped in the low hundreds of
-// MB regardless of total VRAM - scaling too aggressively risks that
-// allocation failing outright (SlabBuffer::Init now throws a readable error
-// instead of crashing on that, but a smaller increase that stays reliable
-// beats a bigger one that doesn't). If it's still failing, lower
-// baseSizeMBKey and/or maxScalePercent in settings.json.
-//
-// baseSizeMBKey: the base size in MB (floor - never allocates less than
-// this regardless of render distance). ReferenceRenderDistance: the render
-// distance that base size is considered "right" for; scale is 1.0 there.
-// MaxScalePercent: hard cap on how far render distance can scale the base
-// size up (percent, not a fraction - ConfigValue has no float type, same
-// convention as InteractionManagerConfig's alpha settings).
+// accounting vanilla's own simulation distance uses
 static uint64_t SlabSizeForRenderDistance(const std::string& baseSizeMBKey, uint32_t defaultBaseSizeMB) {
     Config* config = Config::Active();
     uint64_t baseSize = (config
@@ -114,12 +95,7 @@ SlabStats ChunkMesher::GetSlabStats() {
 // 0..CHUNK_SIZE_Z-1 horizontal range (the greedy sweep below deliberately
 // samples one step past each edge to test exposure there) by falling back
 // to World for anything horizontal that crosses into a neighboring chunk.
-// Vertical range never needs this - Chunk::getBlock's own bounds check
-// already returns Air above/below the world height correctly, no neighbor
-// chunk involved - so only lx/lz are tested here. The in-bounds case is a
-// plain array index (chunk.getBlock), same cost as before; only the two
-// edge planes per horizontal axis pay for a World lookup (chunk-map lookup
-// + shared_lock), not every sample.
+// Vertical range never needs this
 static Block GetBlockAcrossChunks(const Chunk& chunk, const World& world, int lx, int ly, int lz) {
     if (lx >= 0 && lx < CHUNK_SIZE_X && lz >= 0 && lz < CHUNK_SIZE_Z) {
         return chunk.getBlock(lx, ly, lz);
@@ -313,8 +289,7 @@ static void GreedyMeshAxis(const Chunk& chunk, const World& world, int axis, int
                 // The sweep also visits the planes on this section's/chunk's
                 // own outer boundary, where one of the two blocks is outside
                 // [rangeStart, rangeEnd). The neighbor owns that block's face
-                // and emits it in its own sweep, so skip it here - otherwise
-                // every boundary face is drawn twice.
+                // and emits it in its own sweep, so skip it here
                 bool aOutside = x[axis] < rangeStart[axis];
                 bool bOutside = x[axis] + 1 >= rangeEnd[axis];
 
@@ -464,9 +439,7 @@ Mesh ChunkMesher::MeshChunkSection(const Chunk& chunk, const World& world, const
             mesh.indexBytes = indexBufferSize;
         }
 
-        // Half a mesh is useless - give back whichever half did fit, and flag
-        // the failure (SlabBuffer already logged it) so the caller keeps the
-        // section's old mesh and retries instead of treating it as empty.
+        // Half a mesh is useless
         if (!vertexOk || !indexOk) {
             ReleaseMesh(mesh);
             mesh = Mesh{};

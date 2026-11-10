@@ -14,14 +14,10 @@ namespace Volcano::ChunkParser {
 // sky/block light arrays that follow the block entities. Heightmaps and
 // biomes are skipped/discarded (heightmaps are self-delimiting, not NBT, in
 // this protocol version), and block entities are read only far enough to
-// stay aligned with the light data after them - this client doesn't model
-// block entities yet. Assumes a standard overworld dimension (24 sections,
-// world Y -64..319); other dimension heights aren't handled yet.
+// stay aligned with the light data after them
 std::unique_ptr<Chunk> ParseChunkDataPacket(PacketReader& reader);
 
-// Parses a standalone "Update Light" packet - the server's follow-up after a
-// block change alters light. Sections in the "empty" masks come back as
-// zeroed arrays so light removal applies.
+// Parses a standalone "Update Light" packet
 PendingLightUpdate ParseLightUpdatePacket(PacketReader& reader);
 
 } // namespace Volcano::ChunkParser

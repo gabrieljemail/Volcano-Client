@@ -26,6 +26,12 @@ public:
     explicit Button(const std::string& label, ButtonPriority buttonPriority = ButtonPriority::NORMAL)
         : GUIComponent(GUIComponentType::BUTTON, label), priority(buttonPriority), hoverState(ButtonHoverState::NONE)
     {}
+    ~Button()
+    {
+    	// Necessary in case of heap allocations causing memory leaks.
+    	for (const auto& ptr : GetClickHandlers())
+     		delete ptr;
+    }
 
     virtual void AddClickHandler(std::function<void()>* callback) override { clickHandlers.push_back(callback); }
     virtual void RemoveClickHandler(std::function<void()>* callback) override { std::erase(clickHandlers, callback); }

@@ -16,13 +16,7 @@ namespace Volcano::Engine::Passes {
 // Every mesh of a list lives in the same two slab buffers (see SlabBuffer), so
 // a section is just a VkDrawIndexedIndirectCommand pointing into them
 // (firstIndex/vertexOffset from the mesh's slab offsets). What used to be the
-// per-draw push constant - the section's world origin and its fade - goes in a
-// per-instance vertex attribute instead: one vec4 (xyz origin, w fade) per
-// section, selected by firstInstance (needs drawIndirectFirstInstance). See
-// terrain_indirect.vert / misc_indirect.vert.
-//
-// Both buffers are host-visible and rewritten every frame, one set per frame
-// in flight so the GPU never reads what the CPU is writing. Render-thread only.
+// per-draw push constant
 class ChunkDrawBatch {
 public:
     static constexpr uint32_t FRAMES = 3;        // >= maxFramesInFlight
@@ -34,7 +28,10 @@ public:
     // Writes the commands/instance data for `meshes` and records the draws.
     // `vertexStride` is the mesh vertex size in bytes (slab vertex offsets are
     // always multiples of it). Returns the triangles submitted.
-    uint64_t Draw(VkCommandBuffer cmd, uint32_t frameIndex, const std::vector<const Mesh*>& meshes, VkDeviceSize vertexStride);
+    // `groupByBuffer` reorders the draws so meshes in the same slab blocks are adjacent, which turns one draw call per
+    // block change into one per block pair. Only for depth-tested opaque lists: the order of a blended list matters.
+    uint64_t Draw(VkCommandBuffer cmd, uint32_t frameIndex, const std::vector<const Mesh*>& meshes, VkDeviceSize vertexStride,
+        bool groupByBuffer = false);
 
 private:
     AllocatedBuffer instances[FRAMES]{};

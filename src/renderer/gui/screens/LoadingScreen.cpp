@@ -19,7 +19,7 @@ constexpr float LOG_MARGIN = 32.0f;
 constexpr float LOG_PADDING = 6.0f;
 constexpr float BUTTON_WIDTH = 240.0f;
 constexpr size_t MAX_DISPLAYED_LINES = 150; // Only the tail: the backlog is capped much higher, and this redraws as it grows.
-constexpr std::chrono::seconds CANCEL_AFTER{ 15 };
+constexpr std::chrono::seconds CANCEL_AFTER{ 5 };
 
 // What the screen shows, and what it needs to tell what changed.
 struct LoadingState {

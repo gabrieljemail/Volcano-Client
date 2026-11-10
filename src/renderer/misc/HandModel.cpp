@@ -337,7 +337,7 @@ void HandModel::CreatePipeline(const Engine::ShaderLibrary& shaders)
 void HandModel::DrawArm(VkCommandBuffer cmd, const ArmMesh& mesh, const glm::mat4& mvp, float brightness)
 {
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    VkDescriptorSet skinSet = EntityRenderer::GetDefaultSkinSet();
+    VkDescriptorSet skinSet = EntityRenderer::GetLocalSkinSet();
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &skinSet, 0, nullptr);
     VkDeviceSize vertexOffset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &vertexOffset);
@@ -531,7 +531,7 @@ void HandModel::Record(Engine::FrameContext& frame)
 
         state->itemRenderer->RecordItem(cmd, item->name,
             rightArm ? "firstperson_righthand" : "firstperson_lefthand", m, proj,
-            RotateX(glm::mat4(1.0f), HELD_ITEM_PITCH_DEGREES), 1.0f - handLight);
+            RotateX(glm::mat4(1.0f), HELD_ITEM_PITCH_DEGREES), 1.0f - handLight, stack.glint);
     }
 
     VkViewport fullViewport{ 0.0f, 0.0f, width, height, 0.0f, 1.0f };

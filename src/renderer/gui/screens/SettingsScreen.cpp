@@ -154,6 +154,8 @@ Screen* CreateVideoScreen(GlobalState* state, Screen* settingsScreen)
         "Sways the view and your hand with each step as you walk."));
     screen->components.push_back(WithTooltip(MakeToggle(config, "Body View (Experimental)", "Graphics.BodyView", false),
         "Shows your own animated body and arms in first person, as others see you in third person, instead of the floating hand."));
+    screen->components.push_back(WithTooltip(MakeSlider(config, "Damage Tilt", "Graphics.DamageTilt", 0, 100, 100, "%"),
+        "How far the view rolls when you take a hit. 0 turns it off."));
     screen->components.push_back(WithTooltip(MakeSlider(config, "Hand Scale", "Graphics.HandScale", 25, 200, 100, "%"),
         "Size of the held item and hand in first person."));
     screen->components.push_back(WithTooltip(MakeToggle(config, "Left Handed", "Graphics.LeftHanded", false),

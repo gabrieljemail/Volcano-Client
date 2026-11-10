@@ -13,8 +13,7 @@ namespace Volcano::SplashScreen {
 // slow synchronous startup work.
 //
 // Never throws: a missing/unreadable splash image, or any Vulkan call
-// along the way failing, is logged and simply skipped - a missing splash
-// screen isn't worth failing startup over.
+// along the way failing, is logged and simply skipped
 void Show();
 
 // Pumps the GLFW event queue (keeps the window from going "Not Responding")

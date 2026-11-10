@@ -7,12 +7,7 @@
 
 namespace Volcano::Engine::Passes {
 
-// GlobalState::entities - the batched placeholder-cube draw plus the
-// per-entity skinned humanoid draw. A thin adapter: EntityRenderer keeps
-// doing the work, this just ties its Init/ReloadPipelines/Shutdown to the
-// pass lifecycle. Shares the terrain pass's depth attachment, so draw
-// order relative to it doesn't affect occlusion - see EntityRenderer's
-// header. Shaders: entity.* and entity_textured.*.
+// GlobalState::entities
 class EntityPass : public RenderPass {
 public:
     static constexpr const char* NAME = "Entities";

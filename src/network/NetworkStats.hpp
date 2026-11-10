@@ -9,12 +9,7 @@
 
 namespace Volcano {
 
-// Live counters for the F3 debug HUD's "Network" category — what actually went
-// over the wire, to tell "the server stopped sending" apart from "the client
-// stopped handling it". Written by Connection on the network thread (and by
-// whoever queues a packet), read by the HUD; every field is its own atomic, so
-// no locking. Packet ids (0..PACKET_ID_SLOTS-1) index the per-id counters;
-// ids beyond that are only counted in the totals.
+// Live counters for the F3 debug HUD's "Network" category
 struct NetworkStats
 {
     static constexpr size_t PACKET_ID_SLOTS = 256;

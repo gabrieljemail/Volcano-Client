@@ -11,6 +11,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include "EntityJsonModel.hpp"
+#include "BodyRotation.hpp"
 
 namespace Volcano::EntityAnimation {
 
@@ -33,6 +34,8 @@ struct Roles {
     int rightLeg = -1, leftLeg = -1;
     int rightHindLeg = -1, leftHindLeg = -1, rightFrontLeg = -1, leftFrontLeg = -1;
     bool legged = false; // Four-legged walkers; spiders keep their splayed legs still.
+    int leftWing = -1, rightWing = -1, leftWingTip = -1, rightWingTip = -1, tail = -1, tailTip = -1; // Phantom.
+    int wind = -1, windCharge = -1; // Wind charge: two parts that spin against each other.
 };
 
 inline Roles FindRoles(const std::vector<EntityJsonModel::PartInfo>& parts)
@@ -54,6 +57,14 @@ inline Roles FindRoles(const std::vector<EntityJsonModel::PartInfo>& parts)
         else if (name == "right_front_leg") roles.rightFrontLeg = index;
         else if (name == "left_front_leg") roles.leftFrontLeg = index;
         else if (name == "right_middle_hind_leg") spider = true;
+        else if (name == "left_wing_base") roles.leftWing = index;
+        else if (name == "right_wing_base") roles.rightWing = index;
+        else if (name == "left_wing_tip") roles.leftWingTip = index;
+        else if (name == "right_wing_tip") roles.rightWingTip = index;
+        else if (name == "tail_base") roles.tail = index;
+        else if (name == "tail_tip") roles.tailTip = index;
+        else if (name == "wind") roles.wind = index;
+        else if (name == "wind_charge") roles.windCharge = index;
     }
     roles.legged = !spider;
     return roles;
@@ -99,6 +110,12 @@ struct WalkState {
     // Posture as the last real draw posed it, for the shadow pass to match.
     Posture posture = Posture::Standing;
     float headXRot = 0.0f;
+    float headYRot = 0.0f;
+    float bodyYaw = 0.0f;       // Radians the body was drawn at, for the shadow pass.
+    bool bodyDrawn = false;
+    BodyRotation body;          // Remote entities' body turning, as the local player's.
+    std::chrono::steady_clock::time_point bodyTime{};
+    float moveYaw = 0.0f;       // Degrees, the last direction moved in.
     bool riding = false;
     bool ridingBoat = false;
 
@@ -146,6 +163,25 @@ inline Pose ComputePose(const Roles& roles, const Inputs& in)
     {
         head->x = in.headXRot + (-PI / 4.0f - in.headXRot) * swim;
         head->y = in.headYRot;
+    }
+
+    // Phantom: wings beat 16 degrees either side of level, and the tail sways with a doubled beat (vanilla's
+    // PhantomModel.setupAnim, 7.448 degrees of phase per tick).
+    {
+        float anim = in.ageTicks * 7.448451f * (PI / 180.0f);
+        float flap = std::cos(anim) * 16.0f * (PI / 180.0f);
+        if (glm::vec3* r = rot(roles.leftWing)) r->z = flap;
+        if (glm::vec3* r = rot(roles.leftWingTip)) r->z = flap;
+        if (glm::vec3* r = rot(roles.rightWing)) r->z = -flap;
+        if (glm::vec3* r = rot(roles.rightWingTip)) r->z = -flap;
+        float sway = -(5.0f + std::cos(anim * 2.0f) * 5.0f) * (PI / 180.0f);
+        if (glm::vec3* r = rot(roles.tail)) r->x = sway;
+        if (glm::vec3* r = rot(roles.tailTip)) r->x = sway;
+
+        // Wind charge: 16 degrees a tick, the shell one way and the core the other.
+        float spin = in.ageTicks * 16.0f * (PI / 180.0f);
+        if (glm::vec3* r = rot(roles.wind)) r->y = spin;
+        if (glm::vec3* r = rot(roles.windCharge)) r->y = -spin;
     }
 
     // Four-legged walkers: diagonal pairs swing together.

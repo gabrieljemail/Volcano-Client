@@ -28,10 +28,7 @@ struct EntityMeshVertex
 // EntityRenderer::BuildCubeMesh's single hard-coded unit box; every
 // procedural entity mesh should build its boxes through this rather than
 // re-deriving the winding by hand. Winding: per face, u x v == normal,
-// corners taken in (-u,-v)->(+u,-v)->(+u,+v)->(-u,+v) order - CCW seen from
-// outside, required for VulkanInit's entity rasterizer state
-// (VK_FRONT_FACE_COUNTER_CLOCKWISE + VK_CULL_MODE_BACK_BIT) to cull the
-// right faces instead of turning the box inside-out.
+// corners taken in (-u,-v)->(+u,-v)->(+u,+v)->(-u,+v) order
 inline void AppendBox(std::vector<EntityMeshVertex>& vertices, std::vector<uint32_t>& indices,
     const glm::vec3& center, const glm::vec3& size)
 {

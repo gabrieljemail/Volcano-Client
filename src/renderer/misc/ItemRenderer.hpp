@@ -48,7 +48,8 @@ public:
 
     // Renders the item's icon. Returns false (and leaves `out` null) if the
     // item has no 3D model, so the caller can fall back to its 2D texture.
-    bool RenderGuiIcon(const std::string& itemName, IconImage& out);
+    // `glint` bakes one still frame of the enchantment overlay in.
+    bool RenderGuiIcon(const std::string& itemName, IconImage& out, bool glint = false);
 
     // True if the item has a drawable 3D model.
     bool HasModel(const std::string& itemName) const;
@@ -66,11 +67,12 @@ public:
     // Draws an item inside the main pass: `placement` * the model's display
     // transform for `context` ("ground", "firstperson_righthand", ...), then
     // `viewProj`. Needs viewport/scissor already set by the caller.
+    // `glint` adds the scrolling enchantment overlay.
     // `pivotRotation` turns the item in place about its own center, in
     // `placement` space, after the display transform.
     void RecordItem(VkCommandBuffer cmd, const std::string& itemName, const std::string& context,
                     const glm::mat4& placement, const glm::mat4& viewProj,
-                    const glm::mat4& pivotRotation = glm::mat4(1.0f), float darkness = 0.0f);
+                    const glm::mat4& pivotRotation = glm::mat4(1.0f), float darkness = 0.0f, bool glint = false);
 
 private:
     struct GpuBuffer {
@@ -92,6 +94,10 @@ private:
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipeline worldPipeline = VK_NULL_HANDLE; // Same shaders, targeting the main render pass.
+    VkPipeline glintPipeline = VK_NULL_HANDLE; // The enchantment overlay, drawn over worldPipeline's depth.
+    VkPipelineLayout glintPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline iconGlintPipeline = VK_NULL_HANDLE; // Glint for the icon render pass, built on first use.
+    const Engine::ShaderLibrary* shaderLibrary = nullptr;
 
     // Shared depth buffer for the icon passes (each pass clears it).
     VkImage depthImage = VK_NULL_HANDLE;
@@ -102,7 +108,7 @@ private:
 
     void CreateRenderPass();
     void CreateDepthBuffer();
-    VkPipeline BuildPipeline(const Engine::ShaderLibrary& shaders, VkRenderPass pass);
+    VkPipeline BuildPipeline(const Engine::ShaderLibrary& shaders, VkRenderPass pass, bool glint = false);
     GpuBuffer UploadBuffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage);
     const GpuMesh* MeshFor(const std::string& itemName, const ItemModel& model);
 };

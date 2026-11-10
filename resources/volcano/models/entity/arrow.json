@@ -1,0 +1,89 @@
+{
+    "_comment": "ArrowModel.createBodyLayer, 32x32. Two crossed planes and a tail fin, pre-turned by vanilla's yaw - 90 so the tip points along the entity's heading.",
+    "textureWidth": 32,
+    "textureHeight": 32,
+    "feetY": 0.0,
+    "boxes": [
+        {
+            "name": "back",
+            "origin": [
+                -11.0,
+                -2.0,
+                -2.0
+            ],
+            "size": [
+                0,
+                4,
+                4
+            ],
+            "uv": [
+                0,
+                0
+            ],
+            "pivot": [
+                0,
+                0,
+                0
+            ],
+            "rotation": [
+                45,
+                90,
+                0
+            ]
+        },
+        {
+            "name": "cross_1",
+            "origin": [
+                -12,
+                -2,
+                0
+            ],
+            "size": [
+                16,
+                4,
+                0
+            ],
+            "uv": [
+                0,
+                0
+            ],
+            "pivot": [
+                0,
+                0,
+                0
+            ],
+            "rotation": [
+                45,
+                90,
+                0
+            ]
+        },
+        {
+            "name": "cross_2",
+            "origin": [
+                -12,
+                -2,
+                0
+            ],
+            "size": [
+                16,
+                4,
+                0
+            ],
+            "uv": [
+                0,
+                0
+            ],
+            "pivot": [
+                0,
+                0,
+                0
+            ],
+            "rotation": [
+                135,
+                90,
+                0
+            ]
+        }
+    ]
+}

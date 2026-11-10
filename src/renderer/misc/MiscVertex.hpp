@@ -12,17 +12,12 @@ namespace Volcano {
 // Vertex format for the non-cubic render pass (see NonCubicMesher and
 // misc.vert/misc.frag). Unlike PackedVertex, this geometry (cross
 // billboards, partial-volume boxes) needs sub-block-fraction positions,
-// which don't fit PackedVertex's integer bitfield encoding - so position is
-// a plain float vec3 here, with texture layer/light/biome-tint packed into
-// one uint the same way PackedVertex packs its own word1.
+// which don't fit PackedVertex's integer bitfield encoding
 struct MiscVertex {
     glm::vec3 position; // Chunk-local block-space position; the model matrix places the chunk in the world, same as terrain vertices.
-    glm::vec2 uv;        // 0..1 per face - non-cube quads are never greedy-merged, so no tiling repeat is needed.
+    glm::vec2 uv;        // 0..1 per face
     // textureLayer (bits 0-15), blockLight (bits 16-19), skyLight (bits
-    // 20-23), tintMode (bits 24-26 - BiomeColors.hpp's BiomeTint: 0=none,
-    // 1=foliage, 2=water, 3=grass, 4-6=fixed colors) - same split and same reason as PackedVertex's
-    // word1 (see terrain.frag's own comment on why the two light channels
-    // stay separate all the way to the shader).
+    // 20-23), tintMode (bits 24-26
     uint32_t packed;
 
     static uint32_t Pack(uint16_t textureLayer, uint8_t skyLight, uint8_t blockLight, uint8_t tintMode) {

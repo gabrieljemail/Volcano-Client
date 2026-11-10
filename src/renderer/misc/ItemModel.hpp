@@ -52,8 +52,7 @@ public:
     // The model's display transform for `context` ("gui", "ground",
     // "firstperson_righthand", "thirdperson_righthand", "fixed", ...) as a
     // matrix: translate * rotate(X, Y, Z) * scale, then recentred so the
-    // model's middle sits at the origin - same order as vanilla's
-    // ItemTransform.apply. Identity-ish if the model has no entry for it.
+    // model's middle sits at the origin
     glm::mat4 DisplayMatrix(const std::string& context) const;
 
 private:

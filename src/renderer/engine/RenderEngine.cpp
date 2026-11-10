@@ -80,8 +80,7 @@ void RenderEngine::SetShaderPack(const std::string& packName)
 {
     shaders.SetActivePack(packName);
 
-    // Persist what actually took effect - a pack that doesn't exist falls
-    // back to "" rather than being saved and failing again next launch.
+    // Persist what actually took effect
     state->config->Set("Graphics.ShaderPack", shaders.GetActivePack());
     state->config->Save();
 
@@ -166,8 +165,7 @@ bool RenderEngine::HasEnabledPass(PassStage stage) const
 
 void RenderEngine::RecordPasses(FrameContext& frame, PassStage stage)
 {
-    // See GlobalState::trianglesDrawn's own comment - each pass adds to this
-    // as it records its own draw calls.
+    // See GlobalState::trianglesDrawn's own comment
     if (stage == PassStage::PRE_MAIN && frame.state && frame.state->debugHudVisible)
     {
         for (uint64_t& count : frame.state->trianglesDrawn) count = 0;

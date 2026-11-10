@@ -35,7 +35,7 @@ namespace Volcano::Engine::Vulkan {
 void VulkanRenderEngine::Init()
 {
     // Window, instance, device, swapchain, render pass, descriptor sets,
-    // command buffers, sync objects - everything but pipelines.
+    // command buffers, sync objects
     ::Init(state);
     initialized = true;
 
@@ -342,8 +342,7 @@ void VulkanRenderEngine::StopRendering()
     // The last submitted frame's command buffer may still be executing on
     // the GPU (fences are only waited on at the *start* of the next frame,
     // which never comes once the frame loop has exited) and it references
-    // ImGui's descriptor pool/pipeline and every pass's pipelines - all
-    // destroyed outright below.
+    // ImGui's descriptor pool/pipeline and every pass's pipelines
     WaitIdle();
 
     if (guiAttached)
@@ -451,8 +450,7 @@ void VulkanRenderEngine::SubmitFrame(const SceneView& scene)
     occlusionSnapshot.collectStats = profile;
 
     // This slot's fence was waited in BeginFrame, so its Hi-Z readback from
-    // a couple of frames ago is done - publish it before the chunk passes
-    // cull against it.
+    // a couple of frames ago is done
     hizBuildPass.BeginFrame(currentFrame);
     // Past this slot's fence wait: lets SlabBuffer reuse regions freed
     // enough frames ago (see SlabBuffer::FREE_DELAY_FRAMES).
@@ -598,7 +596,7 @@ void VulkanRenderEngine::EndMainPass(VkCommandBuffer cmd)
 {
     vkCmdEndRenderPass(cmd);
     // vkEndCommandBuffer is NOT here: SubmitFrame still records HiZBuildPass
-    // after the render pass ends - see its own vkEndCommandBuffer call.
+    // after the render pass ends
 }
 
 void VulkanRenderEngine::RecordScreenshotCopy(VkCommandBuffer cmd)

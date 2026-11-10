@@ -4,6 +4,7 @@
 #include "../Logger.hpp"
 #include "NetworkStats.hpp"
 #include "models/PacketEvent.hpp"
+#include <openssl/evp.h>
 #include <zlib.h>
 #include <filesystem>
 #include <iomanip>
@@ -17,11 +18,7 @@ namespace {
 // Vanilla's own MAX_PACKET_SIZE, applied to both the wire frame length and a
 // compressed packet's declared uncompressed size. Both numbers come straight
 // off the socket before a single byte of them has been validated, and both
-// are fed directly to a vector's sizing constructor - so without this, one
-// desynced byte anywhere in the stream (exactly what the Set Container Slot
-// VarInt-vs-i16 misread produced before it was fixed) turns the next "length"
-// into garbage and asks for an allocation of up to 2 GiB. That's a hard
-// crash or a swap-storm instead of a clean, catchable "malformed packet".
+// are fed directly to a vector's sizing constructor
 constexpr int32_t MAX_PACKET_SIZE = 2097152;
 
 // Validates a length field read off the wire before it's used to size a
@@ -60,6 +57,53 @@ std::vector<uint8_t> ZlibDecompress(const uint8_t* data, size_t size, int32_t un
 
 } // namespace
 
+struct Connection::Cipher
+{
+    EVP_CIPHER_CTX* encrypt = EVP_CIPHER_CTX_new();
+    EVP_CIPHER_CTX* decrypt = EVP_CIPHER_CTX_new();
+    ~Cipher()
+    {
+        EVP_CIPHER_CTX_free(encrypt);
+        EVP_CIPHER_CTX_free(decrypt);
+    }
+};
+
+Connection::Connection(asio::io_context& ioContext) : socket(ioContext) {}
+
+Connection::~Connection() = default;
+
+void Connection::EnableEncryption(const std::array<uint8_t, 16>& sharedSecret)
+{
+    auto created = std::make_unique<Cipher>();
+    if (EVP_EncryptInit_ex(created->encrypt, EVP_aes_128_cfb8(), nullptr, sharedSecret.data(), sharedSecret.data()) != 1
+        || EVP_DecryptInit_ex(created->decrypt, EVP_aes_128_cfb8(), nullptr, sharedSecret.data(), sharedSecret.data()) != 1)
+    {
+        throw std::runtime_error("Couldn't start the connection's encryption");
+    }
+    cipher = std::move(created);
+}
+
+void Connection::ReadExact(uint8_t* destination, size_t count)
+{
+    asio::read(socket, asio::buffer(destination, count));
+    if (cipher == nullptr || count == 0) return;
+    int written = 0;
+    EVP_DecryptUpdate(cipher->decrypt, destination, &written, destination, static_cast<int>(count));
+}
+
+void Connection::WriteAll(const std::vector<uint8_t>& data)
+{
+    if (cipher == nullptr)
+    {
+        asio::write(socket, asio::buffer(data));
+        return;
+    }
+    std::vector<uint8_t> sealed(data.size());
+    int written = 0;
+    EVP_EncryptUpdate(cipher->encrypt, sealed.data(), &written, data.data(), static_cast<int>(data.size()));
+    asio::write(socket, asio::buffer(sealed));
+}
+
 void Connection::SendPacket(int32_t packetId, const std::vector<uint8_t>& payload)
 {
     LogPacket("C2S", packetId, payload.data(), payload.size());
@@ -81,8 +125,7 @@ void Connection::QueuePacket(int32_t packetId, std::vector<uint8_t> payload)
 void Connection::FlushOutbound()
 {
     // Swap the queue out under the lock and write outside it, so a
-    // cross-thread QueuePacket() never blocks behind a socket write - and so
-    // a throw from SendPacket below can't leave the lock held.
+    // cross-thread QueuePacket() never blocks behind a socket write
     std::vector<std::pair<int32_t, std::vector<uint8_t>>> pending;
     {
         std::lock_guard<std::mutex> lock(outboundMutex);
@@ -106,7 +149,7 @@ void Connection::SendUncompressed(int32_t packetId, const std::vector<uint8_t>& 
     framed.WriteVarInt(static_cast<int32_t>(idAndPayload.Data().size()));
     framed.WriteBytes(idAndPayload.Data().data(), idAndPayload.Data().size());
 
-    asio::write(socket, asio::buffer(framed.Data()));
+    WriteAll(framed.Data());
 }
 
 void Connection::SendCompressed(int32_t packetId, const std::vector<uint8_t>& payload)
@@ -133,13 +176,13 @@ void Connection::SendCompressed(int32_t packetId, const std::vector<uint8_t>& pa
     framed.WriteVarInt(static_cast<int32_t>(body.Data().size()));
     framed.WriteBytes(body.Data().data(), body.Data().size());
 
-    asio::write(socket, asio::buffer(framed.Data()));
+    WriteAll(framed.Data());
 }
 
 uint8_t Connection::ReadByteBlocking()
 {
     uint8_t byte;
-    asio::read(socket, asio::buffer(&byte, 1));
+    ReadExact(&byte, 1);
     return byte;
 }
 
@@ -191,8 +234,7 @@ bool Connection::WaitForReadable(std::chrono::milliseconds timeout)
 int32_t Connection::ReadPacketRaw(std::vector<uint8_t>& outPayload)
 {
     // The length-prefix VarInt precedes everything else in the frame, so it
-    // has to be read one byte at a time straight off the socket - there's
-    // nothing to size a bulk read against yet.
+    // has to be read one byte at a time straight off the socket
     int32_t length = 0;
     int shift = 0;
     while (true) {
@@ -204,7 +246,7 @@ int32_t Connection::ReadPacketRaw(std::vector<uint8_t>& outPayload)
     }
 
     std::vector<uint8_t> body(static_cast<size_t>(CheckedLength(length, "packet length")));
-    asio::read(socket, asio::buffer(body));
+    ReadExact(body.data(), body.size());
 
     PacketReader reader(body.data(), body.size());
     int32_t packetId = reader.ReadVarInt();
@@ -225,7 +267,7 @@ int32_t Connection::ReadPacketCompressed(std::vector<uint8_t>& outPayload)
     }
 
     std::vector<uint8_t> body(static_cast<size_t>(CheckedLength(packetLength, "packet length")));
-    asio::read(socket, asio::buffer(body));
+    ReadExact(body.data(), body.size());
 
     PacketReader outer(body.data(), body.size());
     int32_t dataLength = outer.ReadVarInt();

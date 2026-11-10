@@ -65,9 +65,7 @@ VkShaderModule CreateShaderModuleFromFile(const std::string& path)
 }
 
 // Standalone allocation, never registered in VulkanInit's shared
-// `allocatedBuffers` list - everything this file creates is torn down by
-// hand in Hide(), same reasoning EntityRenderer's own CreateOwnedBuffer
-// gives for doing the same.
+// `allocatedBuffers` list
 bool CreateOwnedBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA, AllocatedBuffer& out)
 {
     VkBufferCreateInfo bufferInfo{};
@@ -396,7 +394,7 @@ void Show()
 
         VkPipelineShaderStageCreateInfo stages[] = { vertStage, fragStage };
 
-        // No vertex buffer - see splash.vert's own comment.
+        // No vertex buffer
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 
@@ -426,8 +424,7 @@ void Show()
         multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
         // This draws into the same render pass/subpass as the terrain pass,
-        // which has a depth attachment - the pipeline still needs a valid
-        // (if inert) depth-stencil state to be compatible with it.
+        // which has a depth attachment
         VkPipelineDepthStencilStateCreateInfo depthStencil{};
         depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
         depthStencil.depthTestEnable = VK_FALSE;

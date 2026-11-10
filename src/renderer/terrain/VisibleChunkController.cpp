@@ -35,8 +35,7 @@ VisibleChunkController::Frustum VisibleChunkController::ExtractFrustum(const glm
 
 // "Positive vertex" AABB-vs-plane test: for each plane, pick the box corner
 // furthest along the plane's inward normal and reject the box only if even
-// that corner is outside - a box straddling a plane (the common case at
-// frustum edges) survives, which is what a conservative cull needs.
+// that corner is outside
 bool VisibleChunkController::AabbIntersectsFrustum(const glm::vec3& min, const glm::vec3& max, const Frustum& frustum)
 {
     for (const glm::vec4& plane : frustum.planes)
@@ -78,8 +77,7 @@ std::vector<const Mesh*> VisibleChunkController::GetVisibleMeshes(
         }
 
         // Hi-Z occlusion: drop sections fully hidden behind nearer
-        // geometry, per the pyramid from a couple of frames ago - see
-        // OcclusionSnapshot's own comment on the lag and why it's safe.
+        // geometry, per the pyramid from a couple of frames ago
         if (occlusionSnapshot.collectStats) occlusionSnapshot.tested++;
         if (occlusionSnapshot.IsOccluded(sectionMin, sectionMax))
         {

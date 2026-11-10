@@ -45,9 +45,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
     constexpr auto kTickInterval = std::chrono::milliseconds(50); // 1/20s, matching TickLoop::FIXED_DT.
 
     // Edge-triggered off worldReady exactly like the block this replaced in
-    // NetworkClient::RunPlayLoop - re-arms on every Respawn/dimension change
-    // too (worldReady resets - see GlobalState::ResetWorldState), the same
-    // as a real client re-declaring itself loaded into the new world.
+    // NetworkClient::RunPlayLoop
     bool playerLoadedSent = false;
 
     // The "what did I last tell the server" state LocalPlayer::sendPosition
@@ -77,29 +75,18 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
     {
         nextTick += kTickInterval;
 
-        // No TickLoop::Tick() call here - RenderThread drives the physics
-        // now; this loop just samples and reports it.
+        // No TickLoop::Tick() call here
         bool worldReady = state->worldReady.load();
 
         // Loaded via activeConnection rather than a member of this class:
         // the connection is owned by whichever NetworkClient is running this
         // session and can be replaced (reconnect) or vanish (disconnect) at
-        // any time - see GlobalState::activeConnection's own comment for why
-        // a shared_ptr load is what keeps it alive for exactly this long and
-        // no longer.
+        // any time
         std::shared_ptr<Connection> connection = state->activeConnection.load();
         if (connection)
         {
             // worldReady gates the MOVEMENT packet only, never the tick
-            // marker below it - the real client draws the same line
-            // (Minecraft::tick sends ClientTickEnd whenever a connection
-            // exists and it isn't paused, while LocalPlayer::tick gates its
-            // movement packets behind hasClientLoaded()). Skipping the
-            // marker while loading would leave NetworkClient's own
-            // post-teleport echo sitting in an unclosed tick, and the first
-            // movement packet sent after that would be the second
-            // position-bearing packet in it - the exact disconnect this
-            // whole arrangement exists to avoid.
+            // marker below it
             if (!worldReady)
             {
                 playerLoadedSent = false;
@@ -126,10 +113,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
 
                 // The camera's yaw/pitch turn the opposite way from
                 // Minecraft's own convention (see NetworkClient.cpp's
-                // AngleByteToRadians - the same reason incoming entity yaw
-                // bytes get negated on the way in), so both are negated on
-                // the way out too. Yaw is wrapped to -180..180 since the
-                // camera's own value accumulates without bound.
+                // AngleByteToRadians
                 glm::vec3 position = state->player->GetPosition();
                 float yaw = std::remainder(-state->player->camera.GetYaw(), 360.0f);
                 float pitch = -state->player->camera.GetPitch();
@@ -214,7 +198,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
                     PacketWriter writer;
                     writer.WriteVarInt(localEntityId);
                     writer.WriteVarInt(movement.sprinting ? START_SPRINTING : STOP_SPRINTING);
-                    writer.WriteVarInt(0); // jumpBoost - horse jumps only.
+                    writer.WriteVarInt(0); // jumpBoost
                     connection->QueuePacket(PlayC2S::PlayerCommand, writer.Data());
                     reportedSprinting = movement.sprinting;
                 }
@@ -229,11 +213,7 @@ void TickThread::ThreadEntry(std::stop_token stopToken)
                 }
             }
 
-            // Always last, and always sent - see PlayC2S::ClientTickEnd.
-            // This is what closes the client tick whatever movement packet
-            // was queued above (if any) belongs to; without it the server
-            // keeps attributing every movement packet to one unbounded tick
-            // and kicks on the second one.
+            // Always last, and always sent
             PacketWriter tickEnd;
             connection->QueuePacket(PlayC2S::ClientTickEnd, tickEnd.Data());
         }

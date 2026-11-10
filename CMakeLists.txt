@@ -23,6 +23,15 @@ endif()
 
 project(VolcanoClient LANGUAGES CXX)
 
+# Where prebuilt copies of GLFW, ZLIB, OpenSSL, Asio and OpenAL live (the maintainer's Windows layout). Anything not
+# found there comes from the system or is downloaded; see cmake/Dependencies.cmake. Set it empty to skip it.
+set(_default_libs "")
+if(EXISTS "C:/Apps/Libraries")
+    set(_default_libs "C:/Apps/Libraries")
+endif()
+set(VOLCANO_LIBS_DIR "${_default_libs}" CACHE PATH "Prebuilt third-party libraries; empty uses the system or downloads them")
+set(THIRD_PARTY "${CMAKE_SOURCE_DIR}/third_party") # ImGui, vk-bootstrap, VMA, nlohmann/json and stb, vendored.
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -45,14 +54,14 @@ endif()
 # plain `ninja` run instead of needing a manual CMake re-configure first.
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 list(APPEND SOURCES
-    "C:/Apps/Libraries/vk-bootstrap/src/VkBootstrap.cpp"
-    "C:/Apps/Libraries/ImGui/imgui.cpp"
-    "C:/Apps/Libraries/ImGui/imgui_demo.cpp"
-    "C:/Apps/Libraries/ImGui/imgui_draw.cpp"
-    "C:/Apps/Libraries/ImGui/imgui_tables.cpp"
-    "C:/Apps/Libraries/ImGui/imgui_widgets.cpp"
-    "C:/Apps/Libraries/ImGui/backends/imgui_impl_glfw.cpp"
-    "C:/Apps/Libraries/ImGui/backends/imgui_impl_vulkan.cpp"
+    "${THIRD_PARTY}/vk-bootstrap/src/VkBootstrap.cpp"
+    "${THIRD_PARTY}/imgui/imgui.cpp"
+    "${THIRD_PARTY}/imgui/imgui_demo.cpp"
+    "${THIRD_PARTY}/imgui/imgui_draw.cpp"
+    "${THIRD_PARTY}/imgui/imgui_tables.cpp"
+    "${THIRD_PARTY}/imgui/imgui_widgets.cpp"
+    "${THIRD_PARTY}/imgui/backends/imgui_impl_glfw.cpp"
+    "${THIRD_PARTY}/imgui/backends/imgui_impl_vulkan.cpp"
 )
 
 add_executable(${PROJECT_NAME} ${SOURCES})
@@ -66,13 +75,13 @@ set_target_properties(${PROJECT_NAME} PROPERTIES ENABLE_EXPORTS ON)
 # tools/gen_exports.py). The result is that mods can call any non-inline
 # method or function; polymorphic bases and shared data also carry VC_API.
 if(WIN32)
-    find_program(LLVM_NM llvm-nm HINTS "C:/Apps/Clang+LLVM/bin")
+    find_program(LLVM_NM llvm-nm HINTS "C:/Apps/Clang+LLVM/bin" "C:/Program Files/LLVM/bin")
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     set(EXPORTS_DEF "${CMAKE_BINARY_DIR}/${PROJECT_NAME}.exports.def")
     add_custom_command(TARGET ${PROJECT_NAME} PRE_LINK
         COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_exports.py"
             "${LLVM_NM}" "${CMAKE_BINARY_DIR}/CMakeFiles/${PROJECT_NAME}.dir/src" "${CMAKE_SOURCE_DIR}/src" "${EXPORTS_DEF}" "${PROJECT_NAME}.exe"
-            "${CMAKE_BINARY_DIR}/CMakeFiles/${PROJECT_NAME}.dir/C_/Apps/Libraries/ImGui"
+            "${CMAKE_BINARY_DIR}/CMakeFiles/${PROJECT_NAME}.dir/third_party/imgui"
         COMMENT "Listing exported symbols"
         VERBATIM)
     target_link_options(${PROJECT_NAME} PRIVATE "LINKER:/DEF:${EXPORTS_DEF}")
@@ -101,14 +110,14 @@ target_precompile_headers(${PROJECT_NAME} PRIVATE
 # warnings too, since -Wall -Wextra below applies per translation unit
 # and SYSTEM include dirs don't cover a file's own warnings.
 set_source_files_properties(
-    "C:/Apps/Libraries/vk-bootstrap/src/VkBootstrap.cpp"
-    "C:/Apps/Libraries/ImGui/imgui.cpp"
-    "C:/Apps/Libraries/ImGui/imgui_demo.cpp"
-    "C:/Apps/Libraries/ImGui/imgui_draw.cpp"
-    "C:/Apps/Libraries/ImGui/imgui_tables.cpp"
-    "C:/Apps/Libraries/ImGui/imgui_widgets.cpp"
-    "C:/Apps/Libraries/ImGui/backends/imgui_impl_glfw.cpp"
-    "C:/Apps/Libraries/ImGui/backends/imgui_impl_vulkan.cpp"
+    "${THIRD_PARTY}/vk-bootstrap/src/VkBootstrap.cpp"
+    "${THIRD_PARTY}/imgui/imgui.cpp"
+    "${THIRD_PARTY}/imgui/imgui_demo.cpp"
+    "${THIRD_PARTY}/imgui/imgui_draw.cpp"
+    "${THIRD_PARTY}/imgui/imgui_tables.cpp"
+    "${THIRD_PARTY}/imgui/imgui_widgets.cpp"
+    "${THIRD_PARTY}/imgui/backends/imgui_impl_glfw.cpp"
+    "${THIRD_PARTY}/imgui/backends/imgui_impl_vulkan.cpp"
     PROPERTIES COMPILE_OPTIONS "-w"
 )
 
@@ -120,36 +129,23 @@ set_source_files_properties(
 find_package(Vulkan REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan)
 
-# --- MANUAL SYSTEM HEADERS ---
+# --- THIRD-PARTY LIBRARIES (cmake/Dependencies.cmake) ---
 # SYSTEM tells the compiler these are third-party headers, so warnings
 # originating from inside them are suppressed even though -Wall -Wextra
 # is enabled for our own code below.
+include(cmake/Dependencies.cmake)
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
-    "C:/Apps/Libraries/GLFW/include"
-    "C:/Apps/Libraries/ZLIB"
-    "C:/Apps/Libraries/OpenSSL/include"
-    "C:/Apps/Libraries/Asio/include"
-    "C:/Apps/Libraries/STB"
-    "C:/Apps/Libraries/ImGui"
-    "C:/Apps/Libraries/ImGui/backends"
+    ${VOLCANO_DEP_INCLUDES}
+    "${THIRD_PARTY}"
+    "${THIRD_PARTY}/imgui"
+    "${THIRD_PARTY}/imgui/backends"
+    "${THIRD_PARTY}/vk-bootstrap/src"
+    "${THIRD_PARTY}/vma"
+    "${THIRD_PARTY}/stb"
 )
-
-# --- OPENAL ---
-if(WIN32)
-    target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
-        "C:/Apps/Libraries/OpenAL/include"
-    )
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(OPENAL_LIBRARY "C:/Apps/Libraries/OpenAL/libs/Win64/OpenAL32.lib")
-    else()
-        set(OPENAL_LIBRARY "C:/Apps/Libraries/OpenAL/libs/Win32/OpenAL32.lib")
-    endif()
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        "${OPENAL_LIBRARY}"
-    )
-elseif(UNIX)
-    find_package(OpenAL REQUIRED)
-    target_link_libraries(${PROJECT_NAME} PRIVATE OpenAL::OpenAL ${CMAKE_DL_LIBS})
+target_link_libraries(${PROJECT_NAME} PRIVATE ${VOLCANO_DEP_LIBS})
+if(UNIX)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 # --- PLATFORM LIBRARIES (src/platform) ---
@@ -161,26 +157,25 @@ elseif(UNIX)
     target_link_options(${PROJECT_NAME} PRIVATE -rdynamic)
 endif()
 
-# --- MANUAL LINK LIBRARIES ---
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    "C:/Apps/Libraries/GLFW/lib-vc2026/glfw3.lib"
-    "C:/Apps/Libraries/ZLIB/zlib.lib"
-    "C:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libcrypto.lib"
-    "C:/Apps/Libraries/OpenSSL/lib/VC/x64/MD/libssl.lib"
-)
-
 # --- PINCEL (the UI renderer, built from its own checkout) ---
 # Build it first (ninja in PINCEL_DIR, same build type as this). With a pincel.dll
 # there the client links it and copies it next to the exe, so rebuilding Pincel is
 # enough; without one it links the static libraries (rebuild the client to pick up changes).
 get_filename_component(PINCEL_DEFAULT_DIR "${CMAKE_SOURCE_DIR}/../Pincel" ABSOLUTE)
 set(PINCEL_DIR "${PINCEL_DEFAULT_DIR}" CACHE PATH "Pincel's source directory")
-set(PINCEL_BUILD_DIR "${PINCEL_DIR}/build" CACHE PATH "Where Pincel's build put pincel.lib and pincel.dll")
-if(NOT EXISTS "${PINCEL_BUILD_DIR}/pincel.lib")
-    message(FATAL_ERROR "Pincel isn't built: ${PINCEL_BUILD_DIR}/pincel.lib is missing. Run ninja in ${PINCEL_DIR}, or set -DPINCEL_DIR=<path>.")
+set(PINCEL_BUILD_DIR "${PINCEL_DIR}/build" CACHE PATH "Where Pincel's build put its library (and pincel.dll)")
+if(WIN32)
+    set(PINCEL_LIB_NAME pincel.lib)
+    set(PINCEL_CORE_LIB_NAME pincel_core.lib)
+else()
+    set(PINCEL_LIB_NAME libpincel.a)
+    set(PINCEL_CORE_LIB_NAME libpincel_core.a)
+endif()
+if(NOT EXISTS "${PINCEL_BUILD_DIR}/${PINCEL_LIB_NAME}")
+    message(FATAL_ERROR "Pincel isn't built: ${PINCEL_BUILD_DIR}/${PINCEL_LIB_NAME} is missing. Build it in ${PINCEL_DIR} (cmake, then ninja), or set -DPINCEL_DIR=<path>.")
 endif()
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE "${PINCEL_DIR}/src/pincel/cpp/include")
-if(EXISTS "${PINCEL_BUILD_DIR}/pincel.dll")
+if(WIN32 AND EXISTS "${PINCEL_BUILD_DIR}/pincel.dll")
     message(STATUS "Pincel: linking ${PINCEL_BUILD_DIR}/pincel.dll")
     target_compile_definitions(${PROJECT_NAME} PRIVATE PINCEL_SHARED)
     target_link_libraries(${PROJECT_NAME} PRIVATE "${PINCEL_BUILD_DIR}/pincel.lib")
@@ -194,10 +189,15 @@ else()
         set(PINCEL_RUST_PROFILE release)
     endif()
     # Rust's std needs these when linked from C++ (see Pincel's CMakeLists.txt).
+    if(WIN32)
+        set(PINCEL_SYSTEM_LIBS advapi32 bcrypt kernel32 ntdll userenv ws2_32 synchronization)
+    else()
+        set(PINCEL_SYSTEM_LIBS ${CMAKE_DL_LIBS} pthread m)
+    endif()
     target_link_libraries(${PROJECT_NAME} PRIVATE
-        "${PINCEL_BUILD_DIR}/pincel.lib"
-        "${PINCEL_DIR}/cargo/${PINCEL_RUST_PROFILE}/pincel_core.lib"
-        advapi32 bcrypt kernel32 ntdll userenv ws2_32 synchronization)
+        "${PINCEL_BUILD_DIR}/${PINCEL_LIB_NAME}"
+        "${PINCEL_DIR}/cargo/${PINCEL_RUST_PROFILE}/${PINCEL_CORE_LIB_NAME}"
+        ${PINCEL_SYSTEM_LIBS})
 endif()
 
 # =============================================================================
@@ -212,17 +212,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/renderer/gui
 )
 
-target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE
-    lib/vk-bootstrap/src
-    lib/vulkanmemory/include
-    lib
-)
-
 if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # -fms-compatibility forces Clang to emulate the MSVC compiler bugs/features needed for MSVC STL
     target_compile_options(${PROJECT_NAME} PRIVATE
         -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions
-        -O2
+        -O3
         -g -gcodeview
     )
     # NDEBUG in every config unless VOLCANO_DEBUG_CHECKS asks for the checks (see the top of this file).
@@ -243,7 +237,7 @@ else()
     # devices, so it stays portable instead.
     target_compile_options(${PROJECT_NAME} PRIVATE
         -Wall -Wextra -pthread -ffast-math
-        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>
         $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-Og> $<$<NOT:$<CONFIG:Release>>:-march=native>
     )
 endif()
@@ -327,18 +321,13 @@ if(VOLCANO_BUILD_EXAMPLES)
     volcano_add_mod(hello_mod SOURCES sdk/examples/hello_mod/hello_mod.cpp)
 endif()
 
-# OpenSSL's libcrypto.lib/libssl.lib (linked above) are import libraries for
-# the shared-DLL ("MD") build of OpenSSL, not static libraries — the actual
-# code lives in libcrypto-4-x64.dll/libssl-4-x64.dll under OpenSSL's bin/,
-# which isn't on PATH. Without a copy alongside the exe, the loader fails
-# before main() runs (DLL not found), which is unrelated to anything the
-# app itself does at runtime.
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "C:/Apps/Libraries/OpenSSL/bin/libcrypto-4-x64.dll"
-        "C:/Apps/Libraries/OpenSSL/bin/libssl-4-x64.dll"
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>
-)
+# OpenSSL's .lib files from a prebuilt copy are import libraries for the shared-DLL build, so the DLLs have to sit
+# beside the exe or the loader fails before main() runs. Dependencies.cmake lists them when it used a prebuilt copy.
+if(VOLCANO_RUNTIME_DLLS)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VOLCANO_RUNTIME_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+    )
+endif()
 
 # =============================================================================
 # 5. NetDiag — standalone network-protocol diagnostic (no Vulkan/GLFW/GUI),
@@ -389,13 +378,13 @@ target_link_libraries(NetDiag PRIVATE
 if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(NetDiag PRIVATE
         -fms-compatibility -fms-extensions
-        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>
         $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-gcodeview> $<$<NOT:$<CONFIG:Release>>:-O0>
     )
 else()
     target_compile_options(NetDiag PRIVATE
         -pthread
-        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>
         $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-Og>
     )
 endif()

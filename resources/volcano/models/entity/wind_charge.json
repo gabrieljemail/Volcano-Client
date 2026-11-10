@@ -1,0 +1,86 @@
+{
+    "_comment": "WindChargeModel.createBodyLayer, 64x32. The wind shell and the core spin in opposite directions (EntityAnimation, by part name). feetY lifts the center half a hitbox off the ground.",
+    "textureWidth": 64,
+    "textureHeight": 32,
+    "feetY": -2.5,
+    "boxes": [
+        {
+            "name": "wind_outer",
+            "part": "wind",
+            "origin": [
+                -4,
+                -1,
+                -4
+            ],
+            "size": [
+                8,
+                2,
+                8
+            ],
+            "uv": [
+                15,
+                20
+            ],
+            "pivot": [
+                0,
+                0,
+                0
+            ],
+            "rotation": [
+                0,
+                45,
+                0
+            ]
+        },
+        {
+            "name": "wind_inner",
+            "part": "wind",
+            "origin": [
+                -3,
+                -2,
+                -3
+            ],
+            "size": [
+                6,
+                4,
+                6
+            ],
+            "uv": [
+                0,
+                9
+            ],
+            "pivot": [
+                0,
+                0,
+                0
+            ],
+            "rotation": [
+                0,
+                45,
+                0
+            ]
+        },
+        {
+            "name": "wind_charge",
+            "origin": [
+                -2,
+                -2,
+                -2
+            ],
+            "size": [
+                4,
+                4,
+                4
+            ],
+            "uv": [
+                0,
+                0
+            ],
+            "pivot": [
+                0,
+                0,
+                0
+            ]
+        }
+    ]
+}

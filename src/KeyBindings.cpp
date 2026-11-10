@@ -173,11 +173,19 @@ void KeyBindings::RegisterBuiltins()
     Register(Binding("Jump", "Jump", "Movement", "Space", { { "Jump", T::PRESS }, { "JumpHold", T::HOLD } }));
     Register(Binding("Sneak", "Sneak", "Movement", "Left Shift", { { "Sneak", T::HOLD } }));
     Register(Binding("Sprint", "Sprint", "Movement", "Left Control", { { "Sprint", T::HOLD } }));
+    // Vanilla's gesture: double-tap jump to toggle flight (each tap still
+    // jumps - the DOUBLE_TAP action fires on the second press only).
+    Register(Binding("Fly", "Toggle Flight", "Movement", "Space", { { "Fly", T::DOUBLE_TAP } }));
+    // Flight speed boost while held; the Sprint key does the same job by
+    // default, so this exists for players who want a separate key.
+    Register(Binding("FlyBoost", "Fly Speed Boost", "Movement", "None", { { "Move.FlyBoost", T::HOLD } }));
 
     Register(Binding("Attack", "Attack/Destroy", "Gameplay", "Left Mouse",
         { { "PrimaryActionPress", T::PRESS }, { "PrimaryAction", T::HOLD } }));
     Register(Binding("Use", "Use Item/Place Block", "Gameplay", "Right Mouse",
         { { "SecondaryAction", T::PRESS }, { "SecondaryActionHold", T::HOLD }, { "SecondaryActionRelease", T::RELEASE } }));
+    // When in creative mode, pressing this key puts the block you are looking at into your mainhand or inventory.
+    Register(Binding("PickBlock", "Pick Block", "Gameplay", "Middle Mouse", { { "PickBlock", T::RELEASE } }));
     // Tap drops one item, holding drops the stack (see RenderThread's drop key handling).
     Register(Binding("DropItem", "Drop Selected Item", "Gameplay", "Q",
         { { "DropItem", T::PRESS }, { "DropItemHold", T::HOLD }, { "DropItemRelease", T::RELEASE } }));

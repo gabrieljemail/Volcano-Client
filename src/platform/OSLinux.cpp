@@ -11,6 +11,7 @@
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <fstream>
+#include <iterator>
 #include <spawn.h>
 #include <string>
 #include <sys/resource.h>
@@ -61,6 +62,21 @@ bool RunDialogTool(const std::vector<std::string>& args)
     int status = 0;
     waitpid(pid, &status, 0);
     return WIFEXITED(status) && WEXITSTATUS(status) != 127;
+}
+
+// Runs a dialog tool and returns its exit code (0 is Yes), or -1 when it isn't installed.
+int RunDialogToolStatus(const std::vector<std::string>& args)
+{
+    std::vector<char*> argv;
+    for (const std::string& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
+    argv.push_back(nullptr);
+
+    pid_t pid;
+    if (posix_spawnp(&pid, argv[0], nullptr, nullptr, argv.data(), environ) != 0) return -1;
+    int status = 0;
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) == 127) return -1;
+    return WEXITSTATUS(status);
 }
 }
 
@@ -119,6 +135,11 @@ std::vector<std::string> OS::GetFallbackFontPaths()
         if (access(path, R_OK) == 0) paths.emplace_back(path);
     }
     return paths;
+}
+
+bool OS::SetMemoryPriority(int)
+{
+    return false; // No per-process page priority on Linux.
 }
 
 bool OS::SetAboveNormalPriority()
@@ -202,6 +223,97 @@ const char* OS::GetObjectExtension()
     return ".so";
 }
 
+bool OS::HttpRequest(const std::string& method, const std::string& url, const std::vector<std::string>& headers,
+    const std::string& requestBody, int& status, std::vector<uint8_t>& response, std::string& error,
+    const std::function<void(uint64_t, uint64_t)>& progress)
+{
+    response.clear();
+    status = 0;
+    if (url.rfind("https://", 0) != 0 || url.find_first_of("\"\\\r\n") != std::string::npos)
+    {
+        error = "Not a valid https address: " + url;
+        return false;
+    }
+
+    // Headers and body go through files (mode 0600), not argv, since they carry tokens.
+    char configName[] = "/tmp/volcano-http-XXXXXX";
+    char bodyName[] = "/tmp/volcano-body-XXXXXX";
+    char outName[] = "/tmp/volcano-out-XXXXXX";
+    int configFd = mkstemp(configName);
+    int bodyFd = mkstemp(bodyName);
+    int outFd = mkstemp(outName);
+    auto cleanup = [&]
+    {
+        for (int fd : { configFd, bodyFd, outFd })
+        {
+            if (fd >= 0) close(fd);
+        }
+        unlink(configName);
+        unlink(bodyName);
+        unlink(outName);
+    };
+    if (configFd < 0 || bodyFd < 0 || outFd < 0)
+    {
+        cleanup();
+        error = "Couldn't create temporary files.";
+        return false;
+    }
+
+    auto escape = [](const std::string& text)
+    {
+        std::string out;
+        for (char c : text)
+        {
+            if (c == '\r' || c == '\n') continue;
+            if (c == '"' || c == '\\') out += '\\';
+            out += c;
+        }
+        return out;
+    };
+    std::string config = "url = \"" + url + "\"\nrequest = \"" + escape(method) + "\"\nlocation\nmax-redirs = 5\nsilent\n"
+        "show-error\noutput = \"" + outName + "\"\nwrite-out = \"%{http_code}\"\n";
+    for (const std::string& header : headers) config += "header = \"" + escape(header) + "\"\n";
+    if (!requestBody.empty())
+    {
+        if (write(bodyFd, requestBody.data(), requestBody.size()) < 0)
+        {
+            cleanup();
+            error = "Couldn't write the request.";
+            return false;
+        }
+        config += std::string("data-binary = \"@") + bodyName + "\"\n";
+    }
+    if (write(configFd, config.data(), config.size()) < 0)
+    {
+        cleanup();
+        error = "Couldn't write the request.";
+        return false;
+    }
+
+    FILE* pipe = popen((std::string("curl -K ") + configName + " 2>/dev/null").c_str(), "r");
+    if (pipe == nullptr)
+    {
+        cleanup();
+        error = "Couldn't run curl; install it to sign in.";
+        return false;
+    }
+    char code[16]{};
+    size_t codeLength = fread(code, 1, sizeof(code) - 1, pipe);
+    int exitStatus = pclose(pipe);
+    status = codeLength > 0 ? std::atoi(code) : 0;
+
+    std::ifstream file(outName, std::ios::binary);
+    response.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    cleanup();
+    if (exitStatus != 0 || status == 0)
+    {
+        error = "The request failed (curl exit " + std::to_string(exitStatus) + ").";
+        return false;
+    }
+    if (progress) progress(response.size(), response.size());
+    return true;
+}
+
 bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string& error,
     const std::function<void(uint64_t, uint64_t)>& progress)
 {
@@ -241,6 +353,22 @@ bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string
         return false;
     }
     return true;
+}
+
+bool OS::ShowYesNoDialog(const std::string& title, const std::string& message)
+{
+    // Desktop tools first (exit code 0 is Yes), then the terminal.
+    int answer = RunDialogToolStatus({ "zenity", "--question", "--title=" + title, "--text=" + message });
+    if (answer < 0) answer = RunDialogToolStatus({ "kdialog", "--title", title, "--yesno", message });
+    if (answer >= 0) return answer == 0;
+    std::fprintf(stderr, "%s
+
+%s
+
+Type \"yes\" to accept, anything else to decline: ", title.c_str(), message.c_str());
+    char answer[16] = {};
+    if (std::fgets(answer, sizeof(answer), stdin) == nullptr) return false;
+    return std::strncmp(answer, "yes", 3) == 0;
 }
 
 bool OS::ShowConsentDialog(const std::string& title, const std::string& message, const std::string& agreeLabel)

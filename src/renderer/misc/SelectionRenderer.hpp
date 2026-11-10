@@ -20,24 +20,19 @@ public:
     // Creates the outline/fill pipelines (selection.vert/.frag, resolved
     // through shaders so a shader pack can replace them) and the shared
     // unit-cube mesh. Must run after VulkanInit's render pass and camera
-    // descriptor set layout exist - SelectionPass::Create() calls it once
-    // VulkanInit::Init() has returned.
+    // descriptor set layout exist
     static void Init(const Engine::ShaderLibrary& shaders);
 
-    // Rebuilds just the pipelines (mesh untouched) - for a shader reload.
-    // The GPU must be idle.
+    // Rebuilds just the pipelines (mesh untouched)
     static void ReloadPipelines(const Engine::ShaderLibrary& shaders);
 
     // Destroys everything Init() created; safe to call twice. Must run
-    // before the VMA allocator is destroyed - SelectionPass::Destroy() calls
-    // it from RenderEngine::StopRendering().
+    // before the VMA allocator is destroyed
     static void Shutdown();
 
     // No-op if nothing is targeted. Must be called inside an active render
     // pass with viewport/scissor already set, same contract as
-    // EntityRenderer::RecordDraw - drawn after the opaque/entity/non-cubic
-    // passes so it blends against whatever's actually there, including
-    // translucent surfaces like glass.
+    // EntityRenderer::RecordDraw
     static void RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state);
 };
 

@@ -7,6 +7,7 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 #include <Pincel/Pincel.hpp>
+#include "AccountPanel.hpp"
 #include "ImGuiInput.hpp"
 #include "PincelSurface.hpp"
 #include "models/Screen.hpp"
@@ -63,6 +64,10 @@ public:
 
     // Lays the finished screen over the frame, inside the main render pass.
     void Record(VkCommandBuffer commandBuffer);
+
+    // Whether a Pincel input on the current screen has keyboard focus - while
+    // it does, typed keys belong to the field, not to game keybinds like "E".
+    bool WantsKeyboard() const { return canvas != nullptr && canvas->WantsKeyboard(); }
 
     // Forgets the built screen so its images are read again (after a resource reload).
     void ReloadResources();
@@ -128,6 +133,7 @@ private:
     std::vector<Field> extraFields;            // From AddField.
     std::vector<Control> controls;
     ImGuiInput input;
+    AccountPanel accountPanel; // The account switcher, over every screen outside a world.
 
     Pincel::Element tooltip;
     Pincel::Element tooltipText;

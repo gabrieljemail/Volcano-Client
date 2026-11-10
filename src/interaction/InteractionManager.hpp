@@ -30,13 +30,7 @@ struct TargetedBlock {
     float distance;
 
     // Which of the 6 cubic faces the ray was looking at, as a unit normal
-    // (e.g. (0,1,0) for the top) - always computed against the block's
-    // full unit cube, regardless of its real collision shape, so a stair's
-    // riser (or any other internal sub-shape face) reports as whichever
-    // outer cube face it's part of, not its own shape-specific normal.
-    // That keeps "which face did you click" predictable for placement
-    // instead of exposing a shape's internal geometry - see RaycastBlocks'
-    // own comment.
+    // (e.g. (0,1,0) for the top)
     glm::ivec3 face;
 
     // Direction from this block toward wherever the ray was cast from (the
@@ -44,7 +38,7 @@ struct TargetedBlock {
     // own Direction.getNearest(x,y,z). The primitive most directional
     // blockstates (a furnace/dispenser's "facing", a stair's own facing,
     // ...) are derived from, once block placement actually dispatches
-    // something - nothing reads this yet.
+    // something
     glm::ivec3 relativeDirection;
 };
 
@@ -95,11 +89,10 @@ public:
     // half a tick ahead (0.5), the same way Player.attack does.
     float GetAttackStrengthScale(float partialTicks = 0.0f) const;
 
-    // What the most recent primary click did - see AttackType.
+    // What the most recent primary click did
     AttackType GetLastAttackType() const { return lastAttackType; }
 
-    // Current block selection target, if any - read by SelectionRenderer
-    // once per frame to draw the outline/fill. See RaycastSelection.
+    // Current block selection target, if any
     std::optional<TargetedBlock> GetTargetedBlock() const { return targetedBlock; }
     Color4i GetSelectionOutlineColor() const { return selectionOutline; }
     Color4i GetSelectionFillColor() const { return selectionFill; }
@@ -134,15 +127,11 @@ private:
     Vector3f handModelTransform{};
 
     // Closest thing RaycastSelection found the camera looking at, if
-    // anything - at most one of these is set (see RaycastSelection's own
-    // comment on picking whichever the ray reaches first).
+    // anything
     std::optional<TargetedBlock> targetedBlock;
     std::optional<uint32_t> targetedEntityId;
 
-    // A real (non-instant, non-creative) mining hold in progress - see
-    // BeginMining/ContinueMining/CancelMining. Absent whenever nothing's
-    // being mined: between clicks, during an instant break (creative or
-    // hardness-0), or while a real hold's dig timer hasn't started yet.
+    // A real (non-instant, non-creative) mining hold in progress
     struct MiningState {
         glm::ivec3 position;
         glm::ivec3 face;
@@ -175,7 +164,7 @@ private:
     Color4i selectionFill{255, 255, 255, 0.15f};
 
     // Re-reads mainhand/offhand (and the flags derived from them) from
-    // state->inventory under its mutex - see mainhand/offhand's own comment.
+    // state->inventory under its mutex
     void RefreshHeldItems();
 
     // Re-reads reachDistance/blockReachDistance from state->attributes -
@@ -184,13 +173,7 @@ private:
     void RefreshReach();
 
     // Primary trigger, split like secondary below: Start fires once per
-    // click (PrimaryActionPress) and is where attacks happen - vanilla only
-    // attacks on a click, never on a held button, which is what makes the
-    // attack cooldown something you time yourself. Hold (PrimaryAction) is
-    // where the mining state machine below keeps running across frames,
-    // since mining needs to keep going for as long as the button stays
-    // down. Update() handles the release-edge cancel neither of these sees,
-    // since Hold simply isn't called once the button is up.
+    // click (PrimaryActionPress) and is where attacks happen
     void PrimaryTriggerStart();
     void PrimaryTriggerHold();
 
@@ -223,21 +206,14 @@ private:
     void ContinueMining();
 
     // Ends `mining` early without breaking anything: sends CancelDigging (if
-    // a hold was actually in progress - a no-op otherwise) and clears it.
-    // Called whenever a hold stops being valid: the button was released, the
-    // crosshair moved off the block/face being mined, or an entity/nothing
-    // is now targeted instead.
+    // a hold was actually in progress
     void CancelMining();
 
     // Mirrors `mining` into GlobalState::miningTicksRequired/miningStartNs
     // for the tick thread's crosshair indicator.
     void PublishMining();
 
-    // Secondary is a use, not just a click - split the same way Jump/
-    // JumpHold are, but three ways: an instant item (a block, a bucket)
-    // only ever needs Start plus Hold's own repeat (see DispatchUse); a
-    // continuous one (food, a shield, a bow) needs Hold to keep going and
-    // Release to know when it stopped early.
+    // Secondary is a use, not just a click
     void SecondaryTriggerStart();
     void SecondaryTriggerHold();
     void SecondaryTriggerRelease();
@@ -265,7 +241,7 @@ private:
     // The item in `hand`, from the per-frame snapshot.
     const ItemStack& HeldItem(Hand hand) const { return hand == Hand::Main ? mainhand : offhand; }
 
-    // A continuous use in progress - see UseHeldItem.
+    // A continuous use in progress
     struct UsingState {
         Hand hand;
         int32_t itemId;

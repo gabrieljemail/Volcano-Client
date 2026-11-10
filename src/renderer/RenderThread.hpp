@@ -12,30 +12,13 @@ using namespace std;
 
 namespace Volcano {
 
-// Runs on the main (GLFW-owning) thread now - see the tick-loop plan's
-// thread-merge step. There used to be a real render thread here, separate
-// from main()'s glfwPollEvents() loop, purely because input had to be
-// *captured* on the GLFW thread but was *consumed* here; now that this
-// loop runs directly in main(), RunFrame() below calls glfwPollEvents()
-// itself (see PollInputs()) and there's no cross-thread input buffering or
-// shutdown hand-off left to manage.
-//
-// This is the client side of the renderer boundary: it owns frame pacing,
-// input, and deciding what the frame should look like (camera, FOV easing,
-// sky color, debug toggles), packs that into an Engine::SceneView, and
-// hands it to GlobalState::renderEngine. It never records GPU commands or
-// touches swapchain/sync objects itself - that's all behind RenderEngine
-// (see engine/RenderEngine.hpp and docs/RenderingEngineRework.md).
+// Runs on the main (GLFW-owning) thread now
 class RenderThread {
 public:
     explicit RenderThread(Volcano::GlobalState* globalState);
     ~RenderThread();
 
-    // One iteration of the frame loop - call this directly from main()'s
-    // own while loop instead of starting a separate thread. Runs
-    // WaitForTargetFrame -> UpdateDeltaTime -> PollInputs -> DrawFrame ->
-    // EndFrame, the same sequence RenderLoop used to run once per thread
-    // iteration.
+    // One iteration of the frame loop
     void RunFrame();
 
     // Stops the engine rendering (waits for the GPU, tears down the GUI and
@@ -87,11 +70,7 @@ private:
     bool sprintToggled = false;
 
     // Current FOV boost in degrees, eased toward its target (Graphics.
-    // FOVEffects while sprinting/flying, 0 otherwise - see
-    // BuildProjection) every frame rather than snapping, so the zoom-out
-    // on starting/stopping a sprint is a smooth widen/narrow instead of a
-    // jump cut. RenderThread-owned for the same reason wireframeMode is:
-    // only this thread's own frame loop ever touches it.
+    // FOVEffects while sprinting/flying, 0 otherwise
     float currentFovOffset = 0.0f;
 
     void WaitForTargetFrame();
@@ -99,7 +78,7 @@ private:
     void PollInputs();
     void DrawFrame();
 
-    // Everything the engine needs to know about this frame - see SceneView.
+    // Everything the engine needs to know about this frame
     Engine::SceneView BuildSceneView();
     glm::mat4 BuildProjection(const Engine::RenderExtent& extent);
 };

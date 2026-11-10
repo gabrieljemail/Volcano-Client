@@ -12,11 +12,7 @@ namespace Volcano::Engine::Passes {
 
 // The background cube, drawn first so everything else draws over it:
 // - in menus (SceneView::menuBackground), the slowly rotating title
-//   panorama - vanilla's CubeMap, from assets/minecraft/textures/gui/title/
-//   background/panorama_N.png;
-// - in game, the sky: a zenith-to-horizon gradient, the sun and moon
-//   (textures/environment/celestial/) on opposite sides, and a sunset glow.
-// A missing panorama falls back to a flat cube; the sky still works.
+//   panorama
 class SkyboxPass : public RenderPass {
 public:
     static constexpr const char* NAME = "Skybox";

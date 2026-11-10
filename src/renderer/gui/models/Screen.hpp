@@ -31,13 +31,7 @@ struct Screen {
     bool fontInArtPixels = false;
 
     // Escape hatch for content the generic TEXT/BUTTON/INPUT component stack
-    // can't express - a slot grid with item icons (the inventory screen),
-    // say. When set, GUIController::RenderScreen calls this instead of
-    // laying out `components`, right after the title - the darkened
-    // fullscreen "##screen" ImGui window (and its draw list, via
-    // ImGui::GetWindowDrawList()) is already open by the time this runs, so
-    // a raw-ImDrawList screen can draw into it the same way GUIController's
-    // own HUD methods (DrawSlot, DrawStatBar, ...) already do.
+    // can't express
     std::function<void()> customContent;
 
     // For content that changes while the screen is up (a list of servers) but

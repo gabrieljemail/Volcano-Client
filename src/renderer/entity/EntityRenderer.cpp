@@ -8,12 +8,15 @@
 #include <string>
 #include <fstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <nlohmann/json.hpp>
 #include <stb_image.h>
 #include "../../resources/ImageLoad.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include "EntityRenderer.hpp"
 #include "models/Entity.hpp"
+#include "../../network/SkinFetcher.hpp"
+#include "../../network/Uuid.hpp"
 #include "models/EntityRegistry.hpp"
 #include "models/EntitySeat.hpp"
 #include "models/BodyRotation.hpp"
@@ -44,13 +47,7 @@ namespace {
 // that instead of introducing a second, possibly-inconsistent constant.
 constexpr uint32_t FRAMES_IN_FLIGHT = 3;
 
-// Local vertex format for every untextured procedural entity mesh - entities
-// need their own vertex layout (position + normal) since they don't share
-// the chunk mesh's packed-block format at all. An alias, not a separate
-// type: EntityBoxMesh.hpp's AppendBox (shared by the cube/quadruped/golem
-// builders below) already produces EntityMeshVertex, and this must stay
-// layout-compatible with whatever's actually bound to the pipeline's vertex
-// input state.
+// Local vertex format for every untextured procedural entity mesh
 using EntityVertex = EntityMeshVertex;
 
 // std430 layout: 4 vec4s, 16-byte aligned throughout.
@@ -80,12 +77,7 @@ AllocatedBuffer g_cubeVertexBuffer;
 AllocatedBuffer g_cubeIndexBuffer;
 uint32_t g_cubeIndexCount = 0;
 
-// Quadruped/golem meshes - drawn through the very same instanced g_pipeline/
-// entity.vert as the cube above (see RecordDraw): just a different bound
-// vertex/index buffer and indirect-draw slice per shape, not a separate
-// pipeline. Humanoid entities are the one shape with a genuinely separate,
-// non-instanced draw path (g_humanoidPipeline below) since they need a bound
-// skin texture per draw.
+// Quadruped/golem meshes
 AllocatedBuffer g_quadrupedVertexBuffer;
 AllocatedBuffer g_quadrupedIndexBuffer;
 uint32_t g_quadrupedIndexCount = 0;
@@ -95,7 +87,7 @@ AllocatedBuffer g_golemIndexBuffer;
 uint32_t g_golemIndexCount = 0;
 
 // Real vanilla-derived proportions (PigModel.hpp/CowModel.hpp) rather than
-// the generic Quadruped box - same instanced path, just two more shapes.
+// the generic Quadruped box
 AllocatedBuffer g_pigVertexBuffer;
 AllocatedBuffer g_pigIndexBuffer;
 uint32_t g_pigIndexCount = 0;
@@ -127,13 +119,11 @@ struct TexturedInstance {
     glm::vec4 hurtColor; // Same convention as GPUEntityInstance::hurtColor.
     glm::vec4 partPivot;    // xyz: point the part turns about, model-local; w: tint as 0xRRGGBB (0 for none).
     glm::vec4 partOffset;   // xyz: translation added after the turn, model-local; w: light, sky * 16 + block.
-    glm::vec4 partRotation; // xyz: radians, applied Z * Y * X.
+    glm::vec4 partRotation; // xyz: radians, applied Z * Y * X; w: death roll of the whole body.
+    glm::vec4 bodyPose;     // x: pitch of the whole body, radians, nose down positive.
 };
 
-// One loaded skin - its own image/view/sampler/descriptor set, registered
-// with g_textureSetLayout's single combined-image-sampler binding. Not
-// registered in VulkanInit's global allocatedImages list, for the same
-// double-free reason CreateOwnedBuffer's own comment gives for buffers.
+// One loaded skin
 struct SkinTexture {
     AllocatedImage image{};
     VkImageView view = VK_NULL_HANDLE;
@@ -176,6 +166,7 @@ struct MobModel {
     // Armor meshes fitted to this body (same parts, same pivots), or null for a mob that wears none.
     const EntityModelMesh* armorOuter = nullptr; // Helmet, chestplate, boots.
     const EntityModelMesh* armorInner = nullptr; // Leggings.
+    int pitchMode = 0; // 1: the entity's look pitch tilts the body (nose down positive); -1: a projectile, pitch up positive.
 };
 
 struct HumanoidDraw {
@@ -187,7 +178,13 @@ struct HumanoidDraw {
     const std::string* mainhandItem = nullptr; // Registry names, which outlive the frame.
     const std::string* offhandItem = nullptr;
     std::array<const std::string*, 4> armor{}; // Head, chest, legs, feet.
+    uint8_t armorGlint = 0; // Bit per armor slot that is enchanted.
+    bool mainhandGlint = false;
+    bool offhandGlint = false;
     bool hideHead = false; // First-person body view: the camera sits inside the head.
+    float deathRoll = 0.0f; // Radians the body has tipped over; 0 while alive.
+    float pitch = 0.0f;     // Radians the whole body tilts nose down.
+    const SkinTexture* skin = nullptr; // A player's own skin, for every layer; null uses the model's.
 };
 
 // Walk cycles per entity, keyed by network id; the local player uses LOCAL_WALK_KEY.
@@ -277,6 +274,13 @@ glm::vec3 RenderPositionOf(GlobalState* state, const Entity& entity, std::chrono
     return entity.InterpolatedPosition(now);
 }
 
+// How far a dying body has tipped over, in radians, `ticks` after its death: vanilla's sqrt ramp up to 90 degrees.
+float DeathRoll(float ticks)
+{
+    float f = std::sqrt(std::clamp((ticks - 1.0f) / 20.0f * 1.6f, 0.0f, 1.0f));
+    return glm::radians(90.0f * f);
+}
+
 // The chunk light at a point on an entity, packed sky * 16 + block for TexturedInstance.
 float EntityLight(GlobalState* state, const glm::vec3& feet)
 {
@@ -309,6 +313,8 @@ VkPipelineLayout g_humanoidPipelineLayout = VK_NULL_HANDLE;
 // The same pipeline built from entity_textured_shadow.* (shadow receiving) and
 // its layout, which adds the shadow map as set 2. Null when unavailable.
 VkPipeline g_humanoidShadowedPipeline = VK_NULL_HANDLE;
+VkPipeline g_glintPipeline = VK_NULL_HANDLE; // Armor enchantment overlay.
+VkPipelineLayout g_glintLayout = VK_NULL_HANDLE; // Camera, the armor sheet (mask), the glint sheet.
 VkPipelineLayout g_humanoidShadowedLayout = VK_NULL_HANDLE;
 VkDescriptorSetLayout g_textureSetLayout = VK_NULL_HANDLE;
 VkDescriptorPool g_textureDescriptorPool = VK_NULL_HANDLE;
@@ -321,6 +327,17 @@ std::unordered_map<std::string, SkinTexture> g_skinCache;
 std::unordered_map<std::string, EntityModelMesh> g_meshCache;
 
 const SkinTexture* g_steveSkin = nullptr; // Default skin for the first-person arm.
+
+// Downloaded player skins by key (hex UUID, or "local"), in a descriptor pool of their own so they can't starve the mobs'.
+struct PlayerSkin
+{
+    SkinTexture texture;
+    bool slim = false;
+};
+constexpr uint32_t MAX_PLAYER_SKINS = 96;
+const char* const LOCAL_SKIN_KEY = "local";
+std::unordered_map<std::string, PlayerSkin> g_playerSkins;
+VkDescriptorPool g_playerSkinPool = VK_NULL_HANDLE;
 
 // Chests: meshes by type (single/left/right), skins by [kind-1][type].
 EntityModelMesh g_chestMeshes[3];
@@ -341,7 +358,7 @@ struct TexturedItem {
 // run of commands sharing a mesh and skin is one vkCmdDrawIndexedIndirect.
 // Each owner has its own per-frame buffers because its pass flushes at a
 // different point of the same frame.
-enum BatchOwner : uint32_t { BATCH_MOBS, BATCH_BLOCK_ENTITIES, BATCH_OWNER_COUNT };
+enum BatchOwner : uint32_t { BATCH_MOBS, BATCH_BLOCK_ENTITIES, BATCH_GLINT, BATCH_OWNER_COUNT };
 
 constexpr uint32_t MAX_TEXTURED_INSTANCES = 8192; // Also the command capacity: a command holds at least one.
 
@@ -417,9 +434,7 @@ BlockEntityModel LookupBlockEntityModel(uint8_t kind, uint8_t type)
 
 // Allocates a buffer via VMA without registering it in VulkanInit's global
 // `allocatedBuffers` list. EntityRenderer::Shutdown() destroys every buffer
-// it creates itself (unmapping first where needed) - going through the
-// global list here would mean both it and VulkanInit::Cleanup()'s own sweep
-// try to destroy the same VkBuffer/VmaAllocation, which is a double free.
+// it creates itself (unmapping first where needed)
 AllocatedBuffer CreateOwnedBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA)
 {
     VkBufferCreateInfo bufferInfo{};
@@ -439,9 +454,7 @@ AllocatedBuffer CreateOwnedBuffer(VkDeviceSize size, VkBufferUsageFlags usage, b
     return result;
 }
 
-// The placeholder box - now just a single unit box through AppendBox (see
-// EntityBoxMesh.hpp for the shared winding convention every procedural
-// entity mesh, this one included, follows).
+// The placeholder box
 void BuildCubeMesh(std::vector<EntityVertex>& vertices, std::vector<uint32_t>& indices)
 {
     AppendBox(vertices, indices, glm::vec3(0.0f), glm::vec3(1.0f));
@@ -449,10 +462,7 @@ void BuildCubeMesh(std::vector<EntityVertex>& vertices, std::vector<uint32_t>& i
 
 // Uploads a host-built mesh (vertices/indices already populated by
 // BuildCubeMesh/QuadrupedModel::BuildMesh/GolemModel::BuildMesh) into a
-// fresh GPU-only vertex/index buffer pair via a staging buffer - shared by
-// all three since they're all static, uploaded-once, EntityVertex-typed
-// meshes (EntityJsonModel's own upload stays separate below: different vertex
-// type, UV included).
+// fresh GPU-only vertex/index buffer pair via a staging buffer
 void UploadMesh(const std::vector<EntityVertex>& vertices, const std::vector<uint32_t>& indices,
     AllocatedBuffer& outVertexBuffer, AllocatedBuffer& outIndexBuffer, uint32_t& outIndexCount)
 {
@@ -585,7 +595,8 @@ void UploadTexturedMesh(const std::vector<EntityJsonModel::Vertex>& vertices,
 // against g_textureSetLayout. Any size works (unlike TextureManager, which
 // only accepts exactly 16x16) - player/zombie skins are both 64x64 in this
 // resource pack, but nothing here assumes that.
-SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height, const std::string& path)
+SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height, const std::string& path,
+    VkDescriptorPool pool = VK_NULL_HANDLE, bool smooth = false)
 {
     SkinTexture skin;
     VkDeviceSize imageBytes = static_cast<VkDeviceSize>(width) * height * 4;
@@ -643,15 +654,17 @@ SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height
 
     // Nearest-neighbor: skin sheets are hand-painted pixel art viewed close
     // up, same reasoning TextureManager's block/item array would apply if
-    // it exposed a filter choice - linear filtering would blur the seams
-    // between adjacent UV-unwrapped box faces.
+    // it exposed a filter choice
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_NEAREST;
-    samplerInfo.minFilter = VK_FILTER_NEAREST;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    // Smooth is the glint sheets: blurred and tiled.
+    const VkFilter filter = smooth ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    const VkSamplerAddressMode wrap = smooth ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.magFilter = filter;
+    samplerInfo.minFilter = filter;
+    samplerInfo.addressModeU = wrap;
+    samplerInfo.addressModeV = wrap;
+    samplerInfo.addressModeW = wrap;
     samplerInfo.maxLod = 1.0f;
     if (vkCreateSampler(GetDevice(), &samplerInfo, nullptr, &skin.sampler) != VK_SUCCESS)
     {
@@ -660,7 +673,7 @@ SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height
 
     VkDescriptorSetAllocateInfo dsAlloc{};
     dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = g_textureDescriptorPool;
+    dsAlloc.descriptorPool = pool != VK_NULL_HANDLE ? pool : g_textureDescriptorPool;
     dsAlloc.descriptorSetCount = 1;
     dsAlloc.pSetLayouts = &g_textureSetLayout;
     if (vkAllocateDescriptorSets(GetDevice(), &dsAlloc, &skin.descriptorSet) != VK_SUCCESS)
@@ -685,7 +698,7 @@ SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height
     return skin;
 }
 
-SkinTexture LoadSkinTexture(const std::string& path)
+SkinTexture LoadSkinTexture(const std::string& path, bool smooth = false)
 {
     int width = 0, height = 0;
     uint8_t* pixels = LoadImageRGBA(path, width, height);
@@ -696,7 +709,7 @@ SkinTexture LoadSkinTexture(const std::string& path)
 
     try
     {
-        SkinTexture skin = CreateTextureFromPixels(pixels, width, height, path);
+        SkinTexture skin = CreateTextureFromPixels(pixels, width, height, path, VK_NULL_HANDLE, smooth);
         stbi_image_free(pixels);
         return skin;
     }
@@ -735,6 +748,56 @@ void DestroySkin(SkinTexture& skin)
     skin = SkinTexture{};
 }
 
+// Puts the downloaded skins the fetcher finished onto the GPU (render thread).
+void UploadFinishedSkins(GlobalState* state)
+{
+    if (state->skinFetcher == nullptr) return;
+    for (SkinImage& image : state->skinFetcher->TakeCompleted())
+    {
+        if (g_playerSkins.size() >= MAX_PLAYER_SKINS && g_playerSkins.find(image.key) == g_playerSkins.end()) continue;
+        try
+        {
+            PlayerSkin skin;
+            skin.texture = CreateTextureFromPixels(image.pixels.data(), 64, 64, image.key, g_playerSkinPool);
+            skin.slim = image.slim;
+            auto existing = g_playerSkins.find(image.key);
+            if (existing != g_playerSkins.end()) DestroySkin(existing->second.texture);
+            g_playerSkins[image.key] = skin;
+        }
+        catch (const std::exception& e)
+        {
+            Log::Error(std::string("EntityRenderer: player skin upload failed: ") + e.what());
+        }
+    }
+}
+
+// Picks a player's skin and the matching (wide or slim) model: the downloaded skin when it has arrived, asking the
+// fetcher for it the first time it's wanted; otherwise the model's own default skin. `model` is the wide "player" model.
+void ResolvePlayerLook(GlobalState* state, const std::string& key, const MobModel*& model, const SkinTexture*& skin)
+{
+    GlobalState::SkinSource source;
+    {
+        std::lock_guard<std::mutex> lock(state->skinSourcesMutex);
+        auto it = state->skinSources.find(key);
+        if (it == state->skinSources.end()) return;
+        source = it->second;
+    }
+
+    auto loaded = g_playerSkins.find(key);
+    if (loaded == g_playerSkins.end())
+    {
+        if (state->skinFetcher != nullptr) state->skinFetcher->Request(key, source.url, source.slim);
+        return;
+    }
+
+    skin = &loaded->second.texture;
+    if (loaded->second.slim)
+    {
+        auto slim = g_mobModels.find("player_slim");
+        if (slim != g_mobModels.end()) model = &slim->second;
+    }
+}
+
 constexpr const char* MOB_MODEL_DIR = "resources/volcano/models/entity/";
 constexpr const char* MOB_SKIN_DIR = "assets/minecraft/textures/entity/"; // Logical pack path.
 
@@ -743,6 +806,27 @@ const SkinTexture* CachedSkin(const std::string& skinPath)
     auto it = g_skinCache.find(skinPath);
     if (it != g_skinCache.end()) return &it->second;
     return &g_skinCache.emplace(skinPath, LoadSkinTexture(MOB_SKIN_DIR + skinPath)).first->second;
+}
+
+// The glint sheet for items or armor, loaded on first use; null when the packs have none.
+const SkinTexture* GlintSkin(bool armor)
+{
+    const std::string key = armor ? "glint:armor" : "glint:item";
+    auto found = g_skinCache.find(key);
+    if (found != g_skinCache.end()) return &found->second;
+    static std::unordered_set<std::string> failed;
+    if (failed.count(key) != 0) return nullptr;
+    try
+    {
+        const char* file = armor ? "assets/minecraft/textures/misc/enchanted_glint_armor.png"
+                                 : "assets/minecraft/textures/misc/enchanted_glint_item.png";
+        return &g_skinCache.emplace(key, LoadSkinTexture(file, true)).first->second;
+    }
+    catch (const std::exception&)
+    {
+        failed.insert(key);
+        return nullptr;
+    }
 }
 
 const SkinTexture* ArmorSkin(const std::string& path)
@@ -798,6 +882,8 @@ void LoadMobManifest()
             MobModel mob;
             mob.layers.push_back({ CachedMesh(entry.at("model").get<std::string>(), scale),
                 CachedSkin(entry.at("skin").get<std::string>()) });
+            std::string pitch = entry.value("pitch", std::string());
+            mob.pitchMode = pitch == "look" ? 1 : pitch == "projectile" ? -1 : 0;
             if (entry.value("armor", false))
             {
                 mob.armorOuter = CachedMesh("armor_outer.json", scale);
@@ -962,9 +1048,7 @@ void CreateDescriptorLayoutAndPool()
         throw std::runtime_error("[ERROR] Failed to create entity descriptor pool.");
     }
 
-    // Humanoid skin textures - a separate layout/pool from the instance SSBO
-    // above (different descriptor type, and allocated per distinct skin
-    // texture rather than per frame-in-flight).
+    // Humanoid skin textures
     VkDescriptorSetLayoutBinding textureBinding{};
     textureBinding.binding = 0;
     textureBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -980,9 +1064,9 @@ void CreateDescriptorLayoutAndPool()
         throw std::runtime_error("[ERROR] Failed to create entity skin texture descriptor set layout.");
     }
 
-    // One descriptor per distinct skin, plus one per cached block-entity
-    // texture (see MAX_BLOCK_TEXTURES) - cheap to over-provision.
-    constexpr uint32_t MAX_SKIN_TEXTURES = 8 + static_cast<uint32_t>(MAX_BLOCK_TEXTURES);
+    // One descriptor per distinct skin, plus one per cached block-entity texture (see MAX_BLOCK_TEXTURES), the armor
+    // sheets, the two glint sheets and the ten block-break crack textures.
+    constexpr uint32_t MAX_SKIN_TEXTURES = 8 + static_cast<uint32_t>(MAX_BLOCK_TEXTURES) + 96;
     VkDescriptorPoolSize texturePoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_SKIN_TEXTURES };
     VkDescriptorPoolCreateInfo texturePoolInfo{};
     texturePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -992,6 +1076,17 @@ void CreateDescriptorLayoutAndPool()
     if (vkCreateDescriptorPool(GetDevice(), &texturePoolInfo, nullptr, &g_textureDescriptorPool) != VK_SUCCESS)
     {
         throw std::runtime_error("[ERROR] Failed to create entity skin texture descriptor pool.");
+    }
+
+    VkDescriptorPoolSize playerPoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_PLAYER_SKINS };
+    VkDescriptorPoolCreateInfo playerPoolInfo{};
+    playerPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    playerPoolInfo.poolSizeCount = 1;
+    playerPoolInfo.pPoolSizes = &playerPoolSize;
+    playerPoolInfo.maxSets = MAX_PLAYER_SKINS;
+    if (vkCreateDescriptorPool(GetDevice(), &playerPoolInfo, nullptr, &g_playerSkinPool) != VK_SUCCESS)
+    {
+        throw std::runtime_error("[ERROR] Failed to create the player skin descriptor pool.");
     }
 }
 
@@ -1207,7 +1302,7 @@ void CreatePipeline(const Engine::ShaderLibrary& shaders)
 
     // AppendBox's winding (u x v == normal, corners (-u,-v)->(+u,-v)->
     // (+u,+v)->(-u,+v)) comes out CCW seen from outside, so front face is
-    // counter-clockwise here - see EntityBoxMesh.hpp's own comment.
+    // counter-clockwise here
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
@@ -1222,7 +1317,7 @@ void CreatePipeline(const Engine::ShaderLibrary& shaders)
     // Entities share the chunk pass's depth attachment within the same
     // subpass/render pass, so depth test/write here is what makes walls
     // correctly occlude entities behind them (and vice versa) regardless of
-    // draw order - no extra wiring needed for that culling method.
+    // draw order
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
@@ -1320,11 +1415,7 @@ void CreatePipeline(const Engine::ShaderLibrary& shaders)
 
 // Same fixed-function state as CreatePipeline() above (same render pass/
 // subpass, same depth test since humanoids share the world's depth
-// attachment too, same winding/cull convention - EntityJsonModel::BuildMesh
-// follows BuildCubeMesh's own winding rule deliberately), differing only in
-// vertex layout (+UV, plus the instance-rate TexturedInstance record on
-// binding 1 instead of an SSBO), shaders, and descriptor set 1 (a skin
-// texture instead of the instance buffer).
+// attachment too, same winding/cull convention
 void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
 {
     VkShaderModule vertModule = VK_NULL_HANDLE;
@@ -1355,7 +1446,7 @@ void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
     bindings[1].stride = sizeof(TexturedInstance);
     bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-    std::array<VkVertexInputAttributeDescription, 8> attributes{};
+    std::array<VkVertexInputAttributeDescription, 9> attributes{};
     attributes[0].binding = 0;
     attributes[0].location = 0;
     attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -1368,11 +1459,11 @@ void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
     attributes[2].location = 2;
     attributes[2].format = VK_FORMAT_R32G32_SFLOAT;
     attributes[2].offset = offsetof(EntityJsonModel::Vertex, uv);
-    const uint32_t instanceOffsets[5] = {
+    const uint32_t instanceOffsets[6] = {
         offsetof(TexturedInstance, positionYaw), offsetof(TexturedInstance, hurtColor),
         offsetof(TexturedInstance, partPivot), offsetof(TexturedInstance, partOffset),
-        offsetof(TexturedInstance, partRotation) };
-    for (uint32_t i = 0; i < 5; i++)
+        offsetof(TexturedInstance, partRotation), offsetof(TexturedInstance, bodyPose) };
+    for (uint32_t i = 0; i < 6; i++)
     {
         attributes[3 + i].binding = 1;
         attributes[3 + i].location = 3 + i;
@@ -1402,8 +1493,7 @@ void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
     viewportState.viewportCount = 1;
     viewportState.scissorCount = 1;
 
-    // Same winding/cull convention as CreatePipeline() above - EntityJsonModel::
-    // BuildMesh follows AppendBox's rule deliberately (see its own comment).
+    // Same winding/cull convention as CreatePipeline() above
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
@@ -1507,6 +1597,51 @@ void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
         if (shadowVert != VK_NULL_HANDLE) vkDestroyShaderModule(GetDevice(), shadowVert, nullptr);
     }
 
+    // Armor glint: the textured vertex shader again, drawn additively over the armor's own depth.
+    VkShaderModule glintFrag = VK_NULL_HANDLE;
+    try
+    {
+        glintFrag = CreateShaderModule(shaders, "entity_glint.frag");
+        VkPipelineShaderStageCreateInfo glintStages[2] = { stages[0], stages[1] };
+        glintStages[1].module = glintFrag;
+        VkPipelineDepthStencilStateCreateInfo glintDepth = depthStencil;
+        glintDepth.depthWriteEnable = VK_FALSE;
+        glintDepth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        VkPipelineColorBlendAttachmentState glintBlend = colorBlendAttachment;
+        glintBlend.blendEnable = VK_TRUE;
+        glintBlend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+        glintBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        glintBlend.colorBlendOp = VK_BLEND_OP_ADD;
+        glintBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        glintBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        glintBlend.alphaBlendOp = VK_BLEND_OP_ADD;
+        VkPipelineColorBlendStateCreateInfo glintBlending = colorBlending;
+        glintBlending.pAttachments = &glintBlend;
+        VkGraphicsPipelineCreateInfo glintInfo = pipelineInfo;
+        VkDescriptorSetLayout glintSetLayouts[] = { cameraSetLayout, g_textureSetLayout, g_textureSetLayout };
+        VkPipelineLayoutCreateInfo glintLayoutInfo = pipelineLayoutInfo;
+        glintLayoutInfo.setLayoutCount = 3;
+        glintLayoutInfo.pSetLayouts = glintSetLayouts;
+        if (vkCreatePipelineLayout(GetDevice(), &glintLayoutInfo, nullptr, &g_glintLayout) != VK_SUCCESS)
+        {
+            throw std::runtime_error("glint layout");
+        }
+        glintInfo.layout = g_glintLayout;
+        glintInfo.pStages = glintStages;
+        glintInfo.pDepthStencilState = &glintDepth;
+        glintInfo.pColorBlendState = &glintBlending;
+        if (vkCreateGraphicsPipelines(GetDevice(), VK_NULL_HANDLE, 1, &glintInfo, nullptr, &g_glintPipeline) != VK_SUCCESS)
+        {
+            g_glintPipeline = VK_NULL_HANDLE;
+            throw std::runtime_error("glint pipeline");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        Log::Error(std::string("[ERROR] Armor glint unavailable: ") + e.what());
+    }
+    if (glintFrag != VK_NULL_HANDLE) vkDestroyShaderModule(GetDevice(), glintFrag, nullptr);
+
     DestroyShaderPair(vertModule, fragModule);
 }
 
@@ -1566,8 +1701,7 @@ bool SphereInFrustum(const std::array<glm::vec4, 4>& planes, const glm::vec3& ce
     return true;
 }
 
-// Both pipelines and their layouts - everything shader-dependent, and
-// nothing else (meshes, skins, per-frame buffers stay put).
+// Both pipelines and their layouts
 void DestroyPipelines()
 {
     VkDevice dev = GetDevice();
@@ -1580,6 +1714,10 @@ void DestroyPipelines()
     if (g_humanoidPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, g_humanoidPipeline, nullptr);
     if (g_humanoidPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, g_humanoidPipelineLayout, nullptr);
     if (g_humanoidShadowedPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, g_humanoidShadowedPipeline, nullptr);
+    if (g_glintPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, g_glintPipeline, nullptr);
+    if (g_glintLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, g_glintLayout, nullptr);
+    g_glintPipeline = VK_NULL_HANDLE;
+    g_glintLayout = VK_NULL_HANDLE;
     if (g_humanoidShadowedLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, g_humanoidShadowedLayout, nullptr);
     g_humanoidShadowedPipeline = VK_NULL_HANDLE;
     g_humanoidShadowedLayout = VK_NULL_HANDLE;
@@ -1607,7 +1745,8 @@ uint64_t FlushTextured(BatchOwner owner, VkCommandBuffer cmd, uint32_t frameInde
     std::vector<TexturedItem>& items = batch.items;
     const uint32_t slot = frameIndex % FRAMES_IN_FLIGHT;
     if (items.empty()) return 0;
-    if (g_humanoidPipeline == VK_NULL_HANDLE || batch.instancesMapped[slot] == nullptr)
+    const bool glintBatch = owner == BATCH_GLINT;
+    if (g_humanoidPipeline == VK_NULL_HANDLE || batch.instancesMapped[slot] == nullptr || (glintBatch && g_glintPipeline == VK_NULL_HANDLE))
     {
         items.clear();
         return 0;
@@ -1658,21 +1797,24 @@ uint64_t FlushTextured(BatchOwner owner, VkCommandBuffer cmd, uint32_t frameInde
 
     // With a shadow map this frame, the shadow-receiving twin draws instead:
     // same records and skin sets, plus the map as set 2.
-    const bool shadowed = vulkan != nullptr && vulkan->AreShadowsActive() && g_humanoidShadowedPipeline != VK_NULL_HANDLE;
-    const VkPipelineLayout layout = shadowed ? g_humanoidShadowedLayout : g_humanoidPipelineLayout;
+    const bool shadowed = !glintBatch && vulkan != nullptr && vulkan->AreShadowsActive() && g_humanoidShadowedPipeline != VK_NULL_HANDLE;
+    const VkPipelineLayout layout = glintBatch ? g_glintLayout : (shadowed ? g_humanoidShadowedLayout : g_humanoidPipelineLayout);
+    const SkinTexture* glintSheet = glintBatch ? GlintSkin(true) : nullptr;
+    if (glintBatch && glintSheet == nullptr) return triangles;
     VkDescriptorSet shadowSetHandle = shadowed ? vulkan->GetShadowSet() : VK_NULL_HANDLE;
     const bool useIndirect = indirect && indirectDrawSupported;
     constexpr uint32_t STRIDE = sizeof(VkDrawIndexedIndirectCommand);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowed ? g_humanoidShadowedPipeline : g_humanoidPipeline);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        glintBatch ? g_glintPipeline : (shadowed ? g_humanoidShadowedPipeline : g_humanoidPipeline));
     VkDeviceSize zero = 0;
     vkCmdBindVertexBuffers(cmd, 1, 1, &batch.instances[slot].buffer, &zero);
     for (const TexturedBatch::Run& run : batch.runs)
     {
         vkCmdBindVertexBuffers(cmd, 0, 1, &run.mesh->vertexBuffer.buffer, &zero);
         vkCmdBindIndexBuffer(cmd, run.mesh->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-        VkDescriptorSet sets[] = { cameraSets[frameIndex], run.skin, shadowSetHandle };
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, shadowed ? 3 : 2, sets, 0, nullptr);
+        VkDescriptorSet sets[] = { cameraSets[frameIndex], run.skin, glintBatch ? glintSheet->descriptorSet : shadowSetHandle };
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, (shadowed || glintBatch) ? 3 : 2, sets, 0, nullptr);
 
         if (useIndirect)
         {
@@ -1707,10 +1849,7 @@ void EntityRenderer::Init(const Engine::ShaderLibrary& shaders)
     CreateShadowCasterBuffers();
     CreatePipeline(shaders);
 
-    // Humanoid path - CreateDescriptorLayoutAndPool() above must run first
-    // (LoadSkins() allocates each skin's descriptor set from
-    // g_textureDescriptorPool against g_textureSetLayout, both created
-    // there).
+    // Humanoid path
     UploadBlockMesh();
     UploadJsonMesh("resources/volcano/models/entity/chest.json", g_chestMeshes[0]);
     UploadJsonMesh("resources/volcano/models/entity/chest_left.json", g_chestMeshes[1]);
@@ -1745,14 +1884,52 @@ void EntityRenderer::ReloadTextures()
     // Every skin set came from this pool and all were just dropped.
     if (g_textureDescriptorPool != VK_NULL_HANDLE) vkResetDescriptorPool(GetDevice(), g_textureDescriptorPool, 0);
 
+    // Downloaded skins are re-uploaded from the fetcher's next batch, so forget them and ask again.
+    for (auto& [key, playerSkin] : g_playerSkins) DestroySkin(playerSkin.texture);
+    g_playerSkins.clear();
+    if (g_playerSkinPool != VK_NULL_HANDLE) vkResetDescriptorPool(GetDevice(), g_playerSkinPool, 0);
+
     // Meshes stay cached (they come from client JSON, not the pack).
     LoadSkins();
     LoadMobManifest();
 }
 
+VkDescriptorSet EntityRenderer::GetLocalSkinSet()
+{
+    auto it = g_playerSkins.find(LOCAL_SKIN_KEY);
+    return it != g_playerSkins.end() ? it->second.texture.descriptorSet : GetDefaultSkinSet();
+}
+
 VkDescriptorSet EntityRenderer::GetDefaultSkinSet()
 {
     return g_steveSkin != nullptr ? g_steveSkin->descriptorSet : VK_NULL_HANDLE;
+}
+
+VkDescriptorSet EntityRenderer::GetCrackSet(int stage)
+{
+    if (stage < 0 || stage > 9) return VK_NULL_HANDLE;
+    const std::string key = "crack:" + std::to_string(stage);
+    auto found = g_skinCache.find(key);
+    if (found != g_skinCache.end()) return found->second.descriptorSet;
+    static std::unordered_set<std::string> failed;
+    if (failed.count(key) != 0) return VK_NULL_HANDLE;
+    try
+    {
+        const std::string file = "assets/minecraft/textures/block/destroy_stage_" + std::to_string(stage) + ".png";
+        return g_skinCache.emplace(key, LoadSkinTexture(file)).first->second.descriptorSet;
+    }
+    catch (const std::exception& e)
+    {
+        Log::Error(std::string("[CRACK] Couldn't load the crack texture: ") + e.what());
+        failed.insert(key);
+        return VK_NULL_HANDLE;
+    }
+}
+
+VkDescriptorSet EntityRenderer::GetGlintSet()
+{
+    const SkinTexture* glint = GlintSkin(false);
+    return glint != nullptr ? glint->descriptorSet : VK_NULL_HANDLE;
 }
 
 VkDescriptorSetLayout EntityRenderer::GetSkinSetLayout()
@@ -1907,6 +2084,14 @@ void EntityRenderer::Shutdown()
     for (auto& [stateId, texture] : g_blockTextures) DestroySkin(texture);
     g_blockTextures.clear();
 
+    for (auto& [key, playerSkin] : g_playerSkins) DestroySkin(playerSkin.texture);
+    g_playerSkins.clear();
+    if (g_playerSkinPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(GetDevice(), g_playerSkinPool, nullptr);
+        g_playerSkinPool = VK_NULL_HANDLE;
+    }
+
     // Destroying the pool frees every skin's descriptor set allocated from it.
     if (g_textureDescriptorPool != VK_NULL_HANDLE)
     {
@@ -1940,6 +2125,8 @@ void EntityRenderer::Shutdown()
 void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state,
     const glm::mat4& view, const glm::mat4& proj, const glm::vec3& cameraPosition, bool indirect)
 {
+    UploadFinishedSkins(state);
+
     std::array<glm::vec4, 4> frustumPlanes = ExtractFrustumPlanes(proj * view);
 
     // Frustum-cull first, then keep only the closest MAX_VISIBLE_ENTITIES -
@@ -1951,7 +2138,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
 
     // Read per frame so a settings reload applies immediately. All four
     // channels are 0-255; alpha is how strongly the color replaces the model.
-    // TODO: Graphics.EntityHurt.IncludeArmor - armor isn't rendered yet.
+    // TODO: Graphics.EntityHurt.IncludeArmor
     auto hurtChannel = [state](const char* channel, uint32_t fallback) {
         std::string key = std::string("Graphics.EntityHurt.Color.") + channel;
         return static_cast<float>(std::get<uint32_t>(state->config->Get(key, uint32_t{fallback}))) / 255.0f;
@@ -1967,14 +2154,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
     std::vector<std::pair<float, const Entity*>> visible;
     // Humanoid-shaped entities (player/zombie/mannequin/skeleton) are pulled
     // out of the instanced path entirely and drawn separately below via
-    // EntityJsonModel - they need a real UV-mapped mesh and their own bound
-    // skin texture, neither of which the flat-tinted instance SSBO (shared
-    // mesh per shape, no per-instance texture) has any way to carry.
-    // Distance-sorting/MAX_VISIBLE_ENTITIES still applies to them via the
-    // same `visible` pass below; they're just routed to a different draw
-    // call afterward instead of into one of the shape instance lists. Holds
-    // resolved values rather than Entity pointers - see HumanoidDraw's own
-    // comment for why that distinction is load-bearing here.
+    // EntityJsonModel
     std::vector<HumanoidDraw> humanoidVisible;
     std::vector<BlockDraw> blockVisible;
 
@@ -2000,8 +2180,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
         visible.reserve(state->entities.size() + state->playerEntities.size());
 
         // Other players (playerEntities) render exactly like every other
-        // humanoid - the invisibility status effect's flag aside, which
-        // hides them the way it does in vanilla.
+        // humanoid
         state->ForEachEntity([&](uint32_t id, const Entity& entity)
         {
             if (!entity.visible) return;
@@ -2047,10 +2226,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
         // Build the GPU instance buffer while still holding the lock, since
         // `visible` (and humanoidVisible, built alongside it here) holds raw
         // pointers into state->entities/playerEntities. Split by
-        // EntityRegistry::ShapeKind rather than one flat list - each shape
-        // draws off its own mesh, so its instances need to land in their own
-        // contiguous slice of the shared instance SSBO (see the
-        // concatenation below).
+        // EntityRegistry::ShapeKind rather than one flat list
         std::vector<GPUEntityInstance> cubeInstances;
         std::vector<GPUEntityInstance> quadrupedInstances;
         std::vector<GPUEntityInstance> golemInstances;
@@ -2062,6 +2238,9 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity->type);
             EntityRegistry::ShapeKind shape = info ? info->shape : EntityRegistry::ShapeKind::Cube;
 
+            // Thrown items are drawn as their item by ItemPass.
+            if (info != nullptr && EntityRegistry::ThrownItemName(info->name) != nullptr) continue;
+
             // Any type listed in mobs.json takes the textured path, whatever its shape.
             if (info != nullptr)
             {
@@ -2071,14 +2250,31 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     HumanoidDraw draw{
                         RenderPositionOf(state, *entity, now), entity->InterpolatedYaw(now), HurtColorFor(*entity),
                         &mob->second };
+                    if (const PlayerEntity* skinned = state->FindPlayerEntity(entity->id))
+                    {
+                        ResolvePlayerLook(state, FormatUuid(skinned->uuid), draw.model, draw.skin);
+                    }
 
                     if (mob->second.armorOuter != nullptr)
                     {
                         const EquipmentSlot slots[4] = { EquipmentSlot::Head, EquipmentSlot::Chest, EquipmentSlot::Legs, EquipmentSlot::Feet };
-                        for (size_t i = 0; i < 4; i++) draw.armor[i] = HeldItemName(entity->GetEquipment(slots[i]));
+                        for (size_t i = 0; i < 4; i++)
+                        {
+                            const ItemStack& piece = entity->GetEquipment(slots[i]);
+                            draw.armor[i] = HeldItemName(piece);
+                            if (piece.glint) draw.armorGlint |= static_cast<uint8_t>(1u << i);
+                        }
+                    }
+
+                    draw.pitch = static_cast<float>(mob->second.pitchMode) * entity->InterpolatedPitch(now);
+                    if (entity->dead && entity->deathTime != std::chrono::steady_clock::time_point{})
+                    {
+                        draw.deathRoll = DeathRoll(std::chrono::duration<float>(now - entity->deathTime).count() * 20.0f);
                     }
 
                     EntityAnimation::WalkState& walk = g_walkStates[entity->id];
+                    const glm::vec3 previousDrawPosition = walk.lastPosition;
+                    const bool hadPosition = walk.valid;
                     walk.Update(draw.position, now);
                     walk.lastSeenFrame = g_walkFrame;
                     draw.anim.walkPosition = walk.position;
@@ -2097,6 +2293,8 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     {
                         draw.mainhandItem = HeldItemName(holder->GetEquipment(EquipmentSlot::MainHand));
                         draw.offhandItem = HeldItemName(holder->GetEquipment(EquipmentSlot::OffHand));
+                        draw.mainhandGlint = holder->GetEquipment(EquipmentSlot::MainHand).glint;
+                        draw.offhandGlint = holder->GetEquipment(EquipmentSlot::OffHand).glint;
                         swimming = holder->IsSwimming();
                         if (holder->IsCrouching()) draw.anim.posture = EntityAnimation::Posture::Crouching;
                     }
@@ -2112,6 +2310,31 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     walk.posture = draw.anim.posture;
                     walk.riding = draw.anim.riding;
                     walk.ridingBoat = draw.anim.ridingBoat;
+
+                    // Head and body turn apart, as for the local player: the head shows the look direction and the
+                    // body trails it, following the way the entity walks.
+                    if (mob->second.pitchMode == 0 && !entity->dead)
+                    {
+                        float headYawDeg = glm::degrees(entity->InterpolatedHeadYaw(now));
+                        glm::vec3 step = draw.position - previousDrawPosition;
+                        if (hadPosition && step.x * step.x + step.z * step.z > 1e-6f)
+                        {
+                            walk.moveYaw = glm::degrees(std::atan2(step.x, step.z));
+                        }
+                        bool moving = walk.speed > 0.05f;
+                        bool swinging = draw.anim.attackTime > 0.0f;
+                        float deltaSeconds = std::min(std::chrono::duration<float>(now - walk.bodyTime).count(), 0.1f);
+                        walk.bodyTime = now;
+                        float bodyYawDeg = walk.body.Update(deltaSeconds, headYawDeg, moving, walk.moveYaw, swinging);
+                        if (ride.riding) bodyYawDeg = glm::degrees(draw.yaw); // Seated bodies face as the vehicle does.
+                        draw.yaw = glm::radians(bodyYawDeg);
+                        draw.anim.headYRot = -glm::radians(BodyRotation::Wrap(headYawDeg - bodyYawDeg));
+                        draw.anim.headXRot = entity->InterpolatedPitch(now);
+                        walk.headXRot = draw.anim.headXRot;
+                        walk.headYRot = draw.anim.headYRot;
+                        walk.bodyYaw = draw.yaw;
+                        walk.bodyDrawn = true;
+                    }
                     humanoidVisible.push_back(draw);
                     continue;
                 }
@@ -2173,7 +2396,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
     // The local player has no entity of their own; draw them as a plain
     // "player" humanoid when the camera isn't in their head. The pose is
     // advanced in first person too (body turn, walk cycle, swing), so the
-    // shadow they cast - see RecordShadowCasters - moves like everyone else's.
+    // shadow they cast
     g_localShadowValid = false;
     if (state->worldReady.load() && state->localGameMode.load() != 3)
     {
@@ -2197,6 +2420,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             HumanoidDraw draw{
                 state->tickLoop->GetRenderPosition(), glm::radians(bodyYaw),
                 glm::vec4(hurtColor.r, hurtColor.g, hurtColor.b, 0.0f), &mob->second };
+            ResolvePlayerLook(state, LOCAL_SKIN_KEY, draw.model, draw.skin);
 
             EntityAnimation::WalkState& walk = g_walkStates[LOCAL_WALK_KEY];
             walk.Update(draw.position, now);
@@ -2212,9 +2436,15 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                 std::lock_guard<std::mutex> lock(state->inventory.mutex);
                 draw.mainhandItem = HeldItemName(state->inventory.hotbar.Get(state->inventory.selectedHotbarSlot));
                 draw.offhandItem = HeldItemName(state->inventory.offhand.Get(0));
+                draw.mainhandGlint = state->inventory.hotbar.Get(state->inventory.selectedHotbarSlot).glint;
+                draw.offhandGlint = state->inventory.offhand.Get(0).glint;
                 if (mob->second.armorOuter != nullptr)
                 {
-                    for (size_t i = 0; i < 4; i++) draw.armor[i] = HeldItemName(state->inventory.armor.Get(i));
+                    for (size_t i = 0; i < 4; i++)
+                    {
+                        draw.armor[i] = HeldItemName(state->inventory.armor.Get(i));
+                        if (state->inventory.armor.Get(i).glint) draw.armorGlint |= static_cast<uint8_t>(1u << i);
+                    }
                 }
             }
             draw.anim.holdingMainhand = draw.mainhandItem != nullptr;
@@ -2232,6 +2462,11 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             }
             else if (movement.mode == MoveMode::Swim) draw.anim.posture = EntityAnimation::Posture::Treading;
             else if (state->tickLoop->IsSneaking()) draw.anim.posture = EntityAnimation::Posture::Crouching;
+            if (int64_t deathNs = state->localDeathNs.load(); deathNs != 0)
+            {
+                int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                draw.deathRoll = DeathRoll(static_cast<float>(nowNs - deathNs) * 1e-9f * 20.0f);
+            }
             walk.posture = draw.anim.posture;
             walk.swimAmount = draw.anim.swimAmount;
             walk.headXRot = draw.anim.headXRot;
@@ -2341,10 +2576,12 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             TexturedInstance instance{};
             instance.positionYaw = glm::vec4(draw.position, draw.yaw);
             instance.hurtColor = draw.hurtColor;
+            instance.bodyPose = glm::vec4(draw.pitch, 0.0f, 0.0f, 0.0f);
             const float light = EntityLight(state, draw.position);
             for (const MobLayer& layer : draw.model->layers)
             {
                 const EntityModelMesh& mesh = *layer.mesh;
+                const VkDescriptorSet layerSet = (draw.skin != nullptr ? draw.skin : layer.skin)->descriptorSet;
 
                 // One draw per part, each turned about its own pivot.
                 EntityAnimation::Pose pose = EntityAnimation::ComputePose(mesh.roles, mesh.parts, draw.anim);
@@ -2354,14 +2591,15 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     const EntityJsonModel::PartInfo& info = mesh.parts[part];
                     instance.partPivot = glm::vec4(info.pivot, 0.0f);
                     instance.partOffset = glm::vec4(ToWorldOffset(pose[part].offset, mesh.scale), light);
-                    instance.partRotation = glm::vec4(ToWorldRotation(pose[part].rotation), 0.0f);
-                    AddTextured(BATCH_MOBS, mesh, layer.skin->descriptorSet, info.indexCount, info.firstIndex, instance);
+                    instance.partRotation = glm::vec4(ToWorldRotation(pose[part].rotation), draw.deathRoll);
+                    AddTextured(BATCH_MOBS, mesh, layerSet, info.indexCount, info.firstIndex, instance);
                 }
                 if (mesh.parts.empty())
                 {
-                    instance.partPivot = instance.partRotation = glm::vec4(0.0f);
+                    instance.partPivot = glm::vec4(0.0f);
+                    instance.partRotation = glm::vec4(0.0f, 0.0f, 0.0f, draw.deathRoll);
                     instance.partOffset = glm::vec4(0.0f, 0.0f, 0.0f, light);
-                    AddTextured(BATCH_MOBS, mesh, layer.skin->descriptorSet, mesh.indexCount, 0, instance);
+                    AddTextured(BATCH_MOBS, mesh, layerSet, mesh.indexCount, 0, instance);
                 }
             }
 
@@ -2370,6 +2608,8 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             {
                 const EntityModelMesh& body = *draw.model->layers.front().mesh;
                 EntityAnimation::Pose bodyPose = EntityAnimation::ComputePose(body.roles, body.parts, draw.anim);
+                const SkinTexture* glintSheet = draw.armorGlint != 0 ? GlintSkin(true) : nullptr;
+                const VkDescriptorSet armorGlintSet = glintSheet != nullptr ? glintSheet->descriptorSet : VK_NULL_HANDLE;
                 for (int slot = 0; slot < 4; slot++)
                 {
                     const std::string* worn = draw.armor[static_cast<size_t>(slot)];
@@ -2390,8 +2630,12 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                             const EntityJsonModel::PartInfo& info = armorMesh.parts[index];
                             instance.partPivot = glm::vec4(info.pivot, pass == 0 ? static_cast<float>(look.tint) : 0.0f);
                             instance.partOffset = glm::vec4(ToWorldOffset(bodyPose[index].offset, body.scale), light);
-                            instance.partRotation = glm::vec4(ToWorldRotation(bodyPose[index].rotation), 0.0f);
+                            instance.partRotation = glm::vec4(ToWorldRotation(bodyPose[index].rotation), draw.deathRoll);
                             AddTextured(BATCH_MOBS, armorMesh, skin->descriptorSet, info.indexCount, info.firstIndex, instance);
+                            if (pass == 0 && armorGlintSet != VK_NULL_HANDLE && ((draw.armorGlint >> slot) & 1) != 0)
+                            {
+                                AddTextured(BATCH_GLINT, armorMesh, skin->descriptorSet, info.indexCount, info.firstIndex, instance);
+                            }
                         }
                     }
                 }
@@ -2401,6 +2645,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
         // The flush needs the shadow map's availability from the engine.
         Engine::Vulkan::VulkanRenderEngine* vulkan = state->renderEngine != nullptr ? state->renderEngine->GetVulkan() : nullptr;
         uint64_t triangles = FlushTextured(BATCH_MOBS, cmd, frameIndex, vulkan, indirect);
+        FlushTextured(BATCH_GLINT, cmd, frameIndex, vulkan, indirect);
         if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += triangles;
     }
 
@@ -2433,7 +2678,8 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                 m = glm::rotate(m, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
                 m = glm::translate(m, glm::vec3(left ? -1.0f / 16.0f : 1.0f / 16.0f, 0.125f, -0.625f));
                 state->itemRenderer->RecordItem(cmd, *item,
-                    left ? "thirdperson_lefthand" : "thirdperson_righthand", m, viewProj);
+                    left ? "thirdperson_lefthand" : "thirdperson_righthand", m, viewProj,
+                    glm::mat4(1.0f), 0.0f, left ? draw.offhandGlint : draw.mainhandGlint);
             };
             drawHand(mesh.roles.rightArm, false, draw.mainhandItem);
             drawHand(mesh.roles.leftArm, true, draw.offhandItem);
@@ -2645,6 +2891,7 @@ void EntityRenderer::RecordShadowCasters(VkCommandBuffer cmd, VkPipelineLayout l
             anim.posture = it->second.posture;
             anim.swimAmount = it->second.swimAmount;
             anim.headXRot = it->second.headXRot;
+            anim.headYRot = it->second.headYRot;
             anim.riding = it->second.riding;
             anim.ridingBoat = it->second.ridingBoat;
         }
@@ -2674,7 +2921,9 @@ void EntityRenderer::RecordShadowCasters(VkCommandBuffer cmd, VkPipelineLayout l
         float height = std::max(entity.boundingBox.y, 1.0f);
         if (!inLightBox(position + glm::vec3(0.0f, height * 0.5f, 0.0f), height)) return;
 
-        drawMob(*mob->second.layers.front().mesh, position, entity.InterpolatedYaw(now), animationFor(id, &entity));
+        auto walked = g_walkStates.find(id);
+        float yaw = walked != g_walkStates.end() && walked->second.bodyDrawn ? walked->second.bodyYaw : entity.InterpolatedYaw(now);
+        drawMob(*mob->second.layers.front().mesh, position, yaw, animationFor(id, &entity));
     });
 
     // The local player is no entity of the world's: they cast in any perspective,

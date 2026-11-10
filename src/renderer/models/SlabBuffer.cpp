@@ -121,10 +121,13 @@ bool SlabBuffer::AllocateFromBlockLocked(Block& block, const void* data, VkDevic
 SlabBuffer::Block* SlabBuffer::AddBlockLocked(VkDeviceSize minimumSize)
 {
     VkDeviceSize size = std::max(BLOCK_SIZE, minimumSize);
+    growFailure = "the slab's size limit was reached";
     if (capacity.load() + size > limit) return nullptr;
 
     uint64_t available = Platform::OS::GetAvailablePhysicalMemoryBytes(); // 0 = unknown.
+    growFailure = "free system RAM is below the headroom the slab keeps (see RAM_HEADROOM_BYTES)";
     if (available != 0 && available < size + RAM_HEADROOM_BYTES) return nullptr;
+    growFailure = "the GPU allocation failed";
 
     auto block = std::make_unique<Block>();
     block->buffer = CreateBuffer(size, usage, true /* isUMA: host-visible, sequential write */);
@@ -172,7 +175,7 @@ bool SlabBuffer::Allocate(const void* data, VkDeviceSize size, VkDeviceSize alig
             Log::Error("SlabBuffer can't grow (" + std::to_string(capacity.load() / (1024 * 1024)) + " MB committed of a "
                 + std::to_string(limit / (1024 * 1024)) + " MB limit, " + std::to_string(used.load() / (1024 * 1024))
                 + " MB in use, requested " + std::to_string(size) + " bytes; " + std::to_string(suppressedFailures)
-                + " failed since the last report) - those sections will retry. Raise Graphics.SlabSize or free RAM.");
+                + " failed since the last report) because " + growFailure + " - those sections will retry.");
             lastFailureLog = now;
             suppressedFailures = 0;
         }

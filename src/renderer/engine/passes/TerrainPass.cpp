@@ -47,17 +47,14 @@ void TerrainPass::Record(FrameContext& frame)
     }
 
     // Locked against MeshingThread, which appends to renderList as chunks
-    // stream in - see the mutex's comment in GlobalState.hpp. Frustum
-    // culling runs inside the lock (cheap: a handful of dot products per
-    // chunk) so the filtered list doesn't outlive renderList's own Mesh
-    // storage.
+    // stream in
     std::lock_guard<std::mutex> lock(frame.state->renderListMutex);
     const std::vector<const Mesh*>& visible = GetVisible(cache, frame.state->renderList, frame, false);
 
     PhaseTimer drawTimer(frame.state, GlobalState::CHUNK_PHASE_DRAW);
     if (indirect)
     {
-        uint64_t triangles = batch.Draw(cmd, frame.frameIndex, visible, sizeof(PackedVertex));
+        uint64_t triangles = batch.Draw(cmd, frame.frameIndex, visible, sizeof(PackedVertex), true);
         if (frame.state->debugHudVisible) frame.state->trianglesDrawn[GlobalState::TRIANGLES_TERRAIN] += triangles;
         return;
     }

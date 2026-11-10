@@ -12,7 +12,7 @@
 namespace Volcano {
 
 // How the local player is moving this tick. Ride is set by the vehicle code.
-enum class MoveMode : uint8_t { Walk, Swim, SwimSprint, Ride };
+enum class MoveMode : uint8_t { Walk, Swim, SwimSprint, Ride, Fly };
 
 class TickLoop {
 public:
@@ -28,7 +28,7 @@ public:
 
     // This frame's input, published right before Tick() consumes it. Kept
     // atomic mainly to keep PublishInput/Tick() as separate calls, not for
-    // cross-thread safety - both now run on RenderThread.
+    // cross-thread safety
     void PublishInput(bool inputAllowed, float moveForward, float moveRight,
                        bool sneaking, bool sprinting, bool jumpHeld);
 
@@ -36,14 +36,10 @@ public:
     // packets - genuinely cross-thread now, hence atomic.
     bool IsGrounded() const { return grounded.load(std::memory_order_relaxed); }
 
-    // Same cross-thread reasoning as IsGrounded - MovementFlags bit 1, for
-    // TickThread's own movement packets.
+    // Same cross-thread reasoning as IsGrounded
     bool HasHorizontalCollision() const { return horizontalCollision.load(std::memory_order_relaxed); }
 
-    // Current sneak state, as last published by PublishInput - read by
-    // InteractionManager::SecondaryTriggerStart for UseEntity's own
-    // `sneaking` field (vanilla's interact packet reports it independently
-    // of movement). Same cross-thread reasoning as IsGrounded.
+    // Current sneak state, as last published by PublishInput
     bool IsSneaking() const { return sneakActive.load(std::memory_order_relaxed); }
 
     // Which movement keys are held, as PlayC2S::PlayerInput's bitflags -
@@ -73,17 +69,17 @@ public:
     };
     MovementSnapshot GetMovementSnapshot() const;
 
-    // Edge-triggered jump request - call once from PollInputs when
-    // WasActivated("Jump") is true. Latches until the next Tick() consumes
-    // it (test-and-clear), so a tap landing between two frames can't be
-    // dropped the way a plain last-write-wins flag could drop it between
-    // two FixedStep()s.
+    // Edge-triggered jump request
     void RequestJump() { jumpRequested.store(true); }
 
-    // Interpolated render-frame position - mixes previousPosition/
-    // currentPosition using elapsed wall time, computed fresh every call
-    // (not cached) since FixedStep() only advances at a fixed 20Hz. Use this
-    // for the camera, not Player::GetPosition() directly.
+    bool IsFlying() { return flying.load(); }
+    void SetFlying(bool value) { flying.store(value); }
+
+    // Flight speed boost (sprint key or Move.FlyBoost), published alongside
+    // PublishInput - only read while `flying` is set.
+    void SetFlyBoost(bool value) { flyBoostActive.store(value); }
+
+    // Interpolated render-frame position
     glm::vec3 GetRenderPosition() const;
 
     // 0..1 fraction of the current fixed tick elapsed (same alpha
@@ -133,6 +129,8 @@ private:
     std::atomic<bool> sneakActive{false};
     std::atomic<bool> sprintActive{false};
     std::atomic<bool> jumpHeldActive{false};
+    std::atomic<bool> flying{false};
+    std::atomic<bool> flyBoostActive{false};
 
     // Raw pair + timestamp GetRenderPosition() mixes fresh each call.
     mutable std::mutex renderPositionMutex;
@@ -162,14 +160,12 @@ private:
     // Sprint state (see UpdateSprinting), fall distance (for crits - see
     // MovementSnapshot), and which horizontal axes (bit 0 = X, bit 2 = Z)
     // were blocked by a wall in the last fixed step. RenderThread-only,
-    // same as previousPosition/currentPosition/velocity above - exposed
-    // cross-thread only via the mutex-protected MovementSnapshot.
+    // same as previousPosition/currentPosition/velocity above
     bool sprinting = false;
     float fallDistance = 0.0f;
     uint8_t horizontalCollisionAxes = 0;
     // Whether the last wall hit blocked a meaningful part of the intended
-    // movement, as opposed to grazing a wall at a shallow angle - only the
-    // former stops a sprint (vanilla's "minor horizontal collision").
+    // movement, as opposed to grazing a wall at a shallow angle
     bool majorHorizontalCollision = false;
     glm::vec3 lastHorizontalDir{0.0f};
 
@@ -188,7 +184,7 @@ private:
     MovementSnapshot movementSnapshot;
 
     // Applies everything queued on GlobalState::localMotion since the last
-    // call, in order - see LocalMotionInbox's own comment.
+    // call, in order
     void DrainLocalMotion();
 
     // Vanilla's sprint rules (LocalPlayer.aiStep): start while the sprint
@@ -198,12 +194,13 @@ private:
     // head-on into a wall.
     void UpdateSprinting(bool inputAllowedNow, float forwardInput, bool sneaking);
 
-    // One fixed 1/20s simulation step - the per-tick body Tick() calls zero
-    // or more times per invocation. Named separately from the public,
-    // self-timed Tick() above now that "the thing driving ticks" and "one
-    // fixed step" are no longer the same method the way Advance()/Tick()
-    // used to be.
+    // One fixed 1/20s simulation step
     void FixedStep(bool inputAllowedNow);
+
+    // The flying branch of FixedStep: vanilla creative-style movement -
+    // yaw-relative X/Y only (pitch ignored), jump rises, sneak descends,
+    // velocity set directly each tick rather than accelerated.
+    void FixedStepFly(float forwardInput, float rightInput, bool inputAllowedNow);
 
     // Plays the footstep for the block under the player's feet. Called from
     // FixedStep once enough distance and time have passed since the last one.
@@ -228,8 +225,7 @@ private:
     void MoveAxis(glm::vec3& position, glm::vec3& vel, int axis, float delta);
 
     // How far a move of `delta` along `axis` (0/1/2) can go before the
-    // player's AABB hits a collision box - vanilla's Shapes.collide. Returns
-    // a value between 0 and `delta`; anything short of `delta` means blocked.
+    // player's AABB hits a collision box
     double SweepAxis(glm::vec3 position, int axis, double delta) const;
 
     // Whether a player-width box `height` tall at `position` overlaps any

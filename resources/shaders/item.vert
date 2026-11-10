@@ -8,7 +8,7 @@ layout(push_constant) uniform PushConstants {
     vec4 normalRow0; // Rows of the 3x3 normal matrix (rotation part of the display transform).
     vec4 normalRow1;
     vec4 normalRow2;
-    vec4 params;     // x: 1 = flat item lit head-on, 0 = block-style lighting; y: light taken away, 0 to 1.
+    vec4 params;     // x: 1 = flat item lit head-on, 0 = block-style lighting; y: light taken away, 0 to 1; z: glint time in seconds.
 } pc;
 
 layout(location = 0) in vec3 inPosition;
@@ -19,6 +19,7 @@ layout(location = 3) in float inLayer;
 layout(location = 0) out vec2 fragUV;
 layout(location = 1) out float fragLayer;
 layout(location = 2) out float fragLight;
+layout(location = 3) out float fragTime;
 
 // Vanilla's item lights, in view space.
 const vec3 LIGHT0 = vec3(0.1569, 0.7845, -0.5492); // normalize(vec3(0.2, 1.0, -0.7))
@@ -35,5 +36,6 @@ void main() {
 
     fragUV = inUV;
     fragLayer = inLayer;
+    fragTime = pc.params.z;
     fragLight = (pc.params.x > 0.5 ? 1.0 : min(1.0, 0.4 + 0.6 * lit)) * (1.0 - pc.params.y);
 }

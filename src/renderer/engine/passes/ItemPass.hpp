@@ -12,6 +12,7 @@
 #include "../../terrain/OcclusionSnapshot.hpp"
 #include "../../../GlobalState.hpp"
 #include "../../../inventory/ItemRegistry.hpp"
+#include "../../entity/models/EntityRegistry.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -44,18 +45,41 @@ public:
             uint32_t id;
         };
         std::vector<Drop> drops;
+        struct Thrown
+        {
+            glm::vec3 position;
+            const char* item;
+            float height;
+        };
+        std::vector<Thrown> thrown;
         auto now = std::chrono::steady_clock::now();
         bool occlusionCulling = std::get<bool>(state->config->Get("Graphics.EntityOcclusionCulling", false));
         {
             std::lock_guard<std::mutex> lock(state->entitiesMutex);
             state->ForEachEntity([&](uint32_t id, const Entity& entity)
             {
-                if (entity.itemId == 0 || !entity.visible) return;
+                const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity.type);
+                const char* thrownItem = info != nullptr ? EntityRegistry::ThrownItemName(info->name) : nullptr;
+                if ((entity.itemId == 0 && thrownItem == nullptr) || !entity.visible) return;
                 glm::vec3 position = entity.InterpolatedPosition(now);
                 if (glm::distance(position, frame.scene->cameraPosition) > MAX_DISTANCE) return;
                 if (occlusionCulling && occlusionSnapshot.IsEntityOccluded(position, entity.boundingBox.x, entity.boundingBox.y)) return;
+                if (thrownItem != nullptr)
+                {
+                    thrown.push_back({ position, thrownItem, entity.boundingBox.y });
+                    return;
+                }
                 drops.push_back({ position, entity.itemId, id });
             });
+        }
+
+        // Thrown items face the camera: the inverse of the view's rotation turns the sprite to look back down the ray.
+        glm::mat4 facing(glm::transpose(glm::mat3(frame.scene->view)));
+        for (const Thrown& item : thrown)
+        {
+            if (!renderer->HasModel(item.item)) continue;
+            glm::mat4 placement = glm::translate(glm::mat4(1.0f), item.position + glm::vec3(0.0f, item.height * 0.5f, 0.0f)) * facing;
+            renderer->RecordItem(frame.commandBuffer, item.item, "ground", placement, frame.viewProj);
         }
 
         for (const Drop& drop : drops)
