@@ -54,6 +54,7 @@ void InitImpl(const TextureManager& textureManager) {
             info.name = i.value("name", std::string());
             info.displayName = i.value("displayName", std::string());
             info.maxDurability = i.value("maxDurability", 0);
+            info.maxStackSize = i.value("stackSize", 64);
 
             // TextureManager's layerLookup is a single flat, bare-stem-keyed
             // table spanning both textures/block/ and textures/item/ (see
@@ -116,6 +117,10 @@ void Init(const TextureManager& textureManager) {
 const ItemTypeInfo* Lookup(int32_t protocolItemId) {
     auto it = g_itemsById.find(protocolItemId);
     return it != g_itemsById.end() ? &it->second : nullptr;
+}
+
+void ForEach(const std::function<void(int32_t, const ItemTypeInfo&)>& fn) {
+    for (const auto& [id, info] : g_itemsById) fn(id, info);
 }
 
 } // namespace Volcano::ItemRegistry

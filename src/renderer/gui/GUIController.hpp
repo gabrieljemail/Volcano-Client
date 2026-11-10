@@ -244,6 +244,7 @@ private:
     static GUI::Screen* deathScreen;
     static GUI::GUIComponent* deathMessageText;
     static GUI::Screen* inventoryScreen; // See screens/InventoryScreen.
+    static GUI::Screen* creativeScreen;  // See screens/CreativeInventoryScreen.
 
     static bool chatInputOpen;
     static bool chatInputJustOpened; // Consumed once by the HUD to focus the box the frame it opens.
@@ -314,7 +315,8 @@ private:
     };
     static std::unordered_map<uint16_t, ModelIcon> modelIconCache;
     static std::unordered_map<uint16_t, GUI::Sprite> itemSprites; // Empty sprite = no icon.
-    static ImTextureID ModelIconForItem(uint16_t itemId, const std::string& itemName);
+    // `glint` bakes a still enchantment glint in (cached apart under the id's top bit), and renders flat items too.
+    static ImTextureID ModelIconForItem(uint16_t itemId, const std::string& itemName, bool glint = false);
 
     // Loads one standalone PNG (path) into a StandaloneIcon
     static StandaloneIcon LoadStandaloneIcon(const std::string& path, uint32_t outlineColor = 0);

@@ -22,6 +22,7 @@
 #include <stb_image.h>
 #include "../../resources/ImageLoad.hpp"
 #include "gui/Animation.hpp"
+#include "gui/screens/CreativeInventoryScreen.hpp"
 #include "gui/screens/InventoryScreen.hpp"
 #include "gui/models/GUIComponent.hpp"
 #include "gui/models/Button.hpp"
@@ -148,6 +149,7 @@ GUI::Screen* GUIController::pauseScreen = nullptr;
 GUI::Screen* GUIController::deathScreen = nullptr;
 GUI::GUIComponent* GUIController::deathMessageText = nullptr;
 GUI::Screen* GUIController::inventoryScreen = nullptr;
+GUI::Screen* GUIController::creativeScreen = nullptr;
 bool GUIController::chatInputOpen = false;
 bool GUIController::chatInputJustOpened = false;
 char GUIController::chatInputBuffer[256] = {};
@@ -257,8 +259,9 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     deathScreen->components.push_back(deathMessageText);
     deathScreen->components.push_back(respawnButton);
 
-    // Inventory screen
+    // Inventory screens
     inventoryScreen = GUI::CreateInventoryScreen(state);
+    creativeScreen = GUI::CreateCreativeScreen(state);
 
     LoadStandaloneIcons();
 
@@ -424,7 +427,7 @@ ImTextureID GUIController::IconForItem(const ItemStack& item)
 
     // Blocks and custom models draw as 3D icons; flat items keep their crisp
     // 2D sprite.
-    if (ImTextureID icon = ModelIconForItem(item.itemId, info->name)) return icon;
+    if (ImTextureID icon = ModelIconForItem(item.itemId, info->name, item.glint)) return icon;
     if (!info->hasTexture) return 0;
     return GetItemIcon(info->textureLayer);
 }
@@ -432,7 +435,7 @@ ImTextureID GUIController::IconForItem(const ItemStack& item)
 const GUI::Sprite* GUIController::GetItemSprite(const ItemStack& item)
 {
     if (item.IsEmpty()) return nullptr;
-    uint16_t id = static_cast<uint16_t>(item.itemId);
+    uint16_t id = static_cast<uint16_t>(item.itemId) | (item.glint ? 0x8000 : 0);
 
     auto found = itemSprites.find(id);
     if (found == itemSprites.end())
@@ -442,7 +445,7 @@ const GUI::Sprite* GUIController::GetItemSprite(const ItemStack& item)
         if (info != nullptr)
         {
             // The same choice IconForItem makes: the 3D model's icon if it has one, else the flat sprite.
-            ModelIconForItem(id, info->name);
+            ModelIconForItem(item.itemId, info->name, item.glint);
             const StandaloneIcon& model = modelIconCache[id].icon;
             if (model.image != VK_NULL_HANDLE)
             {
@@ -459,19 +462,19 @@ const GUI::Sprite* GUIController::GetItemSprite(const ItemStack& item)
     return found->second.IsEmpty() ? nullptr : &found->second;
 }
 
-ImTextureID GUIController::ModelIconForItem(uint16_t itemId, const std::string& itemName)
+ImTextureID GUIController::ModelIconForItem(uint16_t itemId, const std::string& itemName, bool glint)
 {
-    ModelIcon& entry = modelIconCache[itemId];
+    ModelIcon& entry = modelIconCache[static_cast<uint16_t>(itemId | (glint ? 0x8000 : 0))];
     if (!entry.resolved)
     {
         entry.resolved = true;
         if (state != nullptr && state->itemRenderer != nullptr && textureManager != nullptr)
         {
             const ItemModel* model = ItemModel::ForItem(itemName, *textureManager);
-            if (model != nullptr && model->GetType() != ItemModelType::ITEM)
+            if (model != nullptr && (glint || model->GetType() != ItemModelType::ITEM))
             {
                 ItemRenderer::IconImage image;
-                if (state->itemRenderer->RenderGuiIcon(itemName, image))
+                if (state->itemRenderer->RenderGuiIcon(itemName, image, glint))
                 {
                     entry.icon.image = image.image;
                     entry.icon.allocation = image.allocation;
@@ -743,12 +746,19 @@ void GUIController::Update(float deltaTime)
         CloseChatInput();
     }
 
-    // "E" toggles the inventory screen, same key Minecraft uses
+    // "E" toggles the inventory screen, same key Minecraft uses. Creative mode
+    // gets its own picker instead of the survival inventory.
     if (activeScreen == nullptr && !chatInputOpen && state->input->WasActivated("ToggleInventory"))
     {
-        OpenScreen(inventoryScreen);
+        OpenScreen(state->localGameMode.load() == 1 ? creativeScreen : inventoryScreen);
     }
-    else if (activeScreen == inventoryScreen && state->input->WasActivated("ToggleInventory"))
+    // While a Pincel input has focus (e.g. the creative search field), "E" is
+    // a typed character, not the inventory toggle - WantsKeyboard reflects the
+    // canvas state from the last Update, one frame stale but always current
+    // while a field stays focused.
+    else if ((activeScreen == inventoryScreen || activeScreen == creativeScreen)
+        && !(controlRenderer != nullptr && controlRenderer->WantsKeyboard())
+        && state->input->WasActivated("ToggleInventory"))
     {
         CloseScreen();
     }
@@ -1234,6 +1244,7 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
     constexpr float MAX_DISTANCE = 100.0f;
     constexpr float MAX_DISTANCE_SQUARED = MAX_DISTANCE * MAX_DISTANCE;
     constexpr float HEAD_MARGIN = 0.3f; // Blocks above the bounding box.
+    constexpr float NAMETAG_LIFT = 4.0f; // Pixels above the head, so a head tilted up doesn't cover it.
     constexpr float SCREEN_MARGIN = 1.3f; // NDC extent kept, so wide tags near an edge still draw.
     constexpr uint64_t PRUNE_INTERVAL = 120;
     constexpr size_t MAX_TAGS = 24; // Nearest only; every tag is two lines of glyph quads plus shadows.
@@ -1251,6 +1262,9 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
         float fontSize = 0.0f;
         std::string lines[2];
         float widths[2]{};
+        std::vector<ChatSegment> nameSegments; // A player's team-decorated name; empty to draw lines[0].
+        bool hidden = false;                  // The team hides its members' tags.
+        uint32_t teamsVersion = 0;
         uint64_t lastUsed = 0;
     };
     struct Candidate
@@ -1282,6 +1296,7 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
     bool occlusionCulling = std::get<bool>(state->config->Get("Graphics.EntityOcclusionCulling", false));
     // Debug.EntityTags: every entity gets its type and coordinates. Otherwise only players are tagged, by name.
     bool debugTags = std::get<bool>(state->config->Get("Debug.EntityTags", false));
+    const uint32_t teamsVersion = state->teamsVersion.load();
 
     // Cheap tests only; text is built afterward for the nearest few.
     auto consider = [&](const Entity& entity, const std::string* name)
@@ -1357,10 +1372,11 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
 
             TagText& text = cache[entity.id];
             text.lastUsed = frame;
-            if (!text.built || text.type != entity.type || text.debugText != debugTags || text.detailed != detailed
+            if (!text.built || text.teamsVersion != teamsVersion || text.type != entity.type || text.debugText != debugTags || text.detailed != detailed
                 || (detailed && text.shownPosition != entity.position) || text.fontSize != fontSize)
             {
-                bool typeChanged = !text.built || text.type != entity.type || text.debugText != debugTags;
+                bool typeChanged = !text.built || text.teamsVersion != teamsVersion || text.type != entity.type || text.debugText != debugTags;
+                text.teamsVersion = teamsVersion;
                 text.debugText = debugTags;
                 text.built = true;
                 text.detailed = detailed;
@@ -1381,6 +1397,28 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
                         text.lines[0] = candidate.name != nullptr ? *candidate.name : std::string();
                     }
                     text.widths[0] = ImGui::CalcTextSize(text.lines[0].c_str()).x;
+
+                    // Players wear their team's prefix, color and suffix.
+                    text.nameSegments.clear();
+                    text.hidden = false;
+                    if (!debugTags && candidate.name != nullptr && !candidate.name->empty())
+                    {
+                        static const uint32_t TEAM_COLORS[16] = { 0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA,
+                            0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF };
+                        std::lock_guard<std::mutex> teamLock(state->teamsMutex);
+                        for (const auto& [teamName, team] : state->teams)
+                        {
+                            if (std::find(team.members.begin(), team.members.end(), *candidate.name) == team.members.end()) continue;
+                            text.hidden = team.hideNameTag;
+                            text.nameSegments = team.prefix;
+                            text.nameSegments.push_back(ChatSegment{ *candidate.name, team.color >= 0 ? TEAM_COLORS[team.color] : 0xFFFFFFu });
+                            text.nameSegments.insert(text.nameSegments.end(), team.suffix.begin(), team.suffix.end());
+                            break;
+                        }
+                        float width = 0.0f;
+                        for (const ChatSegment& segment : text.nameSegments) width += ImGui::CalcTextSize(segment.text.c_str()).x;
+                        if (!text.nameSegments.empty()) text.widths[0] = width;
+                    }
                 }
 
                 if (detailed)
@@ -1392,7 +1430,7 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
                 }
             }
 
-            visible.push_back({ candidate.screen, &text, detailed ? 2 : 1 });
+            if (!text.hidden) visible.push_back({ candidate.screen, &text, detailed ? 2 : 1 });
         }
     }
 
@@ -1402,8 +1440,18 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
         for (int i = 0; i < tag.lineCount; i++)
         {
             const std::string& line = tag.text->lines[i];
-            float lineY = tag.screen.y - fontSize * static_cast<float>(tag.lineCount - i);
+            float lineY = tag.screen.y - NAMETAG_LIFT - fontSize * static_cast<float>(tag.lineCount - i);
             ImVec2 position(std::floor(tag.screen.x - tag.text->widths[i] * 0.5f), std::floor(lineY));
+            if (i == 0 && !tag.text->nameSegments.empty())
+            {
+                for (const ChatSegment& segment : tag.text->nameSegments)
+                {
+                    ImU32 color = IM_COL32((segment.colorRGB >> 16) & 0xFF, (segment.colorRGB >> 8) & 0xFF, segment.colorRGB & 0xFF, 255);
+                    drawList->AddText(nullptr, 0.0f, position, color, segment.text.data(), segment.text.data() + segment.text.size());
+                    position.x += ImGui::CalcTextSize(segment.text.c_str()).x;
+                }
+                continue;
+            }
             drawList->AddText(nullptr, 0.0f, position, IM_COL32_WHITE, line.data(), line.data() + line.size());
         }
     }

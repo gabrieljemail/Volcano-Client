@@ -553,6 +553,12 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     float forwardInput = inputAllowedNow ? moveForwardInput.load() : 0.0f;
     float rightInput = inputAllowedNow ? moveRightInput.load() : 0.0f;
 
+    if (flying.load())
+    {
+        FixedStepFly(forwardInput, rightInput, inputAllowedNow);
+        return;
+    }
+
     float yaw = glm::radians(state->player->camera.GetYaw());
     glm::vec3 forward{ sin(yaw), 0.0f, cos(yaw) };
     glm::vec3 right = glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -725,7 +731,7 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     // Fall distance, as vanilla's Entity.checkFallDamage tracks it: every
     // block moved downward while airborne adds up, landing resets it. A
     // critical hit needs this above 0 (see MovementSnapshot).
-    if (grounded || inWater) fallDistance = 0.0f;
+    if (grounded || inWater || flying.load()) fallDistance = 0.0f;
     else if (currentPosition.y < previousPosition.y) fallDistance += previousPosition.y - currentPosition.y;
 
     // Scope-limited sneak: just lower the camera, don't touch the collision
@@ -747,9 +753,67 @@ void TickLoop::FixedStep(bool inputAllowedNow)
     // Gravity + drag apply every tick regardless of grounded state, but only
     // AFTER this tick's move
     constexpr float VERTICAL_DRAG = 0.98f;
-    if (!inWater) velocity.y = (velocity.y - gravity) * VERTICAL_DRAG;
+    if (!inWater && !flying.load()) velocity.y = (velocity.y - gravity) * VERTICAL_DRAG;
     if (std::fabs(velocity.y) < 0.005f && !inWater) velocity.y = 0.0f;
     LogIfNotFinite("velocity after gravity", velocity, velocity, grounded);
+}
+
+void TickLoop::FixedStepFly(float forwardInput, float rightInput, bool inputAllowedNow)
+{
+    // Vanilla creative flight ignores pitch entirely: W/S and A/D move on
+    // the ground plane relative to yaw, and the only vertical input is
+    // jump (up) / sneak (down). No acceleration or friction - velocity is
+    // set outright each tick, then swept through the same MoveAxis
+    // collision walking uses.
+    float yaw = glm::radians(state->player->camera.GetYaw());
+    glm::vec3 forward{ std::sin(yaw), 0.0f, std::cos(yaw) };
+    glm::vec3 right = glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f));
+
+    glm::vec3 wish = forward * forwardInput + right * rightInput;
+    if (inputAllowedNow)
+    {
+        if (jumpHeldActive.load()) wish.y += 1.0f;
+        if (sneakActive.load()) wish.y -= 1.0f;
+    }
+    if (glm::length(wish) > 1.0f) wish = glm::normalize(wish);
+
+    float flySpeed = static_cast<float>(state->attributes->GetDouble("generic.flying_speed", 0.25));
+    // Controls.FlyBoostMultiplier is a percent (200 = double speed); the
+    // sprint key and the FlyBoost binding both feed flyBoostActive.
+    float flySpeedMultiplier = flyBoostActive.load()
+        ? static_cast<float>(std::get<uint32_t>(state->config->Get("Controls.FlyBoostMultiplier", uint32_t{200}))) / 100.0f
+        : 1.0f;
+    velocity = wish * (flySpeed * flySpeedMultiplier);
+
+    horizontalCollisionAxes = 0;
+    majorHorizontalCollision = false;
+    lastHorizontalDir = glm::vec3(wish.x, 0.0f, wish.z);
+
+    collisionHeight = PLAYER_HEIGHT;
+    moveMode = MoveMode::Fly;
+    swimming = false;
+    sprinting = false; // Flying fast isn't sprinting - no sprint flag to the server.
+    fallDistance = 0.0f;
+    swimAmount += std::clamp(0.0f - swimAmount, -SWIM_AMOUNT_STEP, SWIM_AMOUNT_STEP);
+    grounded = false; // Re-derived by MoveAxis below if this step lands.
+    jumpQueued = false; // Space rises via jumpHeldActive instead.
+
+    glm::vec3 pos = currentPosition;
+    MoveAxis(pos, velocity, 1, velocity.y);
+    MoveAxis(pos, velocity, 0, velocity.x);
+    MoveAxis(pos, velocity, 2, velocity.z);
+    currentPosition = pos;
+    LogIfNotFinite("position after fly MoveAxis", currentPosition, velocity, grounded);
+    state->player->SetPosition(currentPosition);
+
+    // Keep the water-edge state the sound code reads consistent even though
+    // flight itself skips the water physics and UpdateWaterSounds.
+    FluidQuery fluids(state->world);
+    bool inWater = fluids.SubmergedFraction(currentPosition, collisionHeight) > 0.0f;
+    eyeInWater = fluids.Contains(currentPosition + glm::vec3(0.0f,
+        state->player->camera.eyeHeight.load(std::memory_order_relaxed), 0.0f));
+    inWaterLast = inWater;
+    eyeInWaterLast = eyeInWater;
 }
 
 // Mirrors vanilla's Entity.collide / Shapes.collide: each axis is swept, not

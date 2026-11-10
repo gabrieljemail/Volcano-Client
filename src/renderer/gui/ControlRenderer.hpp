@@ -65,6 +65,10 @@ public:
     // Lays the finished screen over the frame, inside the main render pass.
     void Record(VkCommandBuffer commandBuffer);
 
+    // Whether a Pincel input on the current screen has keyboard focus - while
+    // it does, typed keys belong to the field, not to game keybinds like "E".
+    bool WantsKeyboard() const { return canvas != nullptr && canvas->WantsKeyboard(); }
+
     // Forgets the built screen so its images are read again (after a resource reload).
     void ReloadResources();
 

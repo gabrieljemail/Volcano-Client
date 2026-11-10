@@ -344,6 +344,20 @@ struct SlotSkipper::Impl {
 
                 if (name == "damage") { out.damage = reader.ReadVarInt(); continue; }
                 if (name == "max_damage") { out.maxDamage = reader.ReadVarInt(); continue; }
+                if (name == "enchantment_glint_override") { out.glintOverride = reader.ReadBool() ? 1 : 0; continue; }
+                if (name == "enchantments" || name == "stored_enchantments")
+                {
+                    // Array of (enchantment id, level) varint pairs.
+                    int32_t entries = reader.ReadVarInt();
+                    if (entries < 0 || static_cast<size_t>(entries) > reader.Remaining()) return false;
+                    for (int32_t entry = 0; entry < entries; entry++)
+                    {
+                        reader.ReadVarInt();
+                        reader.ReadVarInt();
+                    }
+                    if (entries > 0) out.enchanted = true;
+                    continue;
+                }
 
                 auto defIt = componentTypes.find(name);
                 if (defIt == componentTypes.end()) continue; // No switch entry means void.

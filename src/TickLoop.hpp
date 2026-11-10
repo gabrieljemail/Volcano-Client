@@ -12,7 +12,7 @@
 namespace Volcano {
 
 // How the local player is moving this tick. Ride is set by the vehicle code.
-enum class MoveMode : uint8_t { Walk, Swim, SwimSprint, Ride };
+enum class MoveMode : uint8_t { Walk, Swim, SwimSprint, Ride, Fly };
 
 class TickLoop {
 public:
@@ -72,6 +72,13 @@ public:
     // Edge-triggered jump request
     void RequestJump() { jumpRequested.store(true); }
 
+    bool IsFlying() { return flying.load(); }
+    void SetFlying(bool value) { flying.store(value); }
+
+    // Flight speed boost (sprint key or Move.FlyBoost), published alongside
+    // PublishInput - only read while `flying` is set.
+    void SetFlyBoost(bool value) { flyBoostActive.store(value); }
+
     // Interpolated render-frame position
     glm::vec3 GetRenderPosition() const;
 
@@ -122,6 +129,8 @@ private:
     std::atomic<bool> sneakActive{false};
     std::atomic<bool> sprintActive{false};
     std::atomic<bool> jumpHeldActive{false};
+    std::atomic<bool> flying{false};
+    std::atomic<bool> flyBoostActive{false};
 
     // Raw pair + timestamp GetRenderPosition() mixes fresh each call.
     mutable std::mutex renderPositionMutex;
@@ -187,6 +196,11 @@ private:
 
     // One fixed 1/20s simulation step
     void FixedStep(bool inputAllowedNow);
+
+    // The flying branch of FixedStep: vanilla creative-style movement -
+    // yaw-relative X/Y only (pitch ignored), jump rises, sneak descends,
+    // velocity set directly each tick rather than accelerated.
+    void FixedStepFly(float forwardInput, float rightInput, bool inputAllowedNow);
 
     // Plays the footstep for the block under the player's feet. Called from
     // FixedStep once enough distance and time have passed since the last one.

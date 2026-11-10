@@ -1,6 +1,7 @@
 #include "AccountPanel.hpp"
 #include "ControlRenderer.hpp"
 #include "Theme.hpp"
+#include "../../network/SkinFetcher.hpp"
 #include "../../network/microsoft/MSAccountManager.hpp"
 #include <imgui.h>
 
@@ -15,10 +16,13 @@ using Pincel::Position;
 using namespace Theme;
 
 constexpr float EDGE_MARGIN = 8.0f;
-constexpr float ROW_WIDTH = 140.0f;
+constexpr float ROW_WIDTH = 220.0f;
 constexpr float REMOVE_WIDTH = 24.0f;
+constexpr float HEAD_SIZE = 18.0f;
+constexpr float HEAD_INSET = 8.0f;
 constexpr float PANEL_PADDING = 8.0f;
 constexpr float PANEL_GAP = 4.0f;
+constexpr float FULL_WIDTH = ROW_WIDTH + REMOVE_WIDTH + PANEL_GAP; // A whole account row.
 constexpr float PANEL_RADIUS = 12.0f;
 
 bool Signing(const DeviceLoginState& login)
@@ -28,19 +32,24 @@ bool Signing(const DeviceLoginState& login)
 }
 } // namespace
 
-std::string AccountPanel::Signature(MSAccountManager* accounts) const
+std::string AccountPanel::Signature(MSAccountManager* accounts, SkinFetcher* skins) const
 {
     std::string text = open ? "o" : "c";
     std::optional<size_t> current = accounts->CurrentIndex();
     text += current.has_value() ? std::to_string(*current) : "-";
-    for (const MicrosoftAccount& account : accounts->Snapshot()) text += "|" + account.GetProfileName();
+    std::vector<uint8_t> head;
+    for (const MicrosoftAccount& account : accounts->Snapshot())
+    {
+        text += "|" + account.GetProfileName();
+        if (skins != nullptr && skins->TryGetHead("head:" + account.GetUuid(), head)) text += "+"; // Its face arrived.
+    }
 
     DeviceLoginState login = accounts->GetDeviceLogin();
     text += "#" + std::to_string(static_cast<int>(login.phase)) + login.userCode + login.error;
     return text;
 }
 
-void AccountPanel::Build(ControlRenderer& ui, MSAccountManager* accounts)
+void AccountPanel::Build(ControlRenderer& ui, MSAccountManager* accounts, SkinFetcher* skins)
 {
     selectButtons.clear();
     removeButtons.clear();
@@ -51,11 +60,34 @@ void AccountPanel::Build(ControlRenderer& ui, MSAccountManager* accounts)
     std::vector<MicrosoftAccount> list = accounts->Snapshot();
     std::optional<size_t> current = accounts->CurrentIndex();
     DeviceLoginState login = accounts->GetDeviceLogin();
-    builtSignature = Signature(accounts);
+    builtSignature = Signature(accounts, skins);
     userCode = login.userCode;
     verificationUri = login.verificationUri;
 
     auto units = [&ui](float value) { return static_cast<std::uint16_t>(ui.Units(value)); };
+
+    // The account's face at the left edge of `button`; nothing until it downloads (or if the account has no skin).
+    auto AddHead = [&](Element button, const MicrosoftAccount& account)
+    {
+        std::vector<uint8_t> pixels;
+        const std::string key = "head:" + account.GetUuid();
+        if (skins != nullptr && !account.GetSkinUrl().empty())
+        {
+            skins->Request(key, account.GetSkinUrl(), account.GetSkinSlim());
+            skins->TryGetHead(key, pixels);
+        }
+        if (pixels.empty()) return;
+        // An overlay stretched over the button, so the face can be centered vertically at its left edge.
+        Element overlay = button.AddStack(Orientation::Horizontal);
+        overlay.SetPosition(Position::Absolute)
+            .SetInsets(Pincel::Insets{ .left = 0, .top = 0, .right = 0, .bottom = 0 })
+            .SetAlign(Align::Start, Align::Center)
+            .SetPadding(0, 0, 0, units(HEAD_INSET));
+        if (std::optional<Element> head = overlay.AddImage(pixels.data(), 8, 8))
+        {
+            head->SetSize(units(HEAD_SIZE), units(HEAD_SIZE)).SetImageFilter(Pincel::ImageFilter::Nearest);
+        }
+    };
 
     root = ui.Overlay().AddStack(Orientation::Vertical);
     root.SetPosition(Position::Fixed)
@@ -64,7 +96,8 @@ void AccountPanel::Build(ControlRenderer& ui, MSAccountManager* accounts)
         .SetGap(units(PANEL_GAP));
 
     std::string label = current.has_value() && *current < list.size() ? list[*current].GetProfileName() : "Offline";
-    toggleButton = ui.AddButton(root, label + (open ? " ^" : " v"), ROW_WIDTH + REMOVE_WIDTH + PANEL_GAP);
+    toggleButton = ui.AddButton(root, label + (open ? " ^" : " v"), FULL_WIDTH);
+    if (current.has_value() && *current < list.size()) AddHead(toggleButton, list[*current]);
     if (!open && !Signing(login)) return;
 
     Element panel = root.AddStack(Orientation::Vertical);
@@ -75,7 +108,7 @@ void AccountPanel::Build(ControlRenderer& ui, MSAccountManager* accounts)
         .SetBorder(units(2.0f), PANEL_LIGHT)
         .SetCornerRadius(units(PANEL_RADIUS));
 
-    offlineButton = ui.AddButton(panel, current.has_value() ? "Offline" : "> Offline", ROW_WIDTH + REMOVE_WIDTH + PANEL_GAP);
+    offlineButton = ui.AddButton(panel, current.has_value() ? "Offline" : "> Offline", FULL_WIDTH);
     for (size_t i = 0; i < list.size(); i++)
     {
         Element row = panel.AddStack(Orientation::Horizontal);
@@ -90,27 +123,27 @@ void AccountPanel::Build(ControlRenderer& ui, MSAccountManager* accounts)
         {
             panel.AddText("Open " + login.verificationUri);
             panel.AddText("and enter: " + login.userCode);
-            copyCodeButton = ui.AddButton(panel, "Copy code", ROW_WIDTH + REMOVE_WIDTH + PANEL_GAP);
-            copyPageButton = ui.AddButton(panel, "Copy page", ROW_WIDTH + REMOVE_WIDTH + PANEL_GAP);
+            copyCodeButton = ui.AddButton(panel, "Copy code", FULL_WIDTH);
+            copyPageButton = ui.AddButton(panel, "Copy page", FULL_WIDTH);
         }
         else
         {
             panel.AddText(login.phase == DeviceLoginState::Phase::SigningIn ? "Signing in..." : "Contacting Microsoft...");
         }
-        cancelButton = ui.AddButton(panel, "Cancel", ROW_WIDTH + REMOVE_WIDTH + PANEL_GAP);
+        cancelButton = ui.AddButton(panel, "Cancel", FULL_WIDTH);
     }
     else
     {
         if (login.phase == DeviceLoginState::Phase::Failed)
         {
             Element error = panel.AddText(login.error);
-            error.SetSize(units(ROW_WIDTH + REMOVE_WIDTH + PANEL_GAP), 0).SetForeground(Theme::Syntax::INVALID_WORD);
+            error.SetSize(units(FULL_WIDTH), 0).SetForeground(Theme::Syntax::INVALID_WORD);
         }
-        addButton = ui.AddButton(panel, "Add account", ROW_WIDTH + REMOVE_WIDTH + PANEL_GAP);
+        addButton = ui.AddButton(panel, "Add account", FULL_WIDTH);
     }
 }
 
-void AccountPanel::Update(ControlRenderer& ui, MSAccountManager* accounts, bool visible)
+void AccountPanel::Update(ControlRenderer& ui, MSAccountManager* accounts, SkinFetcher* skins, bool visible)
 {
     if (accounts == nullptr || !root.IsValid()) return;
     root.SetVisible(visible);
@@ -147,7 +180,7 @@ void AccountPanel::Update(ControlRenderer& ui, MSAccountManager* accounts, bool 
         }
     }
 
-    if (changed || Signature(accounts) != builtSignature) ui.Rebuild();
+    if (changed || Signature(accounts, skins) != builtSignature) ui.Rebuild();
 }
 
 } // namespace Volcano::GUI

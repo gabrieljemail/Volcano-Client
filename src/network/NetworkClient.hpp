@@ -89,6 +89,10 @@ void SendRespawnRequest(GlobalState* state);
 // PlayC2S::SetHeldItem
 void SendHeldItemSlot(GlobalState* state, uint8_t slot);
 
+// Reports the local flight state via PlayC2S::PlayerAbilities (flags i8:
+// mayFly | flying bits). Called when the double-tap Fly toggle flips.
+void SendPlayerAbilities(GlobalState* state, bool flying);
+
 // Reports one predicted player-inventory click and its resulting slot/cursor
 // state. `stateId` is the latest revision received from the server.
 void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
@@ -125,6 +129,16 @@ void SendBlockPlace(GlobalState* state, Hand hand, glm::ivec3 position, glm::ive
 
 // PlayC2S::UseItem
 void SendUseItem(GlobalState* state, Hand hand, float yaw, float pitch);
+
+// PlayC2S::PickItemFromBlock
+void SendPickItemFromBlock(GlobalState* state, glm::ivec3 position);
+
+// PlayC2S::SetCreativeSlot - writes one player-inventory slot directly in
+// creative mode (no window is open). `slot` uses player-inventory menu
+// numbering (window 0: main 9-35, hotbar 36-44, armor 5-8, offhand 45);
+// -1 drops the stack into the world. ItemStack carries no components, so
+// enchanted/damaged variants round-trip as plain items.
+void SendSetCreativeSlot(GlobalState* state, int16_t slot, const ItemStack& item);
 
 // Swings an arm (PlayC2S::SwingArm - an alias of ArmAnimation, see
 // PacketIds.hpp) - the animation other players see. hand: 0 = main hand,

@@ -13,6 +13,8 @@ struct ItemStack {
     // From the damage / max_damage components; -1 when the stack carried none.
     int32_t damage = -1;
     int32_t maxDamage = -1;
+    // Draws the enchantment glint: enchanted, or forced on/off by the glint override component.
+    bool glint = false;
 
     bool IsEmpty() const { return itemId == 0 || count == 0; }
 };

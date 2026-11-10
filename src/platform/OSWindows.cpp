@@ -126,6 +126,13 @@ bool OS::IsDebuggerAttached()
     return IsDebuggerPresent() != FALSE;
 }
 
+bool OS::SetMemoryPriority(int level)
+{
+    MEMORY_PRIORITY_INFORMATION info{};
+    info.MemoryPriority = static_cast<ULONG>(level < 1 ? 1 : level > 5 ? 5 : level);
+    return SetProcessInformation(GetCurrentProcess(), ProcessMemoryPriority, &info, sizeof(info)) != FALSE;
+}
+
 bool OS::SetAboveNormalPriority()
 {
     return SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS) != FALSE;
@@ -407,6 +414,12 @@ bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string
         return false;
     }
     return true;
+}
+
+bool OS::ShowYesNoDialog(const std::string& title, const std::string& message)
+{
+    int answer = MessageBoxW(nullptr, ToWide(message).c_str(), ToWide(title).c_str(), MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
+    return answer == IDYES;
 }
 
 bool OS::ShowConsentDialog(const std::string& title, const std::string& message, const std::string& agreeLabel)

@@ -1,3 +1,4 @@
+#include <chrono>
 #include "ControlRenderer.hpp"
 #include <algorithm>
 #include <cfloat>
@@ -228,7 +229,7 @@ void ControlRenderer::Build(Screen& screen)
         }
     }
     if (screen.build) screen.build(*this);
-    accountPanel.Build(*this, state->accountManager);
+    accountPanel.Build(*this, state->accountManager, state->skinFetcher);
 
     // Over everything else, and never in the mouse's way.
     tooltip = root.AddStack(Orientation::Vertical);
@@ -506,9 +507,41 @@ void ControlRenderer::Update(Screen& screen, float guiScale)
 
     Refresh(screen);
     FeedInput();
+
+    // Where the UI's time goes, logged once a second while the debug menu is open: Pincel's layout and rasterizing
+    // (Draw), then the upload, which waits for the GPU to go idle (PincelSurface::Upload).
+    using Clock = std::chrono::steady_clock;
+    auto drawStart = Clock::now();
     Pincel::Texture* texture = canvas->Draw();
+    auto drawEnd = Clock::now();
     React(screen);
+    uint64_t versionBefore = surface.UploadedVersion();
     surface.Upload(*texture);
+    auto uploadEnd = Clock::now();
+
+    if (state != nullptr && state->debugHudVisible)
+    {
+        static float drawMs = 0.0f, uploadMs = 0.0f;
+        static uint32_t frames = 0, uploads = 0;
+        static Clock::time_point windowStart = Clock::now();
+        drawMs += std::chrono::duration<float, std::milli>(drawEnd - drawStart).count();
+        if (surface.UploadedVersion() != versionBefore)
+        {
+            uploads++;
+            uploadMs += std::chrono::duration<float, std::milli>(uploadEnd - drawEnd).count();
+        }
+        frames++;
+        if (uploadEnd - windowStart >= std::chrono::seconds(1))
+        {
+            Log::Info("[UI] " + std::to_string(frames) + " frames, " + std::to_string(uploads) + " uploads; Pincel draw "
+                + std::to_string(drawMs / static_cast<float>(frames)) + " ms/frame, upload "
+                + std::to_string(uploads > 0 ? uploadMs / static_cast<float>(uploads) : 0.0f) + " ms each ("
+                + std::to_string(texture->width) + "x" + std::to_string(texture->height) + ")");
+            drawMs = uploadMs = 0.0f;
+            frames = uploads = 0;
+            windowStart = uploadEnd;
+        }
+    }
 }
 
 void ControlRenderer::Record(VkCommandBuffer commandBuffer)
@@ -545,7 +578,7 @@ void ControlRenderer::React(Screen& screen)
     for (Element& button : extraButtons) StyleButton(button);
     for (const Field& field : extraFields) StyleField(field);
     if (screen.update) screen.update(*this);
-    accountPanel.Update(*this, state->accountManager, state->connectionPhase.load() != ConnectionPhase::Playing);
+    accountPanel.Update(*this, state->accountManager, state->skinFetcher, state->connectionPhase.load() != ConnectionPhase::Playing);
 }
 
 void ControlRenderer::ReactButton(Control& control)

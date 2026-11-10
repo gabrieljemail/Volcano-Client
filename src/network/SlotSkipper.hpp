@@ -13,6 +13,8 @@ namespace Volcano {
 struct SlotComponentValues {
     int32_t damage = -1;
     int32_t maxDamage = -1;
+    bool enchanted = false;      // Has enchantments or stored enchantments.
+    int8_t glintOverride = -1;   // enchantment_glint_override: 0/1, -1 when absent.
 };
 
 // Skips data component payloads in a protocol Slot by walking the protodef

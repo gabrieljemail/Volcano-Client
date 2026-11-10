@@ -11,6 +11,7 @@
 #include <GLFW/glfw3.h>
 #include "../Math.hpp"
 #include "RenderThread.hpp"
+#include "VulkanInit.hpp"
 #include "gui/GUIController.hpp"
 #include "../TickLoop.hpp"
 #include "../ModLoader.hpp"
@@ -29,6 +30,7 @@ namespace Volcano {
 // needs from it.
 void SendHeldItemSlot(GlobalState* state, uint8_t slot);
 void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position, glm::ivec3 face);
+void SendPlayerAbilities(GlobalState* state, bool flying);
 }
 
 namespace Volcano {
@@ -239,6 +241,18 @@ void RenderThread::PollInputs()
     // mid-air and a pending teleport never lands until the screen closes.
     bool inputAllowed = !GUIController::IsScreenOpen() && !GUIController::IsChatInputOpen();
 
+    // Double-tap the Fly binding (InputHandler's DOUBLE_TAP trigger, see
+    // KeyBindings) to toggle flight. Requires the server's MayFly ability
+    // (PlayS2C::PlayerAbilities) and a live world; not while riding, since
+    // the vehicle owns movement then.
+    if (inputAllowed && state->worldReady.load() && state->ridingEntityId.load() < 0
+        && state->mayFly.load() && state->input->WasActivated("Fly"))
+    {
+        bool nowFlying = !state->tickLoop->IsFlying();
+        state->tickLoop->SetFlying(nowFlying);
+        SendPlayerAbilities(state, nowFlying);
+    }
+
     // Hotbar slot selection ("1".."9" - see their registration in
     // VolcanoClient.cpp). Gated the same way "G"/ToggleLighting is: typing a
     // digit into chat or a text field must not also swap the held slot.
@@ -259,6 +273,23 @@ void RenderThread::PollInputs()
             }
             SendHeldItemSlot(state, static_cast<uint8_t>(slot));
             break; // Two number keys can't both have been pressed the same frame in practice; stop at the first.
+        }
+
+        // Scrolling moves the hotbar selection.
+        double strength = std::get<uint32_t>(state->config->Get("Controls.ScrollSpeed", 100U));
+        // When false, scrolling down goes to the next slot. When true, this is reversed.
+        bool direction = std::get<bool>(state->config->Get("Controls.ScrollDirection", false));
+        double scroll = state->input->GetScrollDeltaY() * strength;
+        if (scroll != 0.0)
+        {
+        	int dir = scroll > 0.0 ? (direction ? 1 : -1) : (direction ? -1 : 1);
+         	uint8_t slot;
+          	{
+           		std::lock_guard<std::mutex> lock(state->inventory.mutex);
+             	slot = static_cast<uint8_t>((state->inventory.selectedHotbarSlot + 9 + dir) % 9);
+              	state->inventory.selectedHotbarSlot = slot;
+           	}
+            SendHeldItemSlot(state, slot);
         }
     }
 
@@ -315,12 +346,18 @@ void RenderThread::PollInputs()
     {
         state->tickLoop->RequestJump();
     }
+    // Effective sprint (plain held key, or the ToggleSprint latch) doubles
+    // as the flight speed boost; Move.FlyBoost is a separate key for players
+    // who'd rather not share it.
+    bool effectiveSprint = toggleSprint ? sprintToggled : state->input->IsActive("Sprint");
+    state->tickLoop->SetFlyBoost(inputAllowed
+        && (effectiveSprint || state->input->IsActive("Move.FlyBoost")));
     state->tickLoop->PublishInput(
         inputAllowed,
         state->input->GetAxis("Move.Forward"),
         state->input->GetAxis("Move.Right"),
         state->input->IsActive("Sneak"),
-        toggleSprint ? sprintToggled : state->input->IsActive("Sprint"),
+        effectiveSprint,
         inputAllowed && state->input->IsActive("JumpHold"));
     state->tickLoop->Tick();
 }
@@ -370,7 +407,8 @@ void RenderThread::DrawFrame()
     double frameWorkTime = std::chrono::duration<double, std::milli>(workEnd - workStart).count();
     averageWorkTime = (averageWorkTime * 0.9) + (frameWorkTime * 0.1);
     // Re-read each frame so the Max FPS setting applies live.
-    uint16_t targetFPS = state->targetFPS;
+    bool reduceFPS = (glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_FALSE) || (glfwGetWindowAttrib(window, GLFW_HOVERED) == GLFW_FALSE);
+    uint16_t targetFPS = reduceFPS ? 5 : state->targetFPS;
     targetFrameTime = 1000.0 / static_cast<double>(targetFPS > 0 ? targetFPS : 60);
     nextFrameTarget += std::chrono::microseconds(static_cast<long long>(targetFrameTime * 1000));
 
@@ -595,11 +633,9 @@ glm::mat4 RenderThread::BuildProjection(const Engine::RenderExtent& extent)
     float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height > 0 ? extent.height : 1);
     float baseFov = static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOV", uint32_t{80})));
 
-    // Flying doesn't exist yet (no fly toggle - same placeholder
-    // GUIController's movement-state panel uses) so only sprinting drives
-    // this for now; whoever adds flight just needs to flip isFlying here,
-    // the easing below already handles either.
-    constexpr bool isFlying = false;
+    // Sprinting or flying drives the FOV kick; the snapshot's mode already
+    // reflects whichever movement mode FixedStep is in.
+    bool isFlying = state->tickLoop->GetMovementSnapshot().mode == MoveMode::Fly;
     bool boosted = isFlying || state->tickLoop->GetMovementSnapshot().sprinting;
     float targetFovOffset = boosted
         ? static_cast<float>(std::get<uint32_t>(state->config->Get("Graphics.FOVEffects", uint32_t{10})))

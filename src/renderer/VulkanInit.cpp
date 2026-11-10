@@ -5,6 +5,7 @@
 #include <vector>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <stb_image.h>
 #define VMA_IMPLEMENTATION
 #include "GlobalState.hpp"
 #include "Logger.hpp"
@@ -1289,6 +1290,19 @@ void Init(GlobalState* state)
         return;
     }
     state->window = window;
+
+    // The title bar and taskbar icon: the client's logo, which GLFW scales to whatever size the OS asks for.
+    {
+        int iconWidth = 0, iconHeight = 0, iconChannels = 0;
+        unsigned char* iconPixels = stbi_load("resources/logo.png", &iconWidth, &iconHeight, &iconChannels, 4);
+        if (iconPixels != nullptr)
+        {
+            GLFWimage icon{ iconWidth, iconHeight, iconPixels };
+            glfwSetWindowIcon(window, 1, &icon);
+            stbi_image_free(iconPixels);
+        }
+    }
+
     glfwGetWindowPos(window, &g_windowedX, &g_windowedY);
     glfwGetWindowSize(window, &g_windowedWidth, &g_windowedHeight);
 

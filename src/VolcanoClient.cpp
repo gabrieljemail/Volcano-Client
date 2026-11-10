@@ -122,6 +122,16 @@ int main(int argc, char** argv)
         }
     }
 
+    // Performance.MemoryPriority: 1 (trimmed first) to 5 (the system default). Lower values let the system page this
+    // process out sooner when RAM is tight; 5 leaves it alone.
+    {
+        int memoryPriority = static_cast<int>(std::get<uint32_t>(state.config->Get("Performance.MemoryPriority", uint32_t{5})));
+        if (memoryPriority != 5 && !Volcano::Platform::OS::SetMemoryPriority(memoryPriority))
+        {
+            Volcano::Log::Info("Couldn't set the memory priority; leaving it at the default.");
+        }
+    }
+
     Volcano::ModLoader modLoader(&state);
     state.modLoader = &modLoader;
     modLoader.Init();
@@ -211,6 +221,10 @@ int main(int argc, char** argv)
     input.RegisterAxis("Move.Forward", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, 0, 0, AxisSourceType::KeyPair, false });
     input.RegisterAxis("Move.Right", InputAxis{ -1.0f, 1.0f, 0.0f, 1.0f, 0, 0, AxisSourceType::KeyPair, false });
     Volcano::KeyBindings::Apply(*state.config, input);
+    // Milliseconds between two presses that still count as a double-tap
+    // (InputHandler's DOUBLE_TAP trigger - fly toggle, double-click, ...).
+    input.SetDoubleTapWindow(
+        std::get<uint32_t>(state.config->Get("Controls.DoubleTapWindow", uint32_t{250})) / 1000.0);
 
     // Fixed: RELEASE so F3+Z (wireframe, see RenderThread::PollInputs) can
     // cancel it, which only works with F3 itself.

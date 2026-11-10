@@ -9,6 +9,7 @@
 namespace Volcano {
 
 class MSAccountManager;
+class SkinFetcher;
 
 namespace GUI {
 
@@ -21,13 +22,13 @@ class ControlRenderer;
 class AccountPanel
 {
 public:
-    void Build(ControlRenderer& ui, MSAccountManager* accounts);
+    void Build(ControlRenderer& ui, MSAccountManager* accounts, SkinFetcher* skins);
 
     // Reacts to clicks and asks `ui` to rebuild when the accounts or the sign-in changed. `visible` is false in a world.
-    void Update(ControlRenderer& ui, MSAccountManager* accounts, bool visible);
+    void Update(ControlRenderer& ui, MSAccountManager* accounts, SkinFetcher* skins, bool visible);
 
 private:
-    std::string Signature(MSAccountManager* accounts) const;
+    std::string Signature(MSAccountManager* accounts, SkinFetcher* skins) const;
 
     bool open = false;
     std::string builtSignature;

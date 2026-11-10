@@ -62,6 +62,12 @@ struct Entity {
     glm::vec3 previousPosition{0.0f};
     float previousYaw = 0.0f;
 
+    // Where the head looks (Set Head Rotation), radians in the same turn direction as yaw. yaw is the body's
+    // heading as sent; until a head packet arrives the head follows it.
+    float headYaw = 0.0f;
+    float previousHeadYaw = 0.0f;
+    bool hasHeadYaw = false;
+
     // Blocks per tick, from the spawn / motion / position-sync packets. Only
     // dropped items use it (TickLoop::StepDroppedItems): the server updates
     // them about once a second, vanilla clients simulate the fall in between.
@@ -159,6 +165,12 @@ struct Entity {
     {
         float alpha = InterpolationAlpha(now);
         return Math::InterpolateAngle(previousYaw, yaw, alpha);
+    }
+
+    float InterpolatedHeadYaw(std::chrono::steady_clock::time_point now) const
+    {
+        if (!hasHeadYaw) return InterpolatedYaw(now);
+        return Math::InterpolateAngle(previousHeadYaw, headYaw, InterpolationAlpha(now));
     }
 
     float InterpolatedPitch(std::chrono::steady_clock::time_point now) const

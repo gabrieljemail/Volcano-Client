@@ -216,7 +216,7 @@ if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # -fms-compatibility forces Clang to emulate the MSVC compiler bugs/features needed for MSVC STL
     target_compile_options(${PROJECT_NAME} PRIVATE
         -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions
-        -O2
+        -O3
         -g -gcodeview
     )
     # NDEBUG in every config unless VOLCANO_DEBUG_CHECKS asks for the checks (see the top of this file).
@@ -237,7 +237,7 @@ else()
     # devices, so it stays portable instead.
     target_compile_options(${PROJECT_NAME} PRIVATE
         -Wall -Wextra -pthread -ffast-math
-        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>
         $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-Og> $<$<NOT:$<CONFIG:Release>>:-march=native>
     )
 endif()
@@ -378,13 +378,13 @@ target_link_libraries(NetDiag PRIVATE
 if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(NetDiag PRIVATE
         -fms-compatibility -fms-extensions
-        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>
         $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-gcodeview> $<$<NOT:$<CONFIG:Release>>:-O0>
     )
 else()
     target_compile_options(NetDiag PRIVATE
         -pthread
-        $<$<CONFIG:Release>:-O2> $<$<CONFIG:Release>:-DNDEBUG>
+        $<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>
         $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-Og>
     )
 endif()

@@ -28,7 +28,10 @@ public:
     // Writes the commands/instance data for `meshes` and records the draws.
     // `vertexStride` is the mesh vertex size in bytes (slab vertex offsets are
     // always multiples of it). Returns the triangles submitted.
-    uint64_t Draw(VkCommandBuffer cmd, uint32_t frameIndex, const std::vector<const Mesh*>& meshes, VkDeviceSize vertexStride);
+    // `groupByBuffer` reorders the draws so meshes in the same slab blocks are adjacent, which turns one draw call per
+    // block change into one per block pair. Only for depth-tested opaque lists: the order of a blended list matters.
+    uint64_t Draw(VkCommandBuffer cmd, uint32_t frameIndex, const std::vector<const Mesh*>& meshes, VkDeviceSize vertexStride,
+        bool groupByBuffer = false);
 
 private:
     AllocatedBuffer instances[FRAMES]{};

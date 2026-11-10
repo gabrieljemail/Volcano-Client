@@ -278,7 +278,7 @@ void InteractionManager::Update(bool inputAllowed)
 
     UpdateUsingItem(inputAllowed);
 
-    // ImGui owns the mouse while a Screen/chat box is focused.
+    // Pincel/ImGui owns the mouse while a Screen/chat box is focused.
     if (!inputAllowed) return;
 
     primaryPressedThisFrame = state->input->WasActivated("PrimaryActionPress");
@@ -311,6 +311,15 @@ void InteractionManager::Update(bool inputAllowed)
     if (state->input->WasActivated("SecondaryActionRelease"))
     {
         SecondaryTriggerRelease();
+    }
+
+    // Pick block?
+    if (state->input->WasActivated("PickBlock"))
+    {
+    	if (targetedBlock.has_value() && state->localGameMode.load() == 1)
+     	{
+      		SendPickItemFromBlock(state, targetedBlock->position);
+      	}
     }
 }
 

@@ -51,7 +51,8 @@ public:
     static constexpr uint64_t FREE_DELAY_FRAMES = 3;
 
     // Size of one block. A request bigger than this gets a block of its own size.
-    static constexpr VkDeviceSize BLOCK_SIZE = 16ull * 1024 * 1024;
+    // Small, because every slab keeps one block for good: with six slabs, 16 MB blocks pinned 96 MB of RAM even in an empty world.
+    static constexpr VkDeviceSize BLOCK_SIZE = 4ull * 1024 * 1024;
 
     // Sets the cap on total committed bytes and the usage bits every block is
     // created with (e.g. vertex and/or index buffer bits). Allocates nothing yet.
@@ -90,6 +91,7 @@ private:
     static void InsertFreeLocked(Block& block, VkDeviceSize offset, VkDeviceSize size);
     bool AllocateFromBlockLocked(Block& block, const void* data, VkDeviceSize size, VkDeviceSize alignment, VkDeviceSize& outOffset);
     Block* AddBlockLocked(VkDeviceSize minimumSize);
+    const char* growFailure = ""; // Why the last AddBlockLocked said no, for the log.
     void DestroyBlockLocked(Block& block);
 
     VkBufferUsageFlags usage = 0;

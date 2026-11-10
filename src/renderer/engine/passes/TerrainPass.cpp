@@ -54,7 +54,7 @@ void TerrainPass::Record(FrameContext& frame)
     PhaseTimer drawTimer(frame.state, GlobalState::CHUNK_PHASE_DRAW);
     if (indirect)
     {
-        uint64_t triangles = batch.Draw(cmd, frame.frameIndex, visible, sizeof(PackedVertex));
+        uint64_t triangles = batch.Draw(cmd, frame.frameIndex, visible, sizeof(PackedVertex), true);
         if (frame.state->debugHudVisible) frame.state->trianglesDrawn[GlobalState::TRIANGLES_TERRAIN] += triangles;
         return;
     }

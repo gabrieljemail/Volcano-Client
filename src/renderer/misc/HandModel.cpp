@@ -531,7 +531,7 @@ void HandModel::Record(Engine::FrameContext& frame)
 
         state->itemRenderer->RecordItem(cmd, item->name,
             rightArm ? "firstperson_righthand" : "firstperson_lefthand", m, proj,
-            RotateX(glm::mat4(1.0f), HELD_ITEM_PITCH_DEGREES), 1.0f - handLight);
+            RotateX(glm::mat4(1.0f), HELD_ITEM_PITCH_DEGREES), 1.0f - handLight, stack.glint);
     }
 
     VkViewport fullViewport{ 0.0f, 0.0f, width, height, 0.0f, 1.0f };

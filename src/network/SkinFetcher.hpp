@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -24,7 +25,7 @@ struct SkinImage
 };
 
 // Downloads skins on a worker thread. Request() is callable from any thread; the render thread collects the finished
-// images with TakeCompleted() and uploads them. Only https addresses on Mojang's hosts (plus Skins.AllowedHosts in
+// images with TakeCompleted() and uploads them. Only addresses on Mojang's hosts (plus Skins.AllowedHosts in
 // settings.json, for skin plugins that host their own) are fetched, since the URL comes from a server.
 class SkinFetcher
 {
@@ -36,6 +37,10 @@ public:
     void Request(const std::string& key, const std::string& url, bool slim);
 
     std::vector<SkinImage> TakeCompleted();
+
+    // Account heads for the menus: Request() a key starting with "head:" and its skin lands here instead of in
+    // TakeCompleted(), cut down to the 8x8 face with the hat layer over it (RGBA). False until it has downloaded.
+    bool TryGetHead(const std::string& key, std::vector<uint8_t>& rgba);
 
     // Reads the url and model out of a "textures" profile property (base64 JSON). False when it has no skin.
     static bool ParseTexturesProperty(const std::string& base64Value, std::string& url, bool& slim);
@@ -58,6 +63,7 @@ private:
     std::deque<Job> queue;
     std::unordered_set<std::string> requested;
     std::vector<SkinImage> completed;
+    std::unordered_map<std::string, std::vector<uint8_t>> heads;
     std::jthread worker;
 };
 

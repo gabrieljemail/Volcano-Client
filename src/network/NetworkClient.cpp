@@ -12,6 +12,7 @@
 #include "models/PacketEvent.hpp"
 #include "../Logger.hpp"
 #include "../ModLoader.hpp"
+#include "../TickLoop.hpp"
 #include "../RideController.hpp"
 #include "../audio/EntitySounds.hpp"
 #include "../interaction/CombatSounds.hpp"
@@ -351,6 +352,7 @@ ParsedSlot ReadItemStack(PacketReader& reader)
     result.complete = skipper.SkipComponents(reader, addedComponentCount, removedComponentCount, values);
     result.item.damage = values.damage;
     result.item.maxDamage = values.maxDamage;
+    result.item.glint = values.glintOverride >= 0 ? values.glintOverride == 1 : values.enchanted;
     return result;
 }
 
@@ -474,7 +476,7 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
                 bool shouldAuthenticate = reader.Remaining() == 0 || reader.ReadBool();
 
                 if (shouldAuthenticate && (session == nullptr || accounts == nullptr)) {
-                    lastError = "This server is in online mode. Pick a Microsoft account in the top right to join it.";
+                    lastError = "This server is in online mode. Sign in with a Microsoft account first (top right), then join again.";
                     Log::Error("[NET] " + lastError);
                     return false;
                 }
@@ -544,6 +546,26 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
                 return true;
             }
 
+            if (packetId == 0x04) {
+                // Login Plugin Request (proxy forwarding, mod handshakes): answer "not understood", as vanilla does.
+                int32_t messageId = reader.ReadVarInt();
+                Log::Info("Login Plugin Request '" + reader.ReadString() + "' declined.");
+                PacketWriter reply;
+                reply.WriteVarInt(messageId);
+                reply.WriteBool(false);
+                connection.SendPacket(0x02, reply.Data());
+                continue;
+            }
+
+            if (packetId == 0x05) {
+                // Cookie Request: this client stores no cookies, so every key is empty.
+                PacketWriter reply;
+                reply.WriteString(reader.ReadString());
+                reply.WriteBool(false);
+                connection.SendPacket(0x04, reply.Data());
+                continue;
+            }
+
             if (packetId == 0x00) {
                 std::string reason = reader.ReadString();
                 Log::Error("Server disconnected during login: " + reason);
@@ -554,10 +576,11 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
             {
                 std::ostringstream oss;
                 oss << "[NET] Unexpected packet ID 0x" << std::hex << packetId << std::dec
-                    << " while waiting for Login Success (likely an Encryption "
-                    << "Request packet - not handled yet).";
+                    << " while waiting for Login Success.";
                 Log::Error(oss.str());
-                lastError = "Server requires online-mode authentication (not supported yet).";
+                char idText[16];
+                std::snprintf(idText, sizeof(idText), "0x%02X", packetId);
+                lastError = std::string("The server sent an unexpected login packet (") + idText + "); see the log.";
             }
             return false;
         }
@@ -879,8 +902,19 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
         if (packetId == PlayS2C::PlayerAbilities) {
             try {
+                // flags i8, then flyingSpeed/walkingSpeed f32 (protocol.json's
+                // clientbound packet_abilities). Flag bits: 0x02 flying,
+                // 0x04 mayFly, 0x08 instabuild.
                 uint8_t flags = reader.ReadByte();
+                reader.ReadFloat();
+                reader.ReadFloat();
                 state->canInstabuild.store((flags & 0x08) != 0, std::memory_order_relaxed);
+                state->mayFly.store((flags & 0x04) != 0, std::memory_order_relaxed);
+                // The server is authoritative for the flying state too - it
+                // force-lands players whose permission was revoked.
+                if (state->tickLoop != nullptr) {
+                    state->tickLoop->SetFlying((flags & 0x02) != 0);
+                }
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Player Abilities packet: ") + e.what());
             }
@@ -1413,7 +1447,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 glm::vec3 spawnVelocity = ReadLpVec3(reader); // Only dropped items simulate with it.
                 int8_t spawnPitchByte = static_cast<int8_t>(reader.ReadByte());
                 int8_t yawByte = static_cast<int8_t>(reader.ReadByte());
-                reader.ReadByte(); // headYaw, unused.
+                int8_t spawnHeadByte = static_cast<int8_t>(reader.ReadByte());
                 int32_t objectData = reader.ReadVarInt(); // falling_block: block state id.
 
                 Entity entity;
@@ -1424,6 +1458,8 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 TraceEntity(state, "SPAWN", packetId, payload, entityId,
                     "type=" + std::to_string(entityType), glm::vec3(0.0f), entity.position);
                 entity.yaw = entity.previousYaw = AngleByteToRadians(yawByte);
+                entity.headYaw = entity.previousHeadYaw = AngleByteToRadians(spawnHeadByte);
+                entity.hasHeadYaw = true;
                 entity.pitch = entity.previousPitch = PitchByteToRadians(spawnPitchByte);
                 entity.velocity = spawnVelocity;
                 entity.lastUpdateTime = std::chrono::steady_clock::now();
@@ -1507,6 +1543,22 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 }
             } catch (const std::exception& e) {
                 Log::Error(std::string("[NET] Failed to parse Move Entity Pos(Rot): ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::EntityHeadRotation) {
+            try {
+                uint32_t entityId = static_cast<uint32_t>(reader.ReadVarInt());
+                int8_t headByte = static_cast<int8_t>(reader.ReadByte());
+                std::lock_guard lock(state->entitiesMutex);
+                if (Entity* entity = state->FindEntity(entityId); entity != nullptr) {
+                    entity->previousHeadYaw = entity->hasHeadYaw ? entity->headYaw : AngleByteToRadians(headByte);
+                    entity->headYaw = AngleByteToRadians(headByte);
+                    entity->hasHeadYaw = true;
+                }
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Set Head Rotation: ") + e.what());
             }
             continue;
         }
@@ -2042,6 +2094,66 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
             continue;
         }
 
+        if (packetId == PlayS2C::BlockBreakAnimation) {
+            try {
+                uint32_t breaker = static_cast<uint32_t>(reader.ReadVarInt());
+                int32_t x = 0, y = 0, z = 0;
+                reader.ReadPosition(x, y, z);
+                int stage = static_cast<int8_t>(reader.ReadByte());
+                std::lock_guard<std::mutex> lock(state->blockBreaksMutex);
+                if (stage < 0 || stage > 9) state->blockBreaks.erase(breaker);
+                else state->blockBreaks[breaker] = { glm::ivec3(x, y, z), stage };
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Block Break Animation: ") + e.what());
+            }
+            continue;
+        }
+
+        if (packetId == PlayS2C::UpdateTeams) {
+            try {
+                std::string teamName = reader.ReadString();
+                int8_t mode = static_cast<int8_t>(reader.ReadByte());
+                std::lock_guard<std::mutex> lock(state->teamsMutex);
+                if (mode == 1) {
+                    state->teams.erase(teamName);
+                } else {
+                    GlobalState::TeamInfo& team = state->teams[teamName];
+                    if (mode == 0 || mode == 2) {
+                        ReadTextComponent(reader); // Display name, unused.
+                        reader.ReadByte();         // Flags.
+                        team.hideNameTag = reader.ReadVarInt() == 1;
+                        reader.ReadVarInt();       // Collision rule.
+                        int32_t formatting = reader.ReadVarInt();
+                        team.color = formatting >= 0 && formatting <= 15 ? formatting : -1;
+                        team.prefix = ReadTextComponent(reader);
+                        team.suffix = ReadTextComponent(reader);
+                    }
+                    if (mode == 0 || mode == 3 || mode == 4) {
+                        int32_t count = reader.ReadVarInt();
+                        for (int32_t i = 0; i < count; i++) {
+                            std::string member = reader.ReadString();
+                            auto found = std::find(team.members.begin(), team.members.end(), member);
+                            if (mode == 4) {
+                                if (found != team.members.end()) team.members.erase(found);
+                            } else if (found == team.members.end()) {
+                                // A player is on one team at a time.
+                                for (auto& [otherName, other] : state->teams) {
+                                    if (&other == &team) continue;
+                                    auto old = std::find(other.members.begin(), other.members.end(), member);
+                                    if (old != other.members.end()) other.members.erase(old);
+                                }
+                                team.members.push_back(member);
+                            }
+                        }
+                    }
+                }
+                state->teamsVersion.fetch_add(1);
+            } catch (const std::exception& e) {
+                Log::Error(std::string("[NET] Failed to parse Update Teams: ") + e.what());
+            }
+            continue;
+        }
+
         if (packetId == PlayS2C::PlayerInfoRemove) {
             try {
                 int32_t count = reader.ReadVarInt();
@@ -2256,6 +2368,29 @@ void SendHeldItemSlot(GlobalState* state, uint8_t slot)
     }
 }
 
+void SendPlayerAbilities(GlobalState* state, bool flying)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) {
+        Log::Info("Dropped player-abilities report, no active connection.");
+        return;
+    }
+
+    try {
+        // Serverbound packet_abilities is flags i8 only: echo back every
+        // ability bit this client tracks (flying, mayFly, instabuild) so the
+        // server doesn't read the missing ones as revoked.
+        uint8_t flags = static_cast<uint8_t>((state->mayFly.load() ? 0x04 : 0x00)
+            | (flying ? 0x02 : 0x00)
+            | (state->canInstabuild.load() ? 0x08 : 0x00));
+        PacketWriter writer;
+        writer.WriteBytes(&flags, 1);
+        connection->QueuePacket(PlayC2S::PlayerAbilities, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send player abilities: ") + e.what());
+    }
+}
+
 namespace {
 
 void WriteHashedSlot(PacketWriter& writer, const ItemStack& item)
@@ -2426,6 +2561,47 @@ void SendBlockPlace(GlobalState* state, Hand hand, glm::ivec3 position, glm::ive
         connection->QueuePacket(PlayC2S::BlockPlace, writer.Data());
     } catch (const std::exception& e) {
         Log::Error(std::string("[NET] Failed to send block place: ") + e.what());
+    }
+}
+
+void SendPickItemFromBlock(GlobalState* state, glm::ivec3 position)
+{
+	std::shared_ptr<Connection> connection = state->activeConnection.load();
+	if (!connection) return;
+	PacketWriter writer;
+	writer.WritePosition(position.x, position.y, position.z);
+	writer.WriteBool(true); // includeData.
+	connection->QueuePacket(PlayC2S::PickItemFromBlock, writer.Data());
+}
+
+namespace {
+
+// UntrustedSlot (protocol.json): itemCount varint; when nonzero, itemId,
+// addedComponentCount, removedComponentCount, then both component arrays.
+// ItemStack tracks no components yet, so both counts are always 0.
+void WriteUntrustedSlot(PacketWriter& writer, const ItemStack& item)
+{
+    writer.WriteVarInt(item.IsEmpty() ? 0 : item.count);
+    if (item.IsEmpty()) return;
+    writer.WriteVarInt(item.itemId);
+    writer.WriteVarInt(0); // addedComponentCount
+    writer.WriteVarInt(0); // removedComponentCount
+}
+
+}
+
+void SendSetCreativeSlot(GlobalState* state, int16_t slot, const ItemStack& item)
+{
+    std::shared_ptr<Connection> connection = state->activeConnection.load();
+    if (connection == nullptr) return;
+
+    try {
+        PacketWriter writer;
+        writer.WriteShort(slot);
+        WriteUntrustedSlot(writer, item);
+        connection->QueuePacket(PlayC2S::SetCreativeSlot, writer.Data());
+    } catch (const std::exception& e) {
+        Log::Error(std::string("[NET] Failed to send creative slot: ") + e.what());
     }
 }
 

@@ -138,9 +138,23 @@ namespace PlayC2S { // Play state, serverbound (client -> server)
     // drink, throw, draw a bow, ...).
     constexpr int32_t UseItem = 0x43;
 
+    // packet_pick_item_from_block: Asks the server to "pick block" in Creative Mode.
+    constexpr int32_t PickItemFromBlock = 0x24;
+
+    // packet_set_creative_slot (0x38): slot (i16, player-inventory menu
+    // numbering - same as window 0: craft result 0, craft grid 1-4, armor
+    // 5-8, main 9-35, hotbar 36-44, offhand 45; -1 drops the stack into the
+    // world) then an UntrustedSlot. Creative-mode inventory edits bypass
+    // WindowClick entirely; the server applies the stack as given.
+    constexpr int32_t SetCreativeSlot = 0x38;
+
     // chunk_batch_received: chunksPerTick (f32) - the ack vanilla's
     // ChunkBatchSender waits on before sending the next batch.
     constexpr int32_t ChunkBatchReceived = 0x0B;
+
+    // packet_abilities (0x28): flags (i8) - the client's current ability
+    // flags; bit 0x02 flying, 0x04 mayFly. Sent when flight toggles.
+    constexpr int32_t PlayerAbilities = 0x28;
 
     // varint entityId (always our own); varint action (1 = start_sprinting,
     // 2 = stop_sprinting, ...); varint jumpBoost (horse jumps only, 0 here).
@@ -213,6 +227,7 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     constexpr int32_t SpawnEntity = 0x01;              // SPAWN_ENTITY (also used for other players - the dedicated Spawn Player packet was removed).
     constexpr int32_t RelEntityMove = 0x35;            // MOVE_ENTITY_POS: fixed-point position delta only.
     constexpr int32_t EntityMoveLook = 0x36;           // MOVE_ENTITY_POS_ROT: fixed-point position delta + yaw/pitch.
+    constexpr int32_t EntityHeadRotation = 0x53;       // ROTATE_HEAD: varint entityId, i8 headYaw.
     constexpr int32_t EntityLook = 0x38;               // MOVE_ENTITY_ROT: yaw/pitch only, no position change.
     constexpr int32_t EntityTeleport = 0x7D;           // ENTITY_POSITION_SYNC: absolute position + yaw/pitch.
     constexpr int32_t EntityDestroy = 0x4D;            // REMOVE_ENTITIES.
@@ -264,6 +279,10 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
 
     // Tab-list (Player Info) packets
     constexpr int32_t PlayerInfoRemove = 0x45;         // PLAYER_INFO_REMOVE
+    constexpr int32_t BlockBreakAnimation = 0x05;      // BLOCK_DESTRUCTION: varint entityId, position, i8 stage.
+    // string team; i8 mode (0 add, 1 remove, 2 change, 3 join, 4 leave); add/change: name, u8 flags, varint
+    // nameTagVisibility, varint collisionRule, varint formatting, prefix, suffix; add/join/leave: string[] members.
+    constexpr int32_t UpdateTeams = 0x6D;              // SET_PLAYER_TEAM
     constexpr int32_t PlayerInfoUpdate = 0x46;         // PLAYER_INFO_UPDATE
 
     // Inventory sync

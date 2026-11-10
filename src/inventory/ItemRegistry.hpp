@@ -3,6 +3,7 @@
 #define VOLCANO_ITEM_REGISTRY_H
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace Volcano {
@@ -22,6 +23,7 @@ struct ItemTypeInfo {
     int32_t foodPoints = 0;    // Hunger restored when eaten (half-drumsticks); 0 if not edible.
     float saturation = 0.0f;   // Saturation restored when eaten.
     int32_t maxDurability = 0; // 0 for items that don't wear out.
+    int32_t maxStackSize = 64; // items.json "stackSize" - what a creative pick gives.
 };
 
 // Parses minecraft-data's items.json once at startup, keyed by its "id"
@@ -37,6 +39,11 @@ void Init(const TextureManager& textureManager);
 // hasn't run, the id is 0 ("air" - ItemStack's own "empty slot" convention,
 // see ItemStack.hpp), or the id isn't in the loaded table.
 const ItemTypeInfo* Lookup(int32_t protocolItemId);
+
+// Calls `fn(protocolItemId, info)` once for every registered item type.
+// Read-only and thread-safe after Init(), like Lookup(). Iteration order is
+// unspecified - sort or filter at the call site.
+void ForEach(const std::function<void(int32_t, const ItemTypeInfo&)>& fn);
 
 } // namespace Volcano::ItemRegistry
 

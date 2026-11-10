@@ -8,6 +8,7 @@
 #include <string>
 #include <fstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <nlohmann/json.hpp>
 #include <stb_image.h>
 #include "../../resources/ImageLoad.hpp"
@@ -177,6 +178,9 @@ struct HumanoidDraw {
     const std::string* mainhandItem = nullptr; // Registry names, which outlive the frame.
     const std::string* offhandItem = nullptr;
     std::array<const std::string*, 4> armor{}; // Head, chest, legs, feet.
+    uint8_t armorGlint = 0; // Bit per armor slot that is enchanted.
+    bool mainhandGlint = false;
+    bool offhandGlint = false;
     bool hideHead = false; // First-person body view: the camera sits inside the head.
     float deathRoll = 0.0f; // Radians the body has tipped over; 0 while alive.
     float pitch = 0.0f;     // Radians the whole body tilts nose down.
@@ -309,6 +313,8 @@ VkPipelineLayout g_humanoidPipelineLayout = VK_NULL_HANDLE;
 // The same pipeline built from entity_textured_shadow.* (shadow receiving) and
 // its layout, which adds the shadow map as set 2. Null when unavailable.
 VkPipeline g_humanoidShadowedPipeline = VK_NULL_HANDLE;
+VkPipeline g_glintPipeline = VK_NULL_HANDLE; // Armor enchantment overlay.
+VkPipelineLayout g_glintLayout = VK_NULL_HANDLE; // Camera, the armor sheet (mask), the glint sheet.
 VkPipelineLayout g_humanoidShadowedLayout = VK_NULL_HANDLE;
 VkDescriptorSetLayout g_textureSetLayout = VK_NULL_HANDLE;
 VkDescriptorPool g_textureDescriptorPool = VK_NULL_HANDLE;
@@ -352,7 +358,7 @@ struct TexturedItem {
 // run of commands sharing a mesh and skin is one vkCmdDrawIndexedIndirect.
 // Each owner has its own per-frame buffers because its pass flushes at a
 // different point of the same frame.
-enum BatchOwner : uint32_t { BATCH_MOBS, BATCH_BLOCK_ENTITIES, BATCH_OWNER_COUNT };
+enum BatchOwner : uint32_t { BATCH_MOBS, BATCH_BLOCK_ENTITIES, BATCH_GLINT, BATCH_OWNER_COUNT };
 
 constexpr uint32_t MAX_TEXTURED_INSTANCES = 8192; // Also the command capacity: a command holds at least one.
 
@@ -590,7 +596,7 @@ void UploadTexturedMesh(const std::vector<EntityJsonModel::Vertex>& vertices,
 // only accepts exactly 16x16) - player/zombie skins are both 64x64 in this
 // resource pack, but nothing here assumes that.
 SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height, const std::string& path,
-    VkDescriptorPool pool = VK_NULL_HANDLE)
+    VkDescriptorPool pool = VK_NULL_HANDLE, bool smooth = false)
 {
     SkinTexture skin;
     VkDeviceSize imageBytes = static_cast<VkDeviceSize>(width) * height * 4;
@@ -651,11 +657,14 @@ SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height
     // it exposed a filter choice
     VkSamplerCreateInfo samplerInfo{};
     samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_NEAREST;
-    samplerInfo.minFilter = VK_FILTER_NEAREST;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    // Smooth is the glint sheets: blurred and tiled.
+    const VkFilter filter = smooth ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    const VkSamplerAddressMode wrap = smooth ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.magFilter = filter;
+    samplerInfo.minFilter = filter;
+    samplerInfo.addressModeU = wrap;
+    samplerInfo.addressModeV = wrap;
+    samplerInfo.addressModeW = wrap;
     samplerInfo.maxLod = 1.0f;
     if (vkCreateSampler(GetDevice(), &samplerInfo, nullptr, &skin.sampler) != VK_SUCCESS)
     {
@@ -689,7 +698,7 @@ SkinTexture CreateTextureFromPixels(const uint8_t* pixels, int width, int height
     return skin;
 }
 
-SkinTexture LoadSkinTexture(const std::string& path)
+SkinTexture LoadSkinTexture(const std::string& path, bool smooth = false)
 {
     int width = 0, height = 0;
     uint8_t* pixels = LoadImageRGBA(path, width, height);
@@ -700,7 +709,7 @@ SkinTexture LoadSkinTexture(const std::string& path)
 
     try
     {
-        SkinTexture skin = CreateTextureFromPixels(pixels, width, height, path);
+        SkinTexture skin = CreateTextureFromPixels(pixels, width, height, path, VK_NULL_HANDLE, smooth);
         stbi_image_free(pixels);
         return skin;
     }
@@ -797,6 +806,27 @@ const SkinTexture* CachedSkin(const std::string& skinPath)
     auto it = g_skinCache.find(skinPath);
     if (it != g_skinCache.end()) return &it->second;
     return &g_skinCache.emplace(skinPath, LoadSkinTexture(MOB_SKIN_DIR + skinPath)).first->second;
+}
+
+// The glint sheet for items or armor, loaded on first use; null when the packs have none.
+const SkinTexture* GlintSkin(bool armor)
+{
+    const std::string key = armor ? "glint:armor" : "glint:item";
+    auto found = g_skinCache.find(key);
+    if (found != g_skinCache.end()) return &found->second;
+    static std::unordered_set<std::string> failed;
+    if (failed.count(key) != 0) return nullptr;
+    try
+    {
+        const char* file = armor ? "assets/minecraft/textures/misc/enchanted_glint_armor.png"
+                                 : "assets/minecraft/textures/misc/enchanted_glint_item.png";
+        return &g_skinCache.emplace(key, LoadSkinTexture(file, true)).first->second;
+    }
+    catch (const std::exception&)
+    {
+        failed.insert(key);
+        return nullptr;
+    }
 }
 
 const SkinTexture* ArmorSkin(const std::string& path)
@@ -1034,9 +1064,9 @@ void CreateDescriptorLayoutAndPool()
         throw std::runtime_error("[ERROR] Failed to create entity skin texture descriptor set layout.");
     }
 
-    // One descriptor per distinct skin, plus one per cached block-entity
-    // texture (see MAX_BLOCK_TEXTURES)
-    constexpr uint32_t MAX_SKIN_TEXTURES = 8 + static_cast<uint32_t>(MAX_BLOCK_TEXTURES);
+    // One descriptor per distinct skin, plus one per cached block-entity texture (see MAX_BLOCK_TEXTURES), the armor
+    // sheets, the two glint sheets and the ten block-break crack textures.
+    constexpr uint32_t MAX_SKIN_TEXTURES = 8 + static_cast<uint32_t>(MAX_BLOCK_TEXTURES) + 96;
     VkDescriptorPoolSize texturePoolSize{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_SKIN_TEXTURES };
     VkDescriptorPoolCreateInfo texturePoolInfo{};
     texturePoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1567,6 +1597,51 @@ void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
         if (shadowVert != VK_NULL_HANDLE) vkDestroyShaderModule(GetDevice(), shadowVert, nullptr);
     }
 
+    // Armor glint: the textured vertex shader again, drawn additively over the armor's own depth.
+    VkShaderModule glintFrag = VK_NULL_HANDLE;
+    try
+    {
+        glintFrag = CreateShaderModule(shaders, "entity_glint.frag");
+        VkPipelineShaderStageCreateInfo glintStages[2] = { stages[0], stages[1] };
+        glintStages[1].module = glintFrag;
+        VkPipelineDepthStencilStateCreateInfo glintDepth = depthStencil;
+        glintDepth.depthWriteEnable = VK_FALSE;
+        glintDepth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        VkPipelineColorBlendAttachmentState glintBlend = colorBlendAttachment;
+        glintBlend.blendEnable = VK_TRUE;
+        glintBlend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+        glintBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        glintBlend.colorBlendOp = VK_BLEND_OP_ADD;
+        glintBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        glintBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        glintBlend.alphaBlendOp = VK_BLEND_OP_ADD;
+        VkPipelineColorBlendStateCreateInfo glintBlending = colorBlending;
+        glintBlending.pAttachments = &glintBlend;
+        VkGraphicsPipelineCreateInfo glintInfo = pipelineInfo;
+        VkDescriptorSetLayout glintSetLayouts[] = { cameraSetLayout, g_textureSetLayout, g_textureSetLayout };
+        VkPipelineLayoutCreateInfo glintLayoutInfo = pipelineLayoutInfo;
+        glintLayoutInfo.setLayoutCount = 3;
+        glintLayoutInfo.pSetLayouts = glintSetLayouts;
+        if (vkCreatePipelineLayout(GetDevice(), &glintLayoutInfo, nullptr, &g_glintLayout) != VK_SUCCESS)
+        {
+            throw std::runtime_error("glint layout");
+        }
+        glintInfo.layout = g_glintLayout;
+        glintInfo.pStages = glintStages;
+        glintInfo.pDepthStencilState = &glintDepth;
+        glintInfo.pColorBlendState = &glintBlending;
+        if (vkCreateGraphicsPipelines(GetDevice(), VK_NULL_HANDLE, 1, &glintInfo, nullptr, &g_glintPipeline) != VK_SUCCESS)
+        {
+            g_glintPipeline = VK_NULL_HANDLE;
+            throw std::runtime_error("glint pipeline");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        Log::Error(std::string("[ERROR] Armor glint unavailable: ") + e.what());
+    }
+    if (glintFrag != VK_NULL_HANDLE) vkDestroyShaderModule(GetDevice(), glintFrag, nullptr);
+
     DestroyShaderPair(vertModule, fragModule);
 }
 
@@ -1639,6 +1714,10 @@ void DestroyPipelines()
     if (g_humanoidPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, g_humanoidPipeline, nullptr);
     if (g_humanoidPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, g_humanoidPipelineLayout, nullptr);
     if (g_humanoidShadowedPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, g_humanoidShadowedPipeline, nullptr);
+    if (g_glintPipeline != VK_NULL_HANDLE) vkDestroyPipeline(dev, g_glintPipeline, nullptr);
+    if (g_glintLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, g_glintLayout, nullptr);
+    g_glintPipeline = VK_NULL_HANDLE;
+    g_glintLayout = VK_NULL_HANDLE;
     if (g_humanoidShadowedLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(dev, g_humanoidShadowedLayout, nullptr);
     g_humanoidShadowedPipeline = VK_NULL_HANDLE;
     g_humanoidShadowedLayout = VK_NULL_HANDLE;
@@ -1666,7 +1745,8 @@ uint64_t FlushTextured(BatchOwner owner, VkCommandBuffer cmd, uint32_t frameInde
     std::vector<TexturedItem>& items = batch.items;
     const uint32_t slot = frameIndex % FRAMES_IN_FLIGHT;
     if (items.empty()) return 0;
-    if (g_humanoidPipeline == VK_NULL_HANDLE || batch.instancesMapped[slot] == nullptr)
+    const bool glintBatch = owner == BATCH_GLINT;
+    if (g_humanoidPipeline == VK_NULL_HANDLE || batch.instancesMapped[slot] == nullptr || (glintBatch && g_glintPipeline == VK_NULL_HANDLE))
     {
         items.clear();
         return 0;
@@ -1717,21 +1797,24 @@ uint64_t FlushTextured(BatchOwner owner, VkCommandBuffer cmd, uint32_t frameInde
 
     // With a shadow map this frame, the shadow-receiving twin draws instead:
     // same records and skin sets, plus the map as set 2.
-    const bool shadowed = vulkan != nullptr && vulkan->AreShadowsActive() && g_humanoidShadowedPipeline != VK_NULL_HANDLE;
-    const VkPipelineLayout layout = shadowed ? g_humanoidShadowedLayout : g_humanoidPipelineLayout;
+    const bool shadowed = !glintBatch && vulkan != nullptr && vulkan->AreShadowsActive() && g_humanoidShadowedPipeline != VK_NULL_HANDLE;
+    const VkPipelineLayout layout = glintBatch ? g_glintLayout : (shadowed ? g_humanoidShadowedLayout : g_humanoidPipelineLayout);
+    const SkinTexture* glintSheet = glintBatch ? GlintSkin(true) : nullptr;
+    if (glintBatch && glintSheet == nullptr) return triangles;
     VkDescriptorSet shadowSetHandle = shadowed ? vulkan->GetShadowSet() : VK_NULL_HANDLE;
     const bool useIndirect = indirect && indirectDrawSupported;
     constexpr uint32_t STRIDE = sizeof(VkDrawIndexedIndirectCommand);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowed ? g_humanoidShadowedPipeline : g_humanoidPipeline);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        glintBatch ? g_glintPipeline : (shadowed ? g_humanoidShadowedPipeline : g_humanoidPipeline));
     VkDeviceSize zero = 0;
     vkCmdBindVertexBuffers(cmd, 1, 1, &batch.instances[slot].buffer, &zero);
     for (const TexturedBatch::Run& run : batch.runs)
     {
         vkCmdBindVertexBuffers(cmd, 0, 1, &run.mesh->vertexBuffer.buffer, &zero);
         vkCmdBindIndexBuffer(cmd, run.mesh->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-        VkDescriptorSet sets[] = { cameraSets[frameIndex], run.skin, shadowSetHandle };
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, shadowed ? 3 : 2, sets, 0, nullptr);
+        VkDescriptorSet sets[] = { cameraSets[frameIndex], run.skin, glintBatch ? glintSheet->descriptorSet : shadowSetHandle };
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, (shadowed || glintBatch) ? 3 : 2, sets, 0, nullptr);
 
         if (useIndirect)
         {
@@ -1820,6 +1903,33 @@ VkDescriptorSet EntityRenderer::GetLocalSkinSet()
 VkDescriptorSet EntityRenderer::GetDefaultSkinSet()
 {
     return g_steveSkin != nullptr ? g_steveSkin->descriptorSet : VK_NULL_HANDLE;
+}
+
+VkDescriptorSet EntityRenderer::GetCrackSet(int stage)
+{
+    if (stage < 0 || stage > 9) return VK_NULL_HANDLE;
+    const std::string key = "crack:" + std::to_string(stage);
+    auto found = g_skinCache.find(key);
+    if (found != g_skinCache.end()) return found->second.descriptorSet;
+    static std::unordered_set<std::string> failed;
+    if (failed.count(key) != 0) return VK_NULL_HANDLE;
+    try
+    {
+        const std::string file = "assets/minecraft/textures/block/destroy_stage_" + std::to_string(stage) + ".png";
+        return g_skinCache.emplace(key, LoadSkinTexture(file)).first->second.descriptorSet;
+    }
+    catch (const std::exception& e)
+    {
+        Log::Error(std::string("[CRACK] Couldn't load the crack texture: ") + e.what());
+        failed.insert(key);
+        return VK_NULL_HANDLE;
+    }
+}
+
+VkDescriptorSet EntityRenderer::GetGlintSet()
+{
+    const SkinTexture* glint = GlintSkin(false);
+    return glint != nullptr ? glint->descriptorSet : VK_NULL_HANDLE;
 }
 
 VkDescriptorSetLayout EntityRenderer::GetSkinSetLayout()
@@ -2148,7 +2258,12 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     if (mob->second.armorOuter != nullptr)
                     {
                         const EquipmentSlot slots[4] = { EquipmentSlot::Head, EquipmentSlot::Chest, EquipmentSlot::Legs, EquipmentSlot::Feet };
-                        for (size_t i = 0; i < 4; i++) draw.armor[i] = HeldItemName(entity->GetEquipment(slots[i]));
+                        for (size_t i = 0; i < 4; i++)
+                        {
+                            const ItemStack& piece = entity->GetEquipment(slots[i]);
+                            draw.armor[i] = HeldItemName(piece);
+                            if (piece.glint) draw.armorGlint |= static_cast<uint8_t>(1u << i);
+                        }
                     }
 
                     draw.pitch = static_cast<float>(mob->second.pitchMode) * entity->InterpolatedPitch(now);
@@ -2158,6 +2273,8 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     }
 
                     EntityAnimation::WalkState& walk = g_walkStates[entity->id];
+                    const glm::vec3 previousDrawPosition = walk.lastPosition;
+                    const bool hadPosition = walk.valid;
                     walk.Update(draw.position, now);
                     walk.lastSeenFrame = g_walkFrame;
                     draw.anim.walkPosition = walk.position;
@@ -2176,6 +2293,8 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     {
                         draw.mainhandItem = HeldItemName(holder->GetEquipment(EquipmentSlot::MainHand));
                         draw.offhandItem = HeldItemName(holder->GetEquipment(EquipmentSlot::OffHand));
+                        draw.mainhandGlint = holder->GetEquipment(EquipmentSlot::MainHand).glint;
+                        draw.offhandGlint = holder->GetEquipment(EquipmentSlot::OffHand).glint;
                         swimming = holder->IsSwimming();
                         if (holder->IsCrouching()) draw.anim.posture = EntityAnimation::Posture::Crouching;
                     }
@@ -2191,6 +2310,31 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                     walk.posture = draw.anim.posture;
                     walk.riding = draw.anim.riding;
                     walk.ridingBoat = draw.anim.ridingBoat;
+
+                    // Head and body turn apart, as for the local player: the head shows the look direction and the
+                    // body trails it, following the way the entity walks.
+                    if (mob->second.pitchMode == 0 && !entity->dead)
+                    {
+                        float headYawDeg = glm::degrees(entity->InterpolatedHeadYaw(now));
+                        glm::vec3 step = draw.position - previousDrawPosition;
+                        if (hadPosition && step.x * step.x + step.z * step.z > 1e-6f)
+                        {
+                            walk.moveYaw = glm::degrees(std::atan2(step.x, step.z));
+                        }
+                        bool moving = walk.speed > 0.05f;
+                        bool swinging = draw.anim.attackTime > 0.0f;
+                        float deltaSeconds = std::min(std::chrono::duration<float>(now - walk.bodyTime).count(), 0.1f);
+                        walk.bodyTime = now;
+                        float bodyYawDeg = walk.body.Update(deltaSeconds, headYawDeg, moving, walk.moveYaw, swinging);
+                        if (ride.riding) bodyYawDeg = glm::degrees(draw.yaw); // Seated bodies face as the vehicle does.
+                        draw.yaw = glm::radians(bodyYawDeg);
+                        draw.anim.headYRot = -glm::radians(BodyRotation::Wrap(headYawDeg - bodyYawDeg));
+                        draw.anim.headXRot = entity->InterpolatedPitch(now);
+                        walk.headXRot = draw.anim.headXRot;
+                        walk.headYRot = draw.anim.headYRot;
+                        walk.bodyYaw = draw.yaw;
+                        walk.bodyDrawn = true;
+                    }
                     humanoidVisible.push_back(draw);
                     continue;
                 }
@@ -2292,9 +2436,15 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                 std::lock_guard<std::mutex> lock(state->inventory.mutex);
                 draw.mainhandItem = HeldItemName(state->inventory.hotbar.Get(state->inventory.selectedHotbarSlot));
                 draw.offhandItem = HeldItemName(state->inventory.offhand.Get(0));
+                draw.mainhandGlint = state->inventory.hotbar.Get(state->inventory.selectedHotbarSlot).glint;
+                draw.offhandGlint = state->inventory.offhand.Get(0).glint;
                 if (mob->second.armorOuter != nullptr)
                 {
-                    for (size_t i = 0; i < 4; i++) draw.armor[i] = HeldItemName(state->inventory.armor.Get(i));
+                    for (size_t i = 0; i < 4; i++)
+                    {
+                        draw.armor[i] = HeldItemName(state->inventory.armor.Get(i));
+                        if (state->inventory.armor.Get(i).glint) draw.armorGlint |= static_cast<uint8_t>(1u << i);
+                    }
                 }
             }
             draw.anim.holdingMainhand = draw.mainhandItem != nullptr;
@@ -2458,6 +2608,8 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             {
                 const EntityModelMesh& body = *draw.model->layers.front().mesh;
                 EntityAnimation::Pose bodyPose = EntityAnimation::ComputePose(body.roles, body.parts, draw.anim);
+                const SkinTexture* glintSheet = draw.armorGlint != 0 ? GlintSkin(true) : nullptr;
+                const VkDescriptorSet armorGlintSet = glintSheet != nullptr ? glintSheet->descriptorSet : VK_NULL_HANDLE;
                 for (int slot = 0; slot < 4; slot++)
                 {
                     const std::string* worn = draw.armor[static_cast<size_t>(slot)];
@@ -2480,6 +2632,10 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                             instance.partOffset = glm::vec4(ToWorldOffset(bodyPose[index].offset, body.scale), light);
                             instance.partRotation = glm::vec4(ToWorldRotation(bodyPose[index].rotation), draw.deathRoll);
                             AddTextured(BATCH_MOBS, armorMesh, skin->descriptorSet, info.indexCount, info.firstIndex, instance);
+                            if (pass == 0 && armorGlintSet != VK_NULL_HANDLE && ((draw.armorGlint >> slot) & 1) != 0)
+                            {
+                                AddTextured(BATCH_GLINT, armorMesh, skin->descriptorSet, info.indexCount, info.firstIndex, instance);
+                            }
                         }
                     }
                 }
@@ -2489,6 +2645,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
         // The flush needs the shadow map's availability from the engine.
         Engine::Vulkan::VulkanRenderEngine* vulkan = state->renderEngine != nullptr ? state->renderEngine->GetVulkan() : nullptr;
         uint64_t triangles = FlushTextured(BATCH_MOBS, cmd, frameIndex, vulkan, indirect);
+        FlushTextured(BATCH_GLINT, cmd, frameIndex, vulkan, indirect);
         if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += triangles;
     }
 
@@ -2521,7 +2678,8 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
                 m = glm::rotate(m, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
                 m = glm::translate(m, glm::vec3(left ? -1.0f / 16.0f : 1.0f / 16.0f, 0.125f, -0.625f));
                 state->itemRenderer->RecordItem(cmd, *item,
-                    left ? "thirdperson_lefthand" : "thirdperson_righthand", m, viewProj);
+                    left ? "thirdperson_lefthand" : "thirdperson_righthand", m, viewProj,
+                    glm::mat4(1.0f), 0.0f, left ? draw.offhandGlint : draw.mainhandGlint);
             };
             drawHand(mesh.roles.rightArm, false, draw.mainhandItem);
             drawHand(mesh.roles.leftArm, true, draw.offhandItem);
@@ -2733,6 +2891,7 @@ void EntityRenderer::RecordShadowCasters(VkCommandBuffer cmd, VkPipelineLayout l
             anim.posture = it->second.posture;
             anim.swimAmount = it->second.swimAmount;
             anim.headXRot = it->second.headXRot;
+            anim.headYRot = it->second.headYRot;
             anim.riding = it->second.riding;
             anim.ridingBoat = it->second.ridingBoat;
         }
@@ -2762,7 +2921,9 @@ void EntityRenderer::RecordShadowCasters(VkCommandBuffer cmd, VkPipelineLayout l
         float height = std::max(entity.boundingBox.y, 1.0f);
         if (!inLightBox(position + glm::vec3(0.0f, height * 0.5f, 0.0f), height)) return;
 
-        drawMob(*mob->second.layers.front().mesh, position, entity.InterpolatedYaw(now), animationFor(id, &entity));
+        auto walked = g_walkStates.find(id);
+        float yaw = walked != g_walkStates.end() && walked->second.bodyDrawn ? walked->second.bodyYaw : entity.InterpolatedYaw(now);
+        drawMob(*mob->second.layers.front().mesh, position, yaw, animationFor(id, &entity));
     });
 
     // The local player is no entity of the world's: they cast in any perspective,

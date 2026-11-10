@@ -63,6 +63,21 @@ bool RunDialogTool(const std::vector<std::string>& args)
     waitpid(pid, &status, 0);
     return WIFEXITED(status) && WEXITSTATUS(status) != 127;
 }
+
+// Runs a dialog tool and returns its exit code (0 is Yes), or -1 when it isn't installed.
+int RunDialogToolStatus(const std::vector<std::string>& args)
+{
+    std::vector<char*> argv;
+    for (const std::string& arg : args) argv.push_back(const_cast<char*>(arg.c_str()));
+    argv.push_back(nullptr);
+
+    pid_t pid;
+    if (posix_spawnp(&pid, argv[0], nullptr, nullptr, argv.data(), environ) != 0) return -1;
+    int status = 0;
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) == 127) return -1;
+    return WEXITSTATUS(status);
+}
 }
 
 uint64_t OS::GetProcessMemoryUsageBytes()
@@ -120,6 +135,11 @@ std::vector<std::string> OS::GetFallbackFontPaths()
         if (access(path, R_OK) == 0) paths.emplace_back(path);
     }
     return paths;
+}
+
+bool OS::SetMemoryPriority(int)
+{
+    return false; // No per-process page priority on Linux.
 }
 
 bool OS::SetAboveNormalPriority()
@@ -333,6 +353,22 @@ bool OS::HttpGet(const std::string& url, std::vector<uint8_t>& body, std::string
         return false;
     }
     return true;
+}
+
+bool OS::ShowYesNoDialog(const std::string& title, const std::string& message)
+{
+    // Desktop tools first (exit code 0 is Yes), then the terminal.
+    int answer = RunDialogToolStatus({ "zenity", "--question", "--title=" + title, "--text=" + message });
+    if (answer < 0) answer = RunDialogToolStatus({ "kdialog", "--title", title, "--yesno", message });
+    if (answer >= 0) return answer == 0;
+    std::fprintf(stderr, "%s
+
+%s
+
+Type \"yes\" to accept, anything else to decline: ", title.c_str(), message.c_str());
+    char answer[16] = {};
+    if (std::fgets(answer, sizeof(answer), stdin) == nullptr) return false;
+    return std::strncmp(answer, "yes", 3) == 0;
 }
 
 bool OS::ShowConsentDialog(const std::string& title, const std::string& message, const std::string& agreeLabel)

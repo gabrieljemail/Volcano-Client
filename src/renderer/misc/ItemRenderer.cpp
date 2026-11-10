@@ -4,7 +4,9 @@
 #include <stdexcept>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <chrono>
 #include "ItemModel.hpp"
+#include "../entity/EntityRenderer.hpp"
 #include "../VulkanInit.hpp"
 #include "../../Logger.hpp"
 
@@ -29,6 +31,7 @@ static_assert(sizeof(ItemPushConstants) == 128, "ItemPushConstants must fit the 
 void ItemRenderer::Init(const Engine::ShaderLibrary& shaders)
 {
     if (initialized) return;
+    shaderLibrary = &shaders;
     CreateRenderPass();
     CreateDepthBuffer();
     pipeline = BuildPipeline(shaders, renderPass);
@@ -54,7 +57,11 @@ void ItemRenderer::Shutdown()
     ReloadTextures();
 
     if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), pipeline, nullptr);
+    if (iconGlintPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), iconGlintPipeline, nullptr);
+    iconGlintPipeline = VK_NULL_HANDLE;
     if (pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(GetDevice(), pipelineLayout, nullptr);
+    if (glintPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(GetDevice(), glintPipelineLayout, nullptr);
+    glintPipelineLayout = VK_NULL_HANDLE;
     if (depthView != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), depthView, nullptr);
     if (depthImage != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, depthImage, depthAllocation);
     if (renderPass != VK_NULL_HANDLE) vkDestroyRenderPass(GetDevice(), renderPass, nullptr);
@@ -161,13 +168,13 @@ void ItemRenderer::CreateDepthBuffer()
     }
 }
 
-VkPipeline ItemRenderer::BuildPipeline(const Engine::ShaderLibrary& shaders, VkRenderPass pass)
+VkPipeline ItemRenderer::BuildPipeline(const Engine::ShaderLibrary& shaders, VkRenderPass pass, bool glint)
 {
     VkShaderModule vertModule = CreateShaderModule(shaders, "item.vert");
     VkShaderModule fragModule = VK_NULL_HANDLE;
     try
     {
-        fragModule = CreateShaderModule(shaders, "item.frag");
+        fragModule = CreateShaderModule(shaders, glint ? "item_glint.frag" : "item.frag");
     }
     catch (...)
     {
@@ -235,12 +242,22 @@ VkPipeline ItemRenderer::BuildPipeline(const Engine::ShaderLibrary& shaders, VkR
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthWriteEnable = glint ? VK_FALSE : VK_TRUE;
+    depthStencil.depthCompareOp = glint ? VK_COMPARE_OP_LESS_OR_EQUAL : VK_COMPARE_OP_LESS;
 
     VkPipelineColorBlendAttachmentState blendAttachment{};
     blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
         | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    if (glint)
+    {
+        blendAttachment.blendEnable = VK_TRUE;
+        blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_COLOR;
+        blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
     VkPipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     colorBlending.attachmentCount = 1;
@@ -249,11 +266,14 @@ VkPipeline ItemRenderer::BuildPipeline(const Engine::ShaderLibrary& shaders, VkR
     VkPushConstantRange pushRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ItemPushConstants) };
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount = 1;
-    layoutInfo.pSetLayouts = &textureSetLayout; // Set 0 = the block/item texture array.
+    // Set 0 = the block/item texture array, set 1 (glint only) = the glint sheet.
+    VkDescriptorSetLayout setLayouts[] = { textureSetLayout, EntityRenderer::GetSkinSetLayout() };
+    layoutInfo.setLayoutCount = glint ? 2 : 1;
+    layoutInfo.pSetLayouts = setLayouts;
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &pushRange;
-    if (pipelineLayout == VK_NULL_HANDLE && vkCreatePipelineLayout(GetDevice(), &layoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
+    VkPipelineLayout& layout = glint ? glintPipelineLayout : pipelineLayout;
+    if (layout == VK_NULL_HANDLE && vkCreatePipelineLayout(GetDevice(), &layoutInfo, nullptr, &layout) != VK_SUCCESS)
     {
         vkDestroyShaderModule(GetDevice(), fragModule, nullptr);
         vkDestroyShaderModule(GetDevice(), vertModule, nullptr);
@@ -272,7 +292,7 @@ VkPipeline ItemRenderer::BuildPipeline(const Engine::ShaderLibrary& shaders, VkR
     pipelineInfo.pDepthStencilState = &depthStencil;
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
-    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.layout = layout;
     pipelineInfo.renderPass = pass;
     pipelineInfo.subpass = 0;
     VkPipeline built = VK_NULL_HANDLE;
@@ -334,6 +354,7 @@ void ItemRenderer::CreateWorldPipeline(const Engine::ShaderLibrary& shaders)
     if (!initialized) return;
     DestroyWorldPipeline();
     worldPipeline = BuildPipeline(shaders, GetRenderPass());
+    glintPipeline = BuildPipeline(shaders, GetRenderPass(), true);
 }
 
 void ItemRenderer::DestroyWorldPipeline()
@@ -341,10 +362,12 @@ void ItemRenderer::DestroyWorldPipeline()
     if (worldPipeline == VK_NULL_HANDLE) return;
     vkDestroyPipeline(GetDevice(), worldPipeline, nullptr);
     worldPipeline = VK_NULL_HANDLE;
+    if (glintPipeline != VK_NULL_HANDLE) vkDestroyPipeline(GetDevice(), glintPipeline, nullptr);
+    glintPipeline = VK_NULL_HANDLE;
 }
 
 void ItemRenderer::RecordItem(VkCommandBuffer cmd, const std::string& itemName, const std::string& context,
-                              const glm::mat4& placement, const glm::mat4& viewProj, const glm::mat4& pivotRotation, float darkness)
+                              const glm::mat4& placement, const glm::mat4& viewProj, const glm::mat4& pivotRotation, float darkness, bool glint)
 {
     if (!initialized || worldPipeline == VK_NULL_HANDLE || textures == nullptr) return;
 
@@ -365,7 +388,9 @@ void ItemRenderer::RecordItem(VkCommandBuffer cmd, const std::string& itemName, 
     push.normalRow0 = glm::vec4(normalMatrix[0][0], normalMatrix[1][0], normalMatrix[2][0], 0.0f);
     push.normalRow1 = glm::vec4(normalMatrix[0][1], normalMatrix[1][1], normalMatrix[2][1], 0.0f);
     push.normalRow2 = glm::vec4(normalMatrix[0][2], normalMatrix[1][2], normalMatrix[2][2], 0.0f);
-    push.params = glm::vec4(model->IsFlat() ? 1.0f : 0.0f, darkness, 0.0f, 0.0f);
+    static const auto start = std::chrono::steady_clock::now();
+    float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+    push.params = glm::vec4(model->IsFlat() ? 1.0f : 0.0f, darkness, seconds, 0.0f);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
     VkDescriptorSet texturesSet = textureSet;
@@ -375,9 +400,16 @@ void ItemRenderer::RecordItem(VkCommandBuffer cmd, const std::string& itemName, 
     vkCmdBindIndexBuffer(cmd, mesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
     vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
+
+    VkDescriptorSet glintSet = EntityRenderer::GetGlintSet();
+    if (!glint || glintPipeline == VK_NULL_HANDLE || glintSet == VK_NULL_HANDLE) return;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, glintPipeline);
+    VkDescriptorSet sets[] = { texturesSet, glintSet };
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, glintPipelineLayout, 0, 2, sets, 0, nullptr);
+    vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
 }
 
-bool ItemRenderer::RenderGuiIcon(const std::string& itemName, IconImage& out)
+bool ItemRenderer::RenderGuiIcon(const std::string& itemName, IconImage& out, bool glint)
 {
     out = IconImage{};
     if (!initialized || textures == nullptr) return false;
@@ -451,7 +483,7 @@ bool ItemRenderer::RenderGuiIcon(const std::string& itemName, IconImage& out)
     push.normalRow0 = glm::vec4(normalMatrix[0][0], normalMatrix[1][0], normalMatrix[2][0], 0.0f);
     push.normalRow1 = glm::vec4(normalMatrix[0][1], normalMatrix[1][1], normalMatrix[2][1], 0.0f);
     push.normalRow2 = glm::vec4(normalMatrix[0][2], normalMatrix[1][2], normalMatrix[2][2], 0.0f);
-    push.params = glm::vec4(model->IsFlat() ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+    push.params = glm::vec4(model->IsFlat() ? 1.0f : 0.0f, 0.0f, 9.0f, 0.0f); // z: a fixed glint moment.
 
     VkCommandBuffer cmd = BeginOneShotCommands();
 
@@ -481,6 +513,19 @@ bool ItemRenderer::RenderGuiIcon(const std::string& itemName, IconImage& out)
     vkCmdBindIndexBuffer(cmd, mesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
     vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
+
+    VkDescriptorSet glintSet = glint ? EntityRenderer::GetGlintSet() : VK_NULL_HANDLE;
+    if (glintSet != VK_NULL_HANDLE && iconGlintPipeline == VK_NULL_HANDLE && shaderLibrary != nullptr)
+    {
+        iconGlintPipeline = BuildPipeline(*shaderLibrary, renderPass, true);
+    }
+    if (glintSet != VK_NULL_HANDLE && iconGlintPipeline != VK_NULL_HANDLE)
+    {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, iconGlintPipeline);
+        VkDescriptorSet sets[] = { texturesSet, glintSet };
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, glintPipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
+    }
 
     vkCmdEndRenderPass(cmd);
     EndOneShotCommands(cmd); // Submits and waits.

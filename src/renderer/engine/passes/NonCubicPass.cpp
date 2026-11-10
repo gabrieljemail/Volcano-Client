@@ -72,7 +72,7 @@ void NonCubicPass::Record(FrameContext& frame)
         PhaseTimer drawTimer(frame.state, GlobalState::CHUNK_PHASE_DRAW);
         if (indirect)
         {
-            uint64_t triangles = cutoutBatch.Draw(cmd, frame.frameIndex, meshes, sizeof(MiscVertex));
+            uint64_t triangles = cutoutBatch.Draw(cmd, frame.frameIndex, meshes, sizeof(MiscVertex), true);
             if (frame.state->debugHudVisible) frame.state->trianglesDrawn[GlobalState::TRIANGLES_CUTOUT] += triangles;
         }
         else

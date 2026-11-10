@@ -7,6 +7,8 @@
 #include <string_view>
 #include <unordered_map>
 #include <bitset>
+#include <array>
+#include <chrono>
 #include <stdexcept>
 #include <GLFW/glfw3.h>
 #include "platform/OS.hpp"
@@ -25,7 +27,10 @@ constexpr uint16_t MOUSE_BUTTON_RIGHT = static_cast<uint16_t>(MOUSE_BUTTON_OFFSE
 enum class InputActionTriggerType {
     PRESS,
     HOLD,
-    RELEASE
+    RELEASE,
+    // Two presses within the double-tap window of each other (see
+    // SetDoubleTapWindow) - vanilla's double-tap-space fly toggle, double-click, etc.
+    DOUBLE_TAP
 };
 
 struct InputAction {
@@ -60,6 +65,7 @@ struct alignas(64) InputState {
     std::bitset<MAX_KEYS> keysDown;
     std::bitset<MAX_KEYS> keysPressedThisFrame;
     std::bitset<MAX_KEYS> keysReleasedThisFrame;
+    std::bitset<MAX_KEYS> doubleTapThisFrame;
 };
 
 class InputHandler {
@@ -70,6 +76,7 @@ public:
         glfwSetKeyCallback(window, KeyCallback);
         glfwSetCursorPosCallback(window, CursorPosCallback);
         glfwSetMouseButtonCallback(window, MouseButtonCallback);
+        glfwSetScrollCallback(window, ScrollCallback);
 
 #ifdef _WIN32
         // On Windows, GLFW_FOCUSED can already read true here even though
@@ -114,6 +121,7 @@ public:
     // Drains buffered raw motion
     void PollRawMouse()
     {
+    	[[likely]]
         if (bufferedRawMouse) Platform::OS::ReadBufferedRawMouse(rawMouseDeltaX, rawMouseDeltaY);
     }
 
@@ -127,10 +135,13 @@ public:
     {
         state.keysPressedThisFrame.reset();
         state.keysReleasedThisFrame.reset();
+        state.doubleTapThisFrame.reset();
         mouseDeltaX = 0.0;
         mouseDeltaY = 0.0;
         rawMouseDeltaX = 0.0;
         rawMouseDeltaY = 0.0;
+        scrollDeltaX = 0.0;
+        scrollDeltaY = 0.0;
     }
 
     void RegisterAction(const std::string& name, InputActionTriggerType triggerType,
@@ -143,6 +154,10 @@ public:
     {
         axes[name] = axis;
     }
+
+    // How close together two presses must land to count as a double-tap
+    // (DOUBLE_TAP actions and WasDoubleTapped). Default 0.25s.
+    void SetDoubleTapWindow(double seconds) { doubleTapWindowSeconds = seconds; }
 
     // Rebinds one end of a KeyPair axis (key 0 = unbound). No-op for an unknown axis.
     void SetAxisKey(const std::string& name, bool positive, uint16_t key)
@@ -171,6 +186,9 @@ public:
                 case InputActionTriggerType::RELEASE:
                     if (state.keysReleasedThisFrame[key]) return true;
                     break;
+                case InputActionTriggerType::DOUBLE_TAP:
+                    if (state.doubleTapThisFrame[key]) return true;
+                    break;
             }
         }
         return false;
@@ -182,7 +200,11 @@ public:
         if (it == actions.end()) return false;
 
         for (uint16_t key : it->second.triggers)
-            if (state.keysPressedThisFrame[key]) return true;
+        {
+            if (it->second.triggerType == InputActionTriggerType::DOUBLE_TAP
+                ? state.doubleTapThisFrame[key]
+                : state.keysPressedThisFrame[key]) return true;
+        }
         return false;
     }
 
@@ -192,6 +214,9 @@ public:
         if (it == axes.end()) return 0.0f;
         return it->second.value;
     }
+
+    double GetScrollDeltaX() const { return scrollDeltaX; }
+    double GetScrollDeltaY() const { return scrollDeltaY; }
 
     // Raw key queries, for one-off bindings (e.g. Esc closing a Screen)
     // that don't warrant registering a named action.
@@ -207,6 +232,16 @@ public:
         return state.keysPressedThisFrame[key];
     }
 
+    // Raw double-tap query (a press edge that landed within the window of
+    // the previous press on the same key/button), for one-off bindings that
+    // don't warrant registering a named action. Same key space as IsKeyPressed:
+    // keyboard keys and MOUSE_BUTTON_* codes.
+    bool WasDoubleTapped(int key) const
+    {
+        if (key < 0 || static_cast<size_t>(key) >= MAX_KEYS) return false;
+        return state.doubleTapThisFrame[key];
+    }
+
 private:
     GLFWwindow* window;
     InputState state; // Main/render-thread-owned; see InputState's own comment.
@@ -218,7 +253,13 @@ private:
     // to zero by EndFrame() - see EndFrame's own comment.
     double mouseDeltaX = 0.0, mouseDeltaY = 0.0;
     double lastMouseX = 0.0, lastMouseY = 0.0;
+    double scrollDeltaX = 0.0, scrollDeltaY = 0.0;
     bool firstMouseEvent = true;
+
+    // Per-key/button time of the last press edge, for DOUBLE_TAP detection
+    // (see NotePress). Same render-thread ownership as `state`.
+    std::array<std::chrono::steady_clock::time_point, MAX_KEYS> lastPressTime{};
+    double doubleTapWindowSeconds = 0.25;
 
     // Buffered raw motion (see EnableRawMouse); replaces the cursor delta
     // for the mouse axes when active.
@@ -236,6 +277,7 @@ private:
 
         if (action == GLFW_PRESS)
         {
+            NotePress(self, static_cast<size_t>(key));
             self->state.keysDown.set(key);
             self->state.keysPressedThisFrame.set(key);
         }
@@ -258,6 +300,7 @@ private:
 
         if (action == GLFW_PRESS)
         {
+            NotePress(self, key);
             self->state.keysDown.set(key);
             self->state.keysPressedThisFrame.set(key);
         }
@@ -266,6 +309,20 @@ private:
             self->state.keysDown.reset(key);
             self->state.keysReleasedThisFrame.set(key);
         }
+    }
+
+    // A press edge landing within doubleTapWindowSeconds of the previous
+    // press on the same key/button flags doubleTapThisFrame for this frame.
+    // GLFW_REPEAT never reaches here (it's not GLFW_PRESS), so holding a key
+    // can't fake a double-tap.
+    static void NotePress(InputHandler* self, size_t key)
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (now - self->lastPressTime[key] <= std::chrono::duration<double>(self->doubleTapWindowSeconds))
+        {
+            self->state.doubleTapThisFrame.set(key);
+        }
+        self->lastPressTime[key] = now;
     }
 
     static void CursorPosCallback(GLFWwindow* win, double xpos, double ypos)
@@ -293,6 +350,14 @@ private:
         self->mouseDeltaY += ypos - self->lastMouseY;
         self->lastMouseX = xpos;
         self->lastMouseY = ypos;
+    }
+
+    static void ScrollCallback(GLFWwindow* win, double dx, double dy)
+    {
+    	auto* self = static_cast<InputHandler*>(glfwGetWindowUserPointer(win));
+     	if (!self) return;
+      	self->scrollDeltaX += dx;
+       	self->scrollDeltaY += dy;
     }
 
     void UpdateAxes()

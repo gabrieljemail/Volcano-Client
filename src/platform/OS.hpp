@@ -37,6 +37,11 @@ public:
     // with the render thread on low-core machines. Returns whether it took effect.
     static bool SetAboveNormalPriority();
 
+    // Sets how long this process's memory pages are kept before the system trims them for other apps: 1 (very low) to 5
+    // (normal, the default). Higher keeps the process resident under memory pressure. Windows only (SetProcessInformation);
+    // returns false elsewhere or when the system refuses.
+    static bool SetMemoryPriority(int level);
+
     // Sleeps with sub-millisecond precision (std::this_thread::sleep_for
     // rounds up to Windows' 15.6 ms scheduler tick, capping FPS at ~64).
     static void PreciseSleep(int64_t microseconds);
@@ -70,6 +75,10 @@ public:
     static bool HttpRequest(const std::string& method, const std::string& url, const std::vector<std::string>& headers,
         const std::string& requestBody, int& status, std::vector<uint8_t>& response, std::string& error,
         const std::function<void(uint64_t received, uint64_t total)>& progress = nullptr);
+
+    // Blocking Yes/No dialog with exactly the given title and message. Returns true for Yes. Without a dialog it asks
+    // on the terminal.
+    static bool ShowYesNoDialog(const std::string& title, const std::string& message);
 
     // Blocking yes/no prompt. Returns true for the agree answer. `agreeLabel` names it in the text where the dialog
     // can't relabel its buttons; without a dialog it asks on the terminal.

@@ -49,6 +49,12 @@ public:
     static VkDescriptorSet GetLocalSkinSet();
     static VkDescriptorSetLayout GetSkinSetLayout();
 
+    // The enchantment glint sheet for held items as a sampler2D set, or null if the packs have none.
+    static VkDescriptorSet GetGlintSet();
+
+    // The block-break crack texture for a destroy stage (0-9) as a sampler2D set, or null if the packs have none.
+    static VkDescriptorSet GetCrackSet(int stage);
+
     // One modeled block entity to draw: position is the block centre at floor
     // height, yaw is the render yaw (radians), kind is Block::blockEntityKind
     // (1 chest / 2 trapped / 3 ender) and type the model variant

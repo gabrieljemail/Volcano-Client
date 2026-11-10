@@ -11,6 +11,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include "EntityJsonModel.hpp"
+#include "BodyRotation.hpp"
 
 namespace Volcano::EntityAnimation {
 
@@ -109,6 +110,12 @@ struct WalkState {
     // Posture as the last real draw posed it, for the shadow pass to match.
     Posture posture = Posture::Standing;
     float headXRot = 0.0f;
+    float headYRot = 0.0f;
+    float bodyYaw = 0.0f;       // Radians the body was drawn at, for the shadow pass.
+    bool bodyDrawn = false;
+    BodyRotation body;          // Remote entities' body turning, as the local player's.
+    std::chrono::steady_clock::time_point bodyTime{};
+    float moveYaw = 0.0f;       // Degrees, the last direction moved in.
     bool riding = false;
     bool ridingBoat = false;
 

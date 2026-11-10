@@ -29,6 +29,7 @@
 #include "SystemInfo.hpp"
 #include "inventory/InventoryManager.hpp"
 #include "network/CommandTree.hpp"
+#include "network/TextComponent.hpp"
 
 namespace Volcano {
 
@@ -266,6 +267,16 @@ struct GlobalState {
     // arms/clears mining); read by the tick thread (TickLoop::FixedStep).
     // miningTicksRequired 0 = not mining; miningStartNs is steady_clock ns.
     std::atomic<int32_t> miningTicksRequired{0};
+
+    // Other players' block-break progress from Block Break Animation, keyed by the breaker's entity id. Stage 0-9; a
+    // stage outside that clears the entry. Written by NetworkThread, read by the render thread.
+    struct BlockBreakProgress
+    {
+        glm::ivec3 position{0};
+        int stage = 0;
+    };
+    std::unordered_map<uint32_t, BlockBreakProgress> blockBreaks = {};
+    std::mutex blockBreaksMutex;
     std::atomic<int64_t> miningStartNs{0};
 
     // Crosshair indicator fill (0..1, or < 0 = hidden): block-break progress
@@ -292,6 +303,10 @@ struct GlobalState {
 
     // Whether the local player can insta-mine
     std::atomic<bool> canInstabuild{false};
+
+    // Whether the server allows the local player to fly (Player Abilities
+    // flag 0x04) - gates the double-tap Fly toggle.
+    std::atomic<bool> mayFly{false};
 
     // Player inventory (hotbar/main inventory/armor/offhand slot groups) -
     // held directly rather than behind a pointer, same as networkInbox below,
@@ -453,6 +468,21 @@ struct GlobalState {
     // Remove packets in NetworkClient::RunPlayLoop.
     std::unordered_map<std::string, std::string> playerList = {};
     std::mutex playerListMutex;
+
+    // Scoreboard teams from the Update Teams packet: a member's nametag is prefix + name + suffix, the name in the
+    // team color. Servers use these for rank tags like "[Owner] Name". Written by NetworkThread, read by the render
+    // thread; teamsVersion changes on every edit so cached tag text knows to rebuild.
+    struct TeamInfo
+    {
+        std::vector<ChatSegment> prefix;
+        std::vector<ChatSegment> suffix;
+        int color = -1;            // 0-15 legacy color index, -1 for none.
+        bool hideNameTag = false;  // nameTagVisibility "never".
+        std::vector<std::string> members; // Entity names (player names).
+    };
+    std::unordered_map<std::string, TeamInfo> teams = {};
+    std::mutex teamsMutex;
+    std::atomic<uint32_t> teamsVersion{0};
 
     // Each tab-list player's game mode (Player Info Update's
     // UPDATE_GAME_MODE), keyed the same way as playerList and guarded by the

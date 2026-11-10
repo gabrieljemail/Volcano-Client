@@ -21,6 +21,15 @@ ModLoader::~ModLoader()
 {
     activeLoader = nullptr;
 
+    // Warn about debuggers.
+    if (OS::IsDebuggerAttached())
+    {
+    	if (!OS::ShowYesNoDialog(
+     		"Debugger Warning",
+       		"You are running Volcano with a debugger. Unless you know what you're doing, it is almost always better to read the source code or use the built-in profiler available by pressing F3 in-game. Are you sure you want to continue?"
+       	)) std::exit(0);
+    }
+
     // Latest-loaded first, so a mod that builds on an earlier one goes first.
     for (auto it = mods.rbegin(); it != mods.rend(); ++it)
     {

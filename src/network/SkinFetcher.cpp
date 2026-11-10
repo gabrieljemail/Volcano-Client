@@ -16,11 +16,11 @@ using Json = nlohmann::json;
 constexpr size_t MAX_SKIN_BYTES = 1024 * 1024;
 constexpr int SKIN_SIZE = 64;
 
-// Host part of an https URL, lowercase; empty for anything else.
+// Host part of an http(s) URL, lowercase; empty for anything else. Mojang's textures property uses http:// addresses.
 std::string HostOf(const std::string& url)
 {
-    if (url.rfind("https://", 0) != 0) return {};
-    size_t start = 8;
+    size_t start = url.rfind("https://", 0) == 0 ? 8 : url.rfind("http://", 0) == 0 ? 7 : 0;
+    if (start == 0) return {};
     size_t end = url.find_first_of("/:?#", start);
     std::string host = url.substr(start, end == std::string::npos ? std::string::npos : end - start);
     if (url.find('@', start) != std::string::npos && url.find('@', start) < (end == std::string::npos ? url.size() : end)) return {};
@@ -157,6 +157,15 @@ void SkinFetcher::Request(const std::string& key, const std::string& url, bool s
     wake.notify_one();
 }
 
+bool SkinFetcher::TryGetHead(const std::string& key, std::vector<uint8_t>& rgba)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    auto found = heads.find(key);
+    if (found == heads.end()) return false;
+    rgba = found->second;
+    return true;
+}
+
 std::vector<SkinImage> SkinFetcher::TakeCompleted()
 {
     std::lock_guard<std::mutex> lock(mutex);
@@ -173,8 +182,19 @@ bool SkinFetcher::Download(const Job& job, SkinImage& image, std::string& error)
         return false;
     }
 
+    // Mojang's hosts all serve https, so the http:// addresses in profiles are upgraded.
+    std::string url = job.url;
+    if (url.rfind("http://", 0) == 0)
+    {
+        std::string host = HostOf(url);
+        for (const char* mojang : { "minecraft.net", "mojang.com", "minecraftservices.com" })
+        {
+            if (HostMatches(host, mojang)) url = "https://" + url.substr(7);
+        }
+    }
+
     std::vector<uint8_t> body;
-    if (!Platform::OS::HttpGet(job.url, body, error)) return false;
+    if (!Platform::OS::HttpGet(url, body, error)) return false;
     if (body.size() > MAX_SKIN_BYTES)
     {
         error = "file is too large";
@@ -226,7 +246,27 @@ void SkinFetcher::Run(std::stop_token stopToken)
         if (Download(job, image, error))
         {
             std::lock_guard<std::mutex> lock(mutex);
-            completed.push_back(std::move(image));
+            if (job.key.rfind("head:", 0) == 0)
+            {
+                // The face at (8,8) with the hat layer at (40,8) over it.
+                std::vector<uint8_t> head(8 * 8 * 4);
+                for (int y = 0; y < 8; y++)
+                {
+                    for (int x = 0; x < 8; x++)
+                    {
+                        const uint8_t* face = Pixel(image.pixels, 8 + x, 8 + y);
+                        const uint8_t* hat = Pixel(image.pixels, 40 + x, 8 + y);
+                        const uint8_t* source = hat[3] >= 128 ? hat : face;
+                        std::copy(source, source + 3, &head[static_cast<size_t>(y * 8 + x) * 4]);
+                        head[static_cast<size_t>(y * 8 + x) * 4 + 3] = 255;
+                    }
+                }
+                heads[job.key] = std::move(head);
+            }
+            else
+            {
+                completed.push_back(std::move(image));
+            }
         }
         else
         {
