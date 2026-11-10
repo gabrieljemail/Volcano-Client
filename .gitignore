@@ -5,59 +5,55 @@ CMakeFiles/
 node_modules/
 *.log
 
-# Copyrighted Mojang material — decompiled source (resources/minecraft-code),
-# extracted assets/resource pack (resources/minecraft), and anything else
-# under this prefix. Not ours to redistribute.
+# Copyrighted Mojang material.
 resources/minecraft*
+
+# Third-party libraries.
+lib/**/*
 resources/paperclip
 
-# Linux build output at repo root (the in-source build produces an
-# extensionless binary here) — VolcanoClient.exe (Windows) is tracked
-# deliberately, this isn't.
+# Run binaries.
 /VolcanoClient
+/VolcanoClient.elf
+/VolcanoClient.exe
+libcrypto*.dll
+libcrypto*.so*
+libssl*.dll
+libssl*.so*
+/*.lib
+/*.pdb
+/*.def
+/installer
+/NetDiag
+/NetDiag.elf
+/NetDiag.exe
 
-settings.json
-
-# Local run/output directories
-dist/
-logs/
-run/
-screenshots/
-crash-report*
-
-# Bash on Linux devices and Git Bash for coding agents might make this file.
-# This is a reserved device on Windows, so it won't work there.
-nul
-
-# Third-party resource packs (not ours to redistribute) and the vanilla archive used for reading vanilla code.
-resources/resourcepacks/
-resources/26.2.zip
-
-# Build outputs, generated at build time. Release binaries belong on GitHub Releases, not in the history.
-*.exe
-*.pdb
-*.lib
-*.dll
-*.exp
-.ninja_deps
-.ninja_log
-/CMakeCache.txt
-/build.ninja
-/cmake_install.cmake
-/compile_commands.json
-/VolcanoClient.exports.def
-release/
+# Compiler outputs and configs.
+.ninja*
+build.ninja
+.cache
 resources/shaders/*.spv
+CMakeFiles/
+CMakeCache.txt
 
-# Local captures and run state.
-*.cap
-client.err
-imgui.ini
+# Volcano's run files.
+/logs
+/mods
 /saves
-*.zip
-*.tmp*
-
-# Personal: saved servers and a private SSH helper.
+/screenshots
+/resources/resourcepacks
+/resources/shaderpacks
+/resources/*.zip
+settings.json
+worlds.json
 servers.json
 accounts.json
-server-ssh.ps1
+crash-report.txt
+
+# Scripts and temporary files.
+/*.sh
+/*.ps1
+/*.tmp
+/*.tmp.*
+/*.zip
+/*.cmake
