@@ -1,6 +1,7 @@
 # Volcano Client
 Volcano is a Minecraft client written in C++. It is designed to be fast, customizable and moddable. This document has three sections below, each for a different audience that might be reading this.
 
+> [!WARNING]
 > Volcano Client is not an official Minecraft product. It is not approved by or associated with Mojang or Microsoft.
 
 ## Players
