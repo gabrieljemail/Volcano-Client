@@ -4,7 +4,7 @@
 
 namespace Volcano {
 
-struct GlobalState;
+struct Application;
 class TextureManager;
 class MeshingThread;
 
@@ -15,7 +15,7 @@ class MeshingThread;
 namespace ResourceReloader {
 
 // Tells the reloader which long-lived objects to rebuild. Call once from
-// main() after both exist (GlobalState has no slot for them: adding one
+// main() after both exist (Application has no slot for them: adding one
 // would change its layout and break mods).
 void Attach(TextureManager* textureManager, MeshingThread* meshingThread);
 
@@ -24,7 +24,7 @@ void Attach(TextureManager* textureManager, MeshingThread* meshingThread);
 // while an ImGui frame or command buffer is being recorded (RenderThread
 // runs it at the top of DrawFrame). Blocks for seconds, showing the splash
 // screen with a progress bar. No-op if Attach() hasn't run.
-void Reload(GlobalState* state);
+void Reload(Application* state);
 
 // Asks for a reload at the next safe point (RenderThread's DrawFrame). Safe from any thread, such as the pack screen.
 void Request();

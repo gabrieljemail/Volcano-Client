@@ -6,13 +6,13 @@
 #include <string>
 #include <glm/gtc/matrix_transform.hpp>
 #include "ShadowPass.hpp"
-#include "../ShaderLibrary.hpp"
-#include "../../VulkanInit.hpp"
-#include "../../models/PackedVertex.hpp"
-#include "../../misc/MiscVertex.hpp"
-#include "../../terrain/VisibleChunkController.hpp"
-#include "../../../GlobalState.hpp"
-#include "../../../Logger.hpp"
+#include "../../ShaderLibrary.hpp"
+#include "../../../VulkanInit.hpp"
+#include "../../../models/PackedVertex.hpp"
+#include "../../../misc/MiscVertex.hpp"
+#include "../../../terrain/VisibleChunkController.hpp"
+#include "../../../../Application.hpp"
+#include "../../../../Logger.hpp"
 
 namespace Volcano::Engine::Passes {
 

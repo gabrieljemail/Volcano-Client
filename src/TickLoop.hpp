@@ -7,7 +7,7 @@
 #include <glm/glm.hpp>
 #include <mutex>
 #include <optional>
-#include "GlobalState.hpp"
+#include "Application.hpp"
 
 namespace Volcano {
 
@@ -18,7 +18,7 @@ class TickLoop {
 public:
     static constexpr float FIXED_DT = 1.0f / 20.0f;
 
-    explicit TickLoop(GlobalState* state);
+    explicit TickLoop(Application* state);
 
     // Called once per RenderThread frame, right after input is sampled.
     // Self-timed (see lastTickTime), runs zero or more fixed FixedStep()s to
@@ -99,7 +99,7 @@ public:
 
     // Re-caches position from state->player after MeshingThread applies the
     // server's spawn, resets velocity/grounded, re-arms lastTickTime. Only
-    // valid while GlobalState::worldReady is still false.
+    // valid while Application::worldReady is still false.
     void SyncToPlayerPosition();
 
     // Thread-safe counterpart to SyncToPlayerPosition for later teleports -
@@ -108,7 +108,7 @@ public:
     void QueueTeleport(glm::vec3 position);
 
 private:
-    GlobalState* state;
+    Application* state;
     float accumulator = 0.0f;
 
     // Wall-clock source for Tick()'s self-timed dt. Re-armed by
@@ -183,7 +183,7 @@ private:
     mutable std::mutex movementSnapshotMutex;
     MovementSnapshot movementSnapshot;
 
-    // Applies everything queued on GlobalState::localMotion since the last
+    // Applies everything queued on Application::localMotion since the last
     // call, in order
     void DrainLocalMotion();
 
@@ -215,7 +215,7 @@ private:
     // next position update corrects any drift.
     void StepDroppedItems();
 
-    // Advances GlobalState's crosshair indicator prev/current pair one tick.
+    // Advances Application's crosshair indicator prev/current pair one tick.
     void UpdateCrosshairProgress();
 
     // Mainhand item seen by the previous tick, for vanilla's reset of the

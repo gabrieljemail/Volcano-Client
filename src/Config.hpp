@@ -62,8 +62,8 @@ public:
     // to settings.json regardless of how the client was launched.
     std::string ResolvePath(const std::string& relativePath) const;
 
-    // Global accessor for code with no GlobalState pointer at hand (e.g.
-    // Logger's free functions). Null until GlobalState::LoadSettings runs.
+    // Global accessor for code with no Application pointer at hand (e.g.
+    // Logger's free functions). Null until Application::LoadSettings runs.
     static Config* Active() { return activeInstance; }
 
 private:

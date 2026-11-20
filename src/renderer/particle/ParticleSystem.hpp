@@ -13,7 +13,7 @@
 
 namespace Volcano {
 
-struct GlobalState;
+struct Application;
 
 // What a Spawn() asks for, the way a Level Particles packet does: `count` particles scattered around `position`.
 struct ParticleSpawn {
@@ -75,7 +75,7 @@ public:
     void Spawn(const ParticleSpawn& request);
 
     // Takes the queued spawns and runs the ticks that `deltaSeconds` adds up to.
-    void Update(GlobalState* state, float deltaSeconds);
+    void Update(Application* state, float deltaSeconds);
 
     // Fills `out` with what to draw, positioned relative to `camera`. Returns how many.
     size_t BuildInstances(const glm::vec3& camera, float dayBrightness, ParticleInstance* out, size_t capacity) const;
@@ -109,7 +109,7 @@ private:
 
     void Emit(const ParticleSpawn& request, float keep);
     void SpawnOne(const ParticleSpawn& request, const glm::dvec3& at, const glm::vec3& velocityParameter);
-    void Tick(GlobalState* state);
+    void Tick(Application* state);
     float Random() { return unit(rng); }
 
     ParticleSprites sprites;

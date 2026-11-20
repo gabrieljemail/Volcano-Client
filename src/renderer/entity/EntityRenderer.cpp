@@ -257,7 +257,7 @@ struct RideInfo {
 
 // Whether an entity sits on a tracked vehicle, and the seat it renders at.
 // Call under entitiesMutex.
-RideInfo RideInfoFor(GlobalState* state, const Entity& entity)
+RideInfo RideInfoFor(Application* state, const Entity& entity)
 {
     glm::vec3 seat;
     float vehicleYaw = 0.0f;
@@ -266,7 +266,7 @@ RideInfo RideInfoFor(GlobalState* state, const Entity& entity)
 }
 
 // Where a remote entity renders: its seat when riding, else its interpolated position.
-glm::vec3 RenderPositionOf(GlobalState* state, const Entity& entity, std::chrono::steady_clock::time_point now)
+glm::vec3 RenderPositionOf(Application* state, const Entity& entity, std::chrono::steady_clock::time_point now)
 {
     glm::vec3 seat;
     float vehicleYaw = 0.0f;
@@ -282,7 +282,7 @@ float DeathRoll(float ticks)
 }
 
 // The chunk light at a point on an entity, packed sky * 16 + block for TexturedInstance.
-float EntityLight(GlobalState* state, const glm::vec3& feet)
+float EntityLight(Application* state, const glm::vec3& feet)
 {
     if (state->world == nullptr) return 15.0f * 16.0f;
     LightSample sample = state->world->GetLightSample(static_cast<int>(std::floor(feet.x)),
@@ -291,7 +291,7 @@ float EntityLight(GlobalState* state, const glm::vec3& feet)
 }
 
 // The local player's vehicle kind, from the vehicle they ride.
-RideInfo LocalRideInfo(GlobalState* state)
+RideInfo LocalRideInfo(Application* state)
 {
     int32_t vehicleId = state->ridingEntityId.load();
     if (vehicleId < 0) return RideInfo{};
@@ -749,7 +749,7 @@ void DestroySkin(SkinTexture& skin)
 }
 
 // Puts the downloaded skins the fetcher finished onto the GPU (render thread).
-void UploadFinishedSkins(GlobalState* state)
+void UploadFinishedSkins(Application* state)
 {
     if (state->skinFetcher == nullptr) return;
     for (SkinImage& image : state->skinFetcher->TakeCompleted())
@@ -773,9 +773,9 @@ void UploadFinishedSkins(GlobalState* state)
 
 // Picks a player's skin and the matching (wide or slim) model: the downloaded skin when it has arrived, asking the
 // fetcher for it the first time it's wanted; otherwise the model's own default skin. `model` is the wide "player" model.
-void ResolvePlayerLook(GlobalState* state, const std::string& key, const MobModel*& model, const SkinTexture*& skin)
+void ResolvePlayerLook(Application* state, const std::string& key, const MobModel*& model, const SkinTexture*& skin)
 {
-    GlobalState::SkinSource source;
+    Application::SkinSource source;
     {
         std::lock_guard<std::mutex> lock(state->skinSourcesMutex);
         auto it = state->skinSources.find(key);
@@ -2122,7 +2122,7 @@ void EntityRenderer::Shutdown()
     g_meshCache.clear();
 }
 
-void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state,
+void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Application* state,
     const glm::mat4& view, const glm::mat4& proj, const glm::vec3& cameraPosition, bool indirect)
 {
     UploadFinishedSkins(state);
@@ -2512,7 +2512,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_cubeIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_CUBE * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_cubeIndexCount / 3) * cubeInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_cubeIndexCount / 3) * cubeInstanceCount;
         }
         if (quadrupedInstanceCount > 0)
         {
@@ -2520,7 +2520,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_quadrupedIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_QUADRUPED * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_quadrupedIndexCount / 3) * quadrupedInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_quadrupedIndexCount / 3) * quadrupedInstanceCount;
         }
         if (golemInstanceCount > 0)
         {
@@ -2528,7 +2528,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_golemIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_GOLEM * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_golemIndexCount / 3) * golemInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_golemIndexCount / 3) * golemInstanceCount;
         }
         if (pigInstanceCount > 0)
         {
@@ -2536,7 +2536,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_pigIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_PIG * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_pigIndexCount / 3) * pigInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_pigIndexCount / 3) * pigInstanceCount;
         }
         if (cowInstanceCount > 0)
         {
@@ -2544,7 +2544,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_cowIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_COW * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_cowIndexCount / 3) * cowInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_cowIndexCount / 3) * cowInstanceCount;
         }
     }
 
@@ -2646,7 +2646,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
         Engine::Vulkan::VulkanRenderEngine* vulkan = state->renderEngine != nullptr ? state->renderEngine->GetVulkan() : nullptr;
         uint64_t triangles = FlushTextured(BATCH_MOBS, cmd, frameIndex, vulkan, indirect);
         FlushTextured(BATCH_GLINT, cmd, frameIndex, vulkan, indirect);
-        if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += triangles;
+        if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += triangles;
     }
 
     // Held items ride on the arm parts, so they follow the walk and swing.
@@ -2825,7 +2825,7 @@ void EntityRenderer::DestroyShadowPipelines(ShadowPipelines& pipelines)
 }
 
 void EntityRenderer::RecordShadowCasters(VkCommandBuffer cmd, VkPipelineLayout layout, const ShadowPipelines& pipelines,
-    GlobalState* state, const glm::mat4& lightViewProj, const glm::vec3& cameraPosition, float distance,
+    Application* state, const glm::mat4& lightViewProj, const glm::vec3& cameraPosition, float distance,
     uint32_t frameIndex, uint32_t cascade, bool indirect)
 {
     if (pipelines.textured == VK_NULL_HANDLE || pipelines.box == VK_NULL_HANDLE) return;

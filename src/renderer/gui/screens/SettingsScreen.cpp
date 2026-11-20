@@ -12,7 +12,7 @@
 #include "../models/NumberInput.hpp"
 #include "../models/OptionButton.hpp"
 #include "../models/Slider.hpp"
-#include "../../../GlobalState.hpp"
+#include "../../../Application.hpp"
 
 namespace Volcano::GUI {
 
@@ -134,7 +134,7 @@ Screen* CreateVideoCategory(const std::string& title)
     return screen;
 }
 
-Screen* CreateVideoScreen(GlobalState* state, Screen* settingsScreen)
+Screen* CreateVideoScreen(Application* state, Screen* settingsScreen)
 {
     Config* config = state->config;
     Screen* hub = GUIController::CreateScreen("Video Settings", false);
@@ -234,7 +234,7 @@ Screen* CreateVideoScreen(GlobalState* state, Screen* settingsScreen)
     return hub;
 }
 
-Screen* CreateWindowScreen(GlobalState* state, Screen* settingsScreen)
+Screen* CreateWindowScreen(Application* state, Screen* settingsScreen)
 {
     Config* config = state->config;
     Screen* screen = GUIController::CreateScreen("Window Settings", false);
@@ -252,7 +252,7 @@ Screen* CreateWindowScreen(GlobalState* state, Screen* settingsScreen)
     return screen;
 }
 
-Screen* CreateAudioScreen(GlobalState* state, Screen* settingsScreen)
+Screen* CreateAudioScreen(Application* state, Screen* settingsScreen)
 {
     Config* config = state->config;
     Screen* screen = GUIController::CreateScreen("Audio Settings", false);
@@ -264,7 +264,7 @@ Screen* CreateAudioScreen(GlobalState* state, Screen* settingsScreen)
     return screen;
 }
 
-Screen* CreateControlsScreen(GlobalState* state, Screen* settingsScreen)
+Screen* CreateControlsScreen(Application* state, Screen* settingsScreen)
 {
     Config* config = state->config;
     Screen* screen = GUIController::CreateScreen("Controls", false);
@@ -283,7 +283,7 @@ Screen* CreateControlsScreen(GlobalState* state, Screen* settingsScreen)
 }
 }
 
-Screen* CreateSettingsScreen(GlobalState* state)
+Screen* CreateSettingsScreen(Application* state)
 {
     // Not closable: Esc would leave no screen open when reached from the main menu.
     Screen* screen = GUIController::CreateScreen("Settings", false);

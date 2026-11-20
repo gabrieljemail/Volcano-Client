@@ -34,7 +34,7 @@ public:
     // Called from DrainOutputPipe's thread for every line the server prints
     // to stdout/stderr, after it's already been logged with a [SERVER]
     // prefix - set (before Start()) by whoever wants to show it somewhere
-    // else too, e.g. NetworkThread mirroring it into GlobalState's
+    // else too, e.g. NetworkThread mirroring it into Application's
     // serverLogLines for the starting-server screen to display live.
     std::function<void(const std::string&)> onOutputLine;
 

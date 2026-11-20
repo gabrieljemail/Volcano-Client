@@ -42,7 +42,7 @@ namespace Volcano {
 namespace {
 
 // Tells mods a chat message arrived (CHAT_RECEIVED): sender and message flattened to plain text.
-void FireChatReceived(GlobalState* state, const ChatEvent& event)
+void FireChatReceived(Application* state, const ChatEvent& event)
 {
     if (state->modLoader == nullptr || !state->modLoader->HasHandlers(EventType::CHAT_RECEIVED)) return;
 
@@ -255,7 +255,7 @@ glm::vec3 ReadVec3(PacketReader& reader)
 // in settings.json; each line is one entity update with the raw packet bytes,
 // the parsed numbers, the entity's position before/after, and the local
 // player's position and camera yaw at that moment.
-bool EntityTraceEnabled(GlobalState* state)
+bool EntityTraceEnabled(Application* state)
 {
     static const bool enabled = std::get<bool>(state->config->Get("Debug.EntityTrace", false));
     return enabled;
@@ -264,7 +264,7 @@ bool EntityTraceEnabled(GlobalState* state)
 // Debug.EntityTraceNear: the same trace, for entities within NEAR_TRACE_BLOCKS of the player only
 constexpr float NEAR_TRACE_BLOCKS = 8.0f;
 
-bool EntityTraceNearEnabled(GlobalState* state)
+bool EntityTraceNearEnabled(Application* state)
 {
     static const bool enabled = std::get<bool>(state->config->Get("Debug.EntityTraceNear", false));
     return enabled;
@@ -272,7 +272,7 @@ bool EntityTraceNearEnabled(GlobalState* state)
 
 // Drops every riding link that names `id`, before that entity is erased.
 // Caller holds entitiesMutex.
-void UnlinkRider(GlobalState* state, uint32_t id)
+void UnlinkRider(Application* state, uint32_t id)
 {
     if (state->ridingEntityId.load() == static_cast<int32_t>(id)) state->ridingEntityId.store(-1);
 
@@ -292,7 +292,7 @@ void UnlinkRider(GlobalState* state, uint32_t id)
     }
 }
 
-void TraceEntity(GlobalState* state, const char* label, int32_t packetId,
+void TraceEntity(Application* state, const char* label, int32_t packetId,
                  const std::vector<uint8_t>& payload, uint32_t entityId,
                  const std::string& parsed, glm::vec3 before, glm::vec3 after)
 {
@@ -591,7 +591,7 @@ bool NetworkClient::ConnectAndLogin(const std::string& host, uint16_t port, cons
     }
 }
 
-void NetworkClient::RunSession(GlobalState* state, std::stop_token stopToken)
+void NetworkClient::RunSession(Application* state, std::stop_token stopToken)
 {
     {
         std::lock_guard<std::mutex> lock(state->localUsernameMutex);
@@ -621,7 +621,7 @@ void NetworkClient::RunSession(GlobalState* state, std::stop_token stopToken)
     }
 }
 
-bool NetworkClient::RunConfiguration(GlobalState* state)
+bool NetworkClient::RunConfiguration(Application* state)
 {
     // Client Information
     uint32_t renderDistance = std::get<uint32_t>(state->config->Get("Graphics.RenderDistance", uint32_t{8}));
@@ -663,7 +663,7 @@ bool NetworkClient::RunConfiguration(GlobalState* state)
         Log::Debug("[DIAG] Skipping Client Information send (NETDIAG_SKIP_SEND set).");
     }
 
-    // Each packet below updates GlobalState::connectionDetail so the loading
+    // Each packet below updates Application::connectionDetail so the loading
     // screen can say what Configuration is up to
     state->SetConnectionPhase(ConnectionPhase::Configuring, "Sending client information");
     int registryCount = 0;
@@ -781,7 +781,7 @@ void NetworkClient::SendPlayerPosition(glm::vec3 position, float yaw, float pitc
     connection.SendPacket(PlayC2S::SetPlayerPositionAndRotation, writer.Data());
 }
 
-void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
+void NetworkClient::RunPlayLoop(Application* state, std::stop_token stopToken)
 {
     // Bounds how long WaitForReadable() below can block with nothing to
     // read, so this loop can drive TickLoop::Tick() on its own steady
@@ -971,7 +971,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
 
             // Stored for GUIController::RenderPlayerStatusBars' HUD display
             // - same manual-mutex-next-to-data convention as entities/
-            // entitiesMutex (see GlobalState's own comment on health/food/
+            // entitiesMutex (see Application's own comment on health/food/
             // saturation/healthMutex).
             {
                 std::lock_guard<std::mutex> lock(state->healthMutex);
@@ -1157,7 +1157,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
         }
 
         // A tick's worth of packets arrives bundled; each boundary counts as a
-        // server tick for GlobalState::serverTicks.
+        // server tick for Application::serverTicks.
         if (packetId == PlayS2C::BundleDelimiter) {
             state->serverTicks.fetch_add(1, std::memory_order_relaxed);
             continue;
@@ -2117,7 +2117,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
                 if (mode == 1) {
                     state->teams.erase(teamName);
                 } else {
-                    GlobalState::TeamInfo& team = state->teams[teamName];
+                    Application::TeamInfo& team = state->teams[teamName];
                     if (mode == 0 || mode == 2) {
                         ReadTextComponent(reader); // Display name, unused.
                         reader.ReadByte();         // Flags.
@@ -2254,7 +2254,7 @@ void NetworkClient::RunPlayLoop(GlobalState* state, std::stop_token stopToken)
     }
 }
 
-void SendChatMessage(GlobalState* state, const std::string& message)
+void SendChatMessage(Application* state, const std::string& message)
 {
     // The loaded copy keeps the connection alive for the rest of this
     // function even if the session ends mid-call
@@ -2285,7 +2285,7 @@ void SendChatMessage(GlobalState* state, const std::string& message)
     }
 }
 
-void SendChatCommand(GlobalState* state, const std::string& command)
+void SendChatCommand(Application* state, const std::string& command)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
@@ -2303,7 +2303,7 @@ void SendChatCommand(GlobalState* state, const std::string& command)
     }
 }
 
-void SendRespawnRequest(GlobalState* state)
+void SendRespawnRequest(Application* state)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
@@ -2320,7 +2320,7 @@ void SendRespawnRequest(GlobalState* state)
     }
 }
 
-void SendAttack(GlobalState* state, uint32_t targetEntityId)
+void SendAttack(Application* state, uint32_t targetEntityId)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
@@ -2337,7 +2337,7 @@ void SendAttack(GlobalState* state, uint32_t targetEntityId)
     }
 }
 
-void SendSwing(GlobalState* state, int32_t hand)
+void SendSwing(Application* state, int32_t hand)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) return; // Nothing to animate for anyone without a session
@@ -2351,7 +2351,7 @@ void SendSwing(GlobalState* state, int32_t hand)
     }
 }
 
-void SendHeldItemSlot(GlobalState* state, uint8_t slot)
+void SendHeldItemSlot(Application* state, uint8_t slot)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
@@ -2368,7 +2368,7 @@ void SendHeldItemSlot(GlobalState* state, uint8_t slot)
     }
 }
 
-void SendPlayerAbilities(GlobalState* state, bool flying)
+void SendPlayerAbilities(Application* state, bool flying)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
@@ -2410,7 +2410,7 @@ void WriteOptionalHashedSlot(PacketWriter& writer, const ItemStack& item)
 
 }
 
-void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendInventoryClick(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                         uint8_t button, const ItemStack& slotItem, const ItemStack& carriedItem)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
@@ -2437,7 +2437,7 @@ void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, i
     }
 }
 
-void SendInventoryAction(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendInventoryAction(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                          uint8_t button, int32_t mode, const ItemStack& carriedItem)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
@@ -2459,7 +2459,7 @@ void SendInventoryAction(GlobalState* state, int32_t windowId, int32_t stateId, 
     }
 }
 
-void SendInventoryClose(GlobalState* state, int32_t windowId)
+void SendInventoryClose(Application* state, int32_t windowId)
 {
     if (windowId == 0) return;
     std::shared_ptr<Connection> connection = state->activeConnection.load();
@@ -2475,7 +2475,7 @@ void SendInventoryClose(GlobalState* state, int32_t windowId)
     }
 }
 
-void SendInteractEntity(GlobalState* state, uint32_t entityId, Hand hand, bool sneaking)
+void SendInteractEntity(Application* state, uint32_t entityId, Hand hand, bool sneaking)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
@@ -2498,7 +2498,7 @@ void SendInteractEntity(GlobalState* state, uint32_t entityId, Hand hand, bool s
     }
 }
 
-void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position, glm::ivec3 face)
+void SendPlayerAction(Application* state, DigStatus status, glm::ivec3 position, glm::ivec3 face)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
@@ -2519,7 +2519,7 @@ void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position,
     }
 }
 
-void SendArmAnimation(GlobalState* state, Hand hand)
+void SendArmAnimation(Application* state, Hand hand)
 {
     state->localSwingNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count(), std::memory_order_relaxed);
@@ -2539,7 +2539,7 @@ void SendArmAnimation(GlobalState* state, Hand hand)
     }
 }
 
-void SendBlockPlace(GlobalState* state, Hand hand, glm::ivec3 position, glm::ivec3 face, glm::vec3 cursor)
+void SendBlockPlace(Application* state, Hand hand, glm::ivec3 position, glm::ivec3 face, glm::vec3 cursor)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {
@@ -2564,7 +2564,7 @@ void SendBlockPlace(GlobalState* state, Hand hand, glm::ivec3 position, glm::ive
     }
 }
 
-void SendPickItemFromBlock(GlobalState* state, glm::ivec3 position)
+void SendPickItemFromBlock(Application* state, glm::ivec3 position)
 {
 	std::shared_ptr<Connection> connection = state->activeConnection.load();
 	if (!connection) return;
@@ -2590,7 +2590,7 @@ void WriteUntrustedSlot(PacketWriter& writer, const ItemStack& item)
 
 }
 
-void SendSetCreativeSlot(GlobalState* state, int16_t slot, const ItemStack& item)
+void SendSetCreativeSlot(Application* state, int16_t slot, const ItemStack& item)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) return;
@@ -2605,7 +2605,7 @@ void SendSetCreativeSlot(GlobalState* state, int16_t slot, const ItemStack& item
     }
 }
 
-void SendUseItem(GlobalState* state, Hand hand, float yaw, float pitch)
+void SendUseItem(Application* state, Hand hand, float yaw, float pitch)
 {
     std::shared_ptr<Connection> connection = state->activeConnection.load();
     if (connection == nullptr) {

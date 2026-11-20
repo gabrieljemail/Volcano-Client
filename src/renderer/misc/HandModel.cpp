@@ -12,7 +12,7 @@
 #include "../VulkanInit.hpp"
 #include "../entity/EntityRenderer.hpp"
 #include "../entity/models/EntityJsonModel.hpp"
-#include "../../GlobalState.hpp"
+#include "../../Application.hpp"
 #include "../../Logger.hpp"
 #include "../../Math.hpp"
 #include "../../Player.hpp"
@@ -61,7 +61,7 @@ HandSway sway;
 
 // 0..1 through the current swing, or 0 when idle. While a block is being
 // mined the swing repeats until the break finishes or is cancelled.
-float SwingProgress(GlobalState* state)
+float SwingProgress(Application* state)
 {
     return state->GetLocalSwingProgress();
 }
@@ -349,7 +349,7 @@ void HandModel::DrawArm(VkCommandBuffer cmd, const ArmMesh& mesh, const glm::mat
 
 void HandModel::Record(Engine::FrameContext& frame)
 {
-    GlobalState* state = frame.state;
+    Application* state = frame.state;
     if (!ready || state == nullptr || state->itemRenderer == nullptr) return;
     if (state->connectionPhase.load() != ConnectionPhase::Playing) return;
     if (state->localGameMode.load() == 3) return; // Spectators have no hands.

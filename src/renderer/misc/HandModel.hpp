@@ -20,7 +20,7 @@ namespace Volcano {
 //   Graphics.LeftHanded  (bool) swaps which side the main hand is on.
 //
 // Render thread only. Needs EntityRenderer initialized first (it borrows its
-// default skin) and GlobalState::itemRenderer with its world pipeline.
+// default skin) and Application::itemRenderer with its world pipeline.
 class HandModel {
 public:
     void Create(const Engine::ShaderLibrary& shaders);

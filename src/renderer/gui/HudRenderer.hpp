@@ -19,7 +19,7 @@
 #include "PincelSurface.hpp"
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 }
 
 namespace Volcano::GUI {
@@ -32,7 +32,7 @@ namespace Volcano::GUI {
 // Render thread only.
 class HudRenderer {
 public:
-    explicit HudRenderer(GlobalState* globalState) : state(globalState) {}
+    explicit HudRenderer(Application* globalState) : state(globalState) {}
 
     bool Init(VkRenderPass renderPass);
     void Shutdown();
@@ -88,7 +88,7 @@ private:
         int left, int top, int art, int cropWidth = 0);
     Pincel::Element Corner(Pincel::Element element, int left, int top);
 
-    GlobalState* state;
+    Application* state;
     PincelSurface surface;
     std::unique_ptr<Pincel::Canvas> canvas;
     ImGuiInput input;

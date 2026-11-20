@@ -5,7 +5,7 @@
 #include <cmath>
 #include <optional>
 #include <imgui.h>
-#include "GlobalState.hpp"
+#include "Application.hpp"
 #include "network/microsoft/MSAccountManager.hpp"
 #include "Logger.hpp"
 #include "audio/SoundRegistry.hpp"

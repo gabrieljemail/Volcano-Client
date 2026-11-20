@@ -4,7 +4,7 @@
 
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
-#include "../RenderPass.hpp"
+#include "../../RenderPass.hpp"
 
 namespace Volcano::Engine::Passes {
 

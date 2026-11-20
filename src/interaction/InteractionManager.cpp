@@ -26,8 +26,8 @@ namespace Volcano {
 
 // Declared here rather than including network/NetworkClient.hpp, for the
 // same asio/<windows.h> reason GUIController.cpp and RenderThread.cpp give.
-void SendAttack(GlobalState* state, uint32_t targetEntityId);
-void SendSwing(GlobalState* state, int32_t hand);
+void SendAttack(Application* state, uint32_t targetEntityId);
+void SendSwing(Application* state, int32_t hand);
 
 namespace {
 
@@ -97,7 +97,7 @@ glm::ivec3 NearestCardinalDirection(const glm::vec3& v)
 }
 
 // DDA (Amanatides & Woo) voxel walk
-std::optional<TargetedBlock> RaycastBlocks(GlobalState* state, const glm::vec3& origin,
+std::optional<TargetedBlock> RaycastBlocks(Application* state, const glm::vec3& origin,
                                             const glm::vec3& direction, float maxDistance)
 {
     glm::ivec3 cell(static_cast<int>(std::floor(origin.x)),
@@ -210,7 +210,7 @@ struct EntityHit { uint32_t entityId; float distance; };
 
 // Linear scan, but with a cheap bounding-sphere reject before the real
 // ray/AABB test
-std::optional<EntityHit> RaycastEntities(GlobalState* state, const glm::vec3& origin,
+std::optional<EntityHit> RaycastEntities(Application* state, const glm::vec3& origin,
                                           const glm::vec3& direction, float maxDistance,
                                           std::chrono::steady_clock::time_point now)
 {
@@ -239,7 +239,7 @@ std::optional<EntityHit> RaycastEntities(GlobalState* state, const glm::vec3& or
 
 } // namespace
 
-InteractionManager::InteractionManager(GlobalState* globalState)
+InteractionManager::InteractionManager(Application* globalState)
     : state(globalState)
 {
     // Config::Get returns a ConfigValue (std::variant<std::string,uint32_t,

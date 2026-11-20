@@ -6,7 +6,7 @@
 #include <stop_token>
 #include <GLFW/glfw3.h>
 #include "CrashReporter.hpp"
-#include "GlobalState.hpp"
+#include "Application.hpp"
 #include "RideController.hpp"
 #include "ModLoader.hpp"
 #include "InputHandler.hpp"
@@ -97,7 +97,7 @@ int main(int argc, char** argv)
     std::cout << "\x1b]0;Volcano Client Log\x07"; // Title.
 
     // Initialize global state.
-    Volcano::GlobalState state{};
+    Volcano::Application state{};
     state.LoadSettings();
 
     // Resource packs must exist before any asset read.
@@ -309,8 +309,8 @@ int main(int argc, char** argv)
 
     // Shown from the moment a connection attempt starts (singleplayer or
     // multiplayer) until the world is ready - the main loop below closes it
-    // once GlobalState::worldReady flips. See LoadingScreen.hpp; what it
-    // says follows GlobalState::connectionPhase. Cancel (only offered while
+    // once Application::worldReady flips. See LoadingScreen.hpp; what it
+    // says follows Application::connectionPhase. Cancel (only offered while
     // a local server is starting) doesn't block on the server shutting down
     // - see RequestStop's own comment. The old NetworkThread (and its
     // still-shutting-down LocalServer) gets joined for real whenever
@@ -463,7 +463,7 @@ int main(int argc, char** argv)
         }
 
         // NetworkThread flags this when a session ends unexpectedly (kicked,
-        // dropped, login failure) - see GlobalState::ReportDisconnect. Reset
+        // dropped, login failure) - see Application::ReportDisconnect. Reset
         // world/session state so the next connection starts clean instead of
         // layering onto the previous one's leftovers, then show the connect
         // screen again with the reason.
@@ -477,7 +477,7 @@ int main(int argc, char** argv)
             Volcano::Log::Info("Returned to connect screen: " + reason);
             modLoader.Fire(Volcano::EventType::LEAVE_PLAY_STATE);
 
-            // See GlobalState::ResetWorldState's own comment
+            // See Application::ResetWorldState's own comment
             state.SetConnectionPhase(Volcano::ConnectionPhase::Idle);
             state.ResetWorldState();
 

@@ -2,11 +2,11 @@
 #ifndef VOLCANO_ENGINE_PASSES_HAND_PASS_H
 #define VOLCANO_ENGINE_PASSES_HAND_PASS_H
 
-#include "../RenderPass.hpp"
-#include "../RenderEngine.hpp"
-#include "../../misc/HandModel.hpp"
-#include "../../misc/ItemRenderer.hpp"
-#include "../../../GlobalState.hpp"
+#include "../../RenderPass.hpp"
+#include "../../RenderEngine.hpp"
+#include "../../../misc/HandModel.hpp"
+#include "../../../misc/ItemRenderer.hpp"
+#include "../../../../Application.hpp"
 
 namespace Volcano::Engine::Passes {
 

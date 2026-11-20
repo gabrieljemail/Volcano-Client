@@ -69,14 +69,14 @@ static void AddImageNearest(ImDrawList* drawList, ImTextureID texture, const ImV
 // whose CreateWindowA/CreateWindow macros collide with
 // GUIController::CreateWindow below. This one free function is all
 // GUIController actually needs from it.
-void SendChatMessage(GlobalState* state, const std::string& message);
-void SendChatCommand(GlobalState* state, const std::string& command);
-void SendRespawnRequest(GlobalState* state);
-void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendChatMessage(Application* state, const std::string& message);
+void SendChatCommand(Application* state, const std::string& command);
+void SendRespawnRequest(Application* state);
+void SendInventoryClick(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                         uint8_t button, const ItemStack& slotItem, const ItemStack& carriedItem);
-void SendInventoryAction(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendInventoryAction(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                          uint8_t button, int32_t mode, const ItemStack& carriedItem);
-void SendInventoryClose(GlobalState* state, int32_t windowId);
+void SendInventoryClose(Application* state, int32_t windowId);
 }
 
 namespace Volcano {
@@ -130,7 +130,7 @@ namespace {
     }
 }
 
-GlobalState* GUIController::state = nullptr;
+Application* GUIController::state = nullptr;
 GLFWwindow* GUIController::windowHandle = nullptr;
 const TextureManager* GUIController::textureManager = nullptr;
 std::vector<GUI::GUIWindow*> GUIController::windows = {};
@@ -182,7 +182,7 @@ GUIController::StandaloneIcon GUIController::armorFullIcon;
 GUIController::StandaloneIcon GUIController::armorHalfIcon;
 GUIController::StandaloneIcon GUIController::saturationOutlineIcon;
 
-void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState,
+void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, Application* globalState,
                           const TextureManager* textureMgr)
 {
     state = globalState;
@@ -1016,9 +1016,9 @@ void GUIController::RegisterBuiltinDebugDisplays()
         }
         char phases[96];
         std::snprintf(phases, sizeof(phases), "\n\tChunk cull / sort / draw: %.2f / %.2f / %.2f ms",
-            static_cast<double>(state->chunkPhaseMs[GlobalState::CHUNK_PHASE_CULL]),
-            static_cast<double>(state->chunkPhaseMs[GlobalState::CHUNK_PHASE_SORT]),
-            static_cast<double>(state->chunkPhaseMs[GlobalState::CHUNK_PHASE_DRAW]));
+            static_cast<double>(state->chunkPhaseMs[Application::CHUNK_PHASE_CULL]),
+            static_cast<double>(state->chunkPhaseMs[Application::CHUNK_PHASE_SORT]),
+            static_cast<double>(state->chunkPhaseMs[Application::CHUNK_PHASE_DRAW]));
         return text + phases;
     });
     AddBuiltin<std::string>("Performance", "Waiting on GPU", [] { return FormatMs(state->timings.gpuWaitMs.load()); });
@@ -1034,7 +1034,7 @@ void GUIController::RegisterBuiltinDebugDisplays()
     });
     AddBuiltin<std::string>("Performance", "Present Mode", []
     {
-        // GlobalState::presentMode is the swapchain's actual active
+        // Application::presentMode is the swapchain's actual active
         // VkPresentModeKHR
         switch (static_cast<VkPresentModeKHR>(state->presentMode))
         {
@@ -1052,10 +1052,10 @@ void GUIController::RegisterBuiltinDebugDisplays()
         for (uint64_t count : state->trianglesDrawn) total += count;
         return std::array<std::string, 5>{
             std::to_string(total),
-            "Terrain: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_TERRAIN]),
-            "Cutout: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_CUTOUT]),
-            "Water: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_TRANSLUCENT]),
-            "Entities: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY])
+            "Terrain: " + std::to_string(state->trianglesDrawn[Application::TRIANGLES_TERRAIN]),
+            "Cutout: " + std::to_string(state->trianglesDrawn[Application::TRIANGLES_CUTOUT]),
+            "Water: " + std::to_string(state->trianglesDrawn[Application::TRIANGLES_TRANSLUCENT]),
+            "Entities: " + std::to_string(state->trianglesDrawn[Application::TRIANGLES_ENTITY])
         };
     });
     AddBuiltin<std::string>("Rendering", "Sections", []
@@ -1091,7 +1091,7 @@ void GUIController::RegisterBuiltinDebugDisplays()
     AddBuiltin<std::string>("System", "GPU", [] { return state->systemInfo.gpuModel; });
     AddBuiltin<std::string>("System", "Display", []
     {
-        // Live framebuffer size, not GlobalState::resolution (the
+        // Live framebuffer size, not Application::resolution (the
         // startup-config value). Safe here: this runs on the GLFW window's thread.
         int width = 0, height = 0;
         glfwGetFramebufferSize(state->window, &width, &height);

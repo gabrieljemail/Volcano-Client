@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <glm/glm.hpp>
-#include "../../../GlobalState.hpp"
+#include "../../../Application.hpp"
 #include "Entity.hpp"
 #include "EntityRegistry.hpp"
 
@@ -71,7 +71,7 @@ inline glm::vec3 SeatPosition(Kind kind, glm::vec3 vehiclePosition, float vehicl
 // the vehicle's Kind and fills position and vehicleYaw, or Kind::None (outputs
 // untouched) when the entity isn't riding a tracked vehicle. Caller holds
 // state->entitiesMutex.
-inline Kind Resolve(GlobalState* state, const Entity& passenger, std::chrono::steady_clock::time_point now,
+inline Kind Resolve(Application* state, const Entity& passenger, std::chrono::steady_clock::time_point now,
     glm::vec3& position, float& vehicleYaw)
 {
     if (!passenger.IsPassenger()) return Kind::None;
@@ -92,7 +92,7 @@ inline Kind Resolve(GlobalState* state, const Entity& passenger, std::chrono::st
 
 // The local player's seat index among the vehicle's riders (0 when alone).
 // Caller holds state->entitiesMutex.
-inline int LocalSeatIndex(GlobalState* state, const Entity& vehicle)
+inline int LocalSeatIndex(Application* state, const Entity& vehicle)
 {
     uint32_t localId = static_cast<uint32_t>(state->localEntityId.load());
     for (size_t i = 0; i < vehicle.passengers.size(); i++)

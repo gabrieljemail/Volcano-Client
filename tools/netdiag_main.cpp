@@ -12,7 +12,7 @@ int main(int argc, char** argv)
     uint16_t port = static_cast<uint16_t>(argc > 2 ? std::stoi(argv[2]) : 25565);
     std::string username = argc > 3 ? argv[3] : "NetDiag";
 
-    Volcano::GlobalState state{};
+    Volcano::Application state{};
     state.LoadSettings(); // RunConfiguration() below reads Graphics.RenderDistance from state.config.
     asio::io_context ioContext;
     Volcano::NetworkClient client(ioContext);

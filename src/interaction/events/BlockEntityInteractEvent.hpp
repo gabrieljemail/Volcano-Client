@@ -3,7 +3,7 @@
 #define VOLCANO_BLOCK_ENTITY_INTERACT_EVENT_H
 
 #include <glm/glm.hpp>
-#include "../../GlobalState.hpp"
+#include "../../Application.hpp"
 #include "../../network/NetworkClient.hpp"
 #include "../InteractionTypes.hpp"
 
@@ -16,7 +16,7 @@ struct BlockEntityInteractEvent {
     glm::ivec3 face;
     Hand hand;
 
-    void Dispatch(GlobalState* state) const
+    void Dispatch(Application* state) const
     {
         glm::vec3 cursor(0.5f, 0.5f, 0.5f);
         if (face.x != 0) cursor.x = face.x > 0 ? 1.0f : 0.0f;

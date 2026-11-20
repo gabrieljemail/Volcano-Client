@@ -13,7 +13,7 @@
 
 namespace Volcano {
 
-struct GlobalState;
+struct Application;
 
 // Layered asset lookup: each Graphics.ResourcePacks entry (a .zip or a
 // directory in resourcepacks/), highest priority first, then the base pack at
@@ -25,7 +25,7 @@ struct GlobalState;
 class ResourceManager {
 public:
     // Registers this instance as Instance() and loads the layers.
-    explicit ResourceManager(GlobalState* state);
+    explicit ResourceManager(Application* state);
     ~ResourceManager();
 
     // Valid after construction; logs and aborts if there is none.
@@ -58,7 +58,7 @@ private:
         bool recursive, std::set<std::string>& out);
     std::string FindPack(const std::string& name);
 
-    GlobalState* state;
+    Application* state;
     mutable std::shared_mutex mutex;
     std::vector<Layer> layers;
     std::set<std::string> warned;

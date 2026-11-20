@@ -11,7 +11,7 @@
 #include <ranges>
 #include <random>
 #include <string_view>
-#include "../GlobalState.hpp"
+#include "../Application.hpp"
 #include "../Logger.hpp"
 #include "SoundRegistry.hpp"
 
@@ -27,7 +27,7 @@ constexpr std::string_view MUSIC_CATEGORIES[] = {
 
 class MusicController {
 public:
-    MusicController(GlobalState* globalState, SoundRegistry* soundRegistry)
+    MusicController(Application* globalState, SoundRegistry* soundRegistry)
         : state(globalState), registry(soundRegistry)
     {
         // Resolve each configured song to its registry name and load it.
@@ -108,7 +108,7 @@ public:
     }
 
 private:
-    GlobalState* state;
+    Application* state;
     SoundRegistry* registry;
     // The gap between songs. The first song starts right away.
     std::chrono::milliseconds gap{4500};

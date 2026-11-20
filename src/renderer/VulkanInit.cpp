@@ -7,7 +7,7 @@
 #include <GLFW/glfw3.h>
 #include <stb_image.h>
 #define VMA_IMPLEMENTATION
-#include "GlobalState.hpp"
+#include "Application.hpp"
 #include "Logger.hpp"
 #include "VulkanInit.hpp"
 #include "RenderThread.hpp"
@@ -26,7 +26,7 @@ using namespace std;
 // Set once in Init(). Kept as a plain module-local pointer rather than the
 // GLFW window user pointer, since InputHandler already claims that slot for
 // its own key/cursor callbacks.
-static GlobalState* g_globalState = nullptr;
+static Application* g_globalState = nullptr;
 
 // Current window mode and the windowed geometry to restore when leaving
 // fullscreen (captured right before switching away from Windowed).
@@ -1250,7 +1250,7 @@ static void CreateFramebuffers()
 }
 
 // Main function.
-void Init(GlobalState* state)
+void Init(Application* state)
 {
     // On Linux, try to use Wayland instead of X11.
     #ifdef __linux__

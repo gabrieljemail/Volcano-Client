@@ -18,7 +18,7 @@
 #include "ControlRenderer.hpp"
 #include "HudRenderer.hpp"
 #include "PincelSprite.hpp"
-#include "GlobalState.hpp"
+#include "Application.hpp"
 #include "models/GUIWindow.hpp"
 #include "models/Screen.hpp"
 
@@ -81,7 +81,7 @@ std::string Format(const T& value)
 
 class GUIController {
 public:
-    static void Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState,
+    static void Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, Application* globalState,
                       const TextureManager* textureManager);
     static void Shutdown();
     // Rebuilds every texture-derived icon (standalone HUD art, item icons, 3D
@@ -210,7 +210,7 @@ public:
 
 private:
     static void RenderHudElements();
-    static GlobalState* state;
+    static Application* state;
     static GLFWwindow* windowHandle;
     static const TextureManager* textureManager;
     static std::vector<GUI::GUIWindow*> windows;

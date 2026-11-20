@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <vector>
 #include <vulkan/vulkan.h>
-#include "../../models/AllocatedBuffer.hpp"
-#include "../../models/Mesh.hpp"
+#include "../../../models/AllocatedBuffer.hpp"
+#include "../../../models/Mesh.hpp"
 
 namespace Volcano::Engine::Passes {
 

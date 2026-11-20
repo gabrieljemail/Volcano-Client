@@ -241,7 +241,7 @@ namespace PlayS2C { // Play state, clientbound (server -> client)
     // dead before this session connected (PlayerCombatKill above only fires
     // at the moment of death, not on a later rejoin) - health <= 0 here is
     // what actually needs to trigger the death screen in that case. All
-    // three values are also stored on GlobalState (health/food/saturation)
+    // three values are also stored on Application (health/food/saturation)
     // for GUIController::RenderPlayerStatusBars' HUD display.
     constexpr int32_t SetHealth = 0x68;                // SET_HEALTH
 

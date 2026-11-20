@@ -290,7 +290,7 @@ void CreateCrackPipeline(const Engine::ShaderLibrary& shaders)
 }
 
 // Draws the crack texture for `stage` over every box of the block at `position`.
-void DrawCracks(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state, const glm::ivec3& position, int stage)
+void DrawCracks(VkCommandBuffer cmd, uint32_t frameIndex, Application* state, const glm::ivec3& position, int stage)
 {
     static int lastLoggedStage = -1;
     if (g_crackPipeline == VK_NULL_HANDLE)
@@ -560,7 +560,7 @@ void SelectionRenderer::Shutdown()
     g_lineIndexBuffer = AllocatedBuffer{};
 }
 
-void SelectionRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state)
+void SelectionRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Application* state)
 {
     std::optional<TargetedBlock> target = state->interaction->GetTargetedBlock();
 

@@ -6,7 +6,7 @@
 #include "../models/Screen.hpp"
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 }
 
 namespace Volcano::GUI {
@@ -16,7 +16,7 @@ namespace Volcano::GUI {
 // pack pinned at the bottom since nothing renders without it. Changes are
 // written to settings.json at once and the packs reload when Done is
 // pressed. `onDone` runs after that.
-Screen* CreateResourcePacksScreen(GlobalState* state, std::function<void()> onDone);
+Screen* CreateResourcePacksScreen(Application* state, std::function<void()> onDone);
 
 } // namespace Volcano::GUI
 

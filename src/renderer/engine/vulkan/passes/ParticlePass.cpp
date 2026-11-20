@@ -3,10 +3,10 @@
 #include <stdexcept>
 #include <glm/gtc/matrix_transform.hpp>
 #include "ParticlePass.hpp"
-#include "../ShaderLibrary.hpp"
-#include "../../VulkanInit.hpp"
-#include "../../../GlobalState.hpp"
-#include "../../../Logger.hpp"
+#include "../../ShaderLibrary.hpp"
+#include "../../../VulkanInit.hpp"
+#include "../../../../Application.hpp"
+#include "../../../../Logger.hpp"
 
 namespace Volcano::Engine::Passes {
 

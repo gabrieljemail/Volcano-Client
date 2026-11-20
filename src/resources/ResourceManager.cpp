@@ -1,5 +1,5 @@
 #include "ResourceManager.hpp"
-#include "GlobalState.hpp"
+#include "Application.hpp"
 #include "Logger.hpp"
 #include <cstdlib>
 #include <filesystem>
@@ -20,7 +20,7 @@ bool HasExtension(const std::string& name, const std::string& ext)
 
 } // namespace
 
-ResourceManager::ResourceManager(GlobalState* state)
+ResourceManager::ResourceManager(Application* state)
     : state(state)
 {
     instance = this;

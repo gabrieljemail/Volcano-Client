@@ -4,7 +4,7 @@
 
 #include <atomic>
 #include <thread>
-#include "../../GlobalState.hpp"
+#include "../../Application.hpp"
 #include "../TextureManager.hpp"
 
 namespace Volcano {
@@ -13,14 +13,14 @@ namespace Volcano {
 // them. Call with the owning render-list mutex held, as the mesh leaves it.
 void ReleaseMeshSlabs(const Mesh& mesh);
 
-// Consumes GlobalState::NetworkInbox (chunks + the one-time spawn position)
+// Consumes Application::NetworkInbox (chunks + the one-time spawn position)
 // on its own thread, decoupled from the network thread (which only parses
 // bytes into plain Chunks) and from the main/render threads. Greedy meshing
 // a full 16x384x16 chunk is real CPU work; running it inline on the main
 // thread - as it used to, in VolcanoClient.cpp's DrainNetworkInbox
 class MeshingThread {
 public:
-    MeshingThread(GlobalState* state, const TextureManager* textureManager);
+    MeshingThread(Application* state, const TextureManager* textureManager);
     ~MeshingThread();
 
     void Start();
@@ -37,7 +37,7 @@ private:
     std::atomic<bool> pauseRequested{false};
     std::atomic<bool> paused{false};
 
-    GlobalState* state;
+    Application* state;
     const TextureManager* textureManager;
     std::jthread worker;
 

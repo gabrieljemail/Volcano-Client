@@ -6,14 +6,14 @@
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <chrono>
-#include "../RenderPass.hpp"
-#include "../../VulkanInit.hpp"
+#include "../../RenderPass.hpp"
+#include "../../../VulkanInit.hpp"
 #include <unordered_map>
 #include <vector>
-#include "../../models/Mesh.hpp"
-#include "../../terrain/OcclusionSnapshot.hpp"
-#include "../../terrain/VisibleChunkController.hpp"
-#include "../../../GlobalState.hpp"
+#include "../../../models/Mesh.hpp"
+#include "../../../terrain/OcclusionSnapshot.hpp"
+#include "../../../terrain/VisibleChunkController.hpp"
+#include "../../../../Application.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -29,7 +29,7 @@ protected:
     // One list's culled (and, for the blended lists, sorted) visible set from a
     // previous frame, reused while nothing it depends on has changed: the
     // camera (viewProj also carries its position, which the sort uses), the
-    // mesh lists (GlobalState::meshListGeneration) and the Hi-Z snapshot
+    // mesh lists (Application::meshListGeneration) and the Hi-Z snapshot
     // (OcclusionSnapshot::serial). Rarely hits while the camera moves, but
     // makes a standing-still frame skip the whole walk.
     struct VisibleCache {
@@ -47,7 +47,7 @@ protected:
     const std::vector<const Mesh*>& GetVisible(VisibleCache& cache,
         const std::unordered_map<SectionKey, Mesh, SectionKeyHash>& list, const FrameContext& frame, bool sortFarthest) const
     {
-        GlobalState* state = frame.state;
+        Application* state = frame.state;
         const uint64_t generation = state->meshListGeneration.load();
         if (cache.valid && cache.generation == generation && cache.occlusionSerial == occlusionSnapshot.serial
             && cache.viewProj == frame.viewProj)
@@ -62,7 +62,7 @@ protected:
 
         const uint32_t testedBefore = occlusionSnapshot.tested, occludedBefore = occlusionSnapshot.occluded;
         {
-            PhaseTimer timer(state, GlobalState::CHUNK_PHASE_CULL);
+            PhaseTimer timer(state, Application::CHUNK_PHASE_CULL);
             cache.meshes = VisibleChunkController::GetVisibleMeshes(list, frame.viewProj);
         }
         cache.tested = occlusionSnapshot.tested - testedBefore;
@@ -70,7 +70,7 @@ protected:
 
         if (sortFarthest)
         {
-            PhaseTimer timer(state, GlobalState::CHUNK_PHASE_SORT);
+            PhaseTimer timer(state, Application::CHUNK_PHASE_SORT);
             const glm::vec3 cameraPosition = frame.scene->cameraPosition;
             std::sort(cache.meshes.begin(), cache.meshes.end(), [&cameraPosition](const Mesh* a, const Mesh* b)
             {
@@ -93,7 +93,7 @@ protected:
     // line - a no-op (no clock reads) while the HUD is hidden.
     class PhaseTimer {
     public:
-        PhaseTimer(GlobalState* stateIn, GlobalState::ChunkPhase phaseIn)
+        PhaseTimer(Application* stateIn, Application::ChunkPhase phaseIn)
             : state(stateIn), phase(phaseIn), active(stateIn && stateIn->debugHudVisible)
         {
             if (active) start = std::chrono::steady_clock::now();
@@ -107,8 +107,8 @@ protected:
             }
         }
     private:
-        GlobalState* state;
-        GlobalState::ChunkPhase phase;
+        Application* state;
+        Application::ChunkPhase phase;
         bool active;
         std::chrono::steady_clock::time_point start;
     };
@@ -120,9 +120,9 @@ protected:
         vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 2, sets, 0, nullptr);
     }
 
-    // `category` is which GlobalState::trianglesDrawn bucket this mesh's
+    // `category` is which Application::trianglesDrawn bucket this mesh's
     // triangles count toward (debug HUD only, skipped while it's hidden).
-    void DrawMesh(VkCommandBuffer cmd, const Mesh& mesh, GlobalState* state, GlobalState::TriangleCategory category) const
+    void DrawMesh(VkCommandBuffer cmd, const Mesh& mesh, Application* state, Application::TriangleCategory category) const
     {
         VkDeviceSize offsets[] = {mesh.vertexOffset};
         vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertexBuffer, offsets);

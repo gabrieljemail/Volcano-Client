@@ -43,18 +43,18 @@ enum class WindowMode : uint8_t {
 };
 
 // Defined in TickLoop.hpp, which includes this header (not the other way
-// around) since it needs the full GlobalState - a forward declaration is
+// around) since it needs the full Application - a forward declaration is
 // enough here for a pointer member.
 class TickLoop;
 
 // Defined in network/Connection.hpp. Forward-declared here (rather than
-// including that header, which would pull asio into every GlobalState.hpp
-// includer) purely so GlobalState::activeConnection below can hold a
+// including that header, which would pull asio into every Application.hpp
+// includer) purely so Application::activeConnection below can hold a
 // pointer to it.
 class Connection;
 
 // Defined in interaction/InteractionManager.hpp, which includes this header
-// (not the other way around) since it needs the full GlobalState
+// (not the other way around) since it needs the full Application
 class InteractionManager;
 
 class AudioManager;
@@ -170,11 +170,11 @@ struct LocalMotionInbox {
 };
 
 // Set by MeshingThread to ReleaseMeshSlabs, so ResetWorldState can hand
-// cleared meshes' slab regions back without GlobalState depending on the
+// cleared meshes' slab regions back without Application depending on the
 // meshers (NetDiag builds this header without them - null there).
 inline void (*releaseMeshSlabsHook)(const Mesh&) = nullptr;
 
-struct GlobalState {
+struct Application {
     // Owns the client's settings
     Config configStorage;
     Config* config{nullptr};

@@ -7,7 +7,7 @@
 
 namespace Volcano::GUI {
 
-Screen* CreateMainMenuScreen(GlobalState* state, Screen* singleplayerScreen, Screen* multiplayerScreen,
+Screen* CreateMainMenuScreen(Application* state, Screen* singleplayerScreen, Screen* multiplayerScreen,
     Screen* settingsScreen)
 {
     Screen* mainMenuScreen = GUIController::CreateScreen("Volcano Client", /* closable */ false);

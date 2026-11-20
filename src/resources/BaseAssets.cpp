@@ -23,7 +23,8 @@ using Platform::OS;
 
 constexpr const char* MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 constexpr const char* OBJECTS_URL = "https://resources.download.minecraft.net/";
-constexpr const char* SOUND_PREFIX = "minecraft/sounds/";
+// Everything under minecraft/ in the asset index lives outside the jar: sounds.json, the sound files, lang, fonts.
+constexpr const char* ASSET_PREFIX = "minecraft/";
 constexpr const char* ASSETS_ROOT = "assets/minecraft/";
 constexpr size_t SOUND_WORKERS = 6;
 
@@ -76,6 +77,7 @@ bool Installed()
 {
     std::error_code error;
     return fs::exists(fs::path(DIRECTORY) / "version.json", error)
+        && fs::exists(fs::path(DIRECTORY) / ASSETS_ROOT / "sounds.json", error)
         && fs::is_directory(fs::path(DIRECTORY) / ASSETS_ROOT / "sounds", error);
 }
 
@@ -180,7 +182,7 @@ bool Download(const ProgressFn& progress, std::string& error)
     std::error_code ignored;
     fs::remove(temporary, ignored);
 
-    // 4. The sounds, which live outside the jar as hashed files. Existing files of the right size are kept.
+    // 4. The sounds, sounds.json, lang and fonts, which live outside the jar as hashed files. Existing files of the right size are kept.
     report(EXTRACT_END, "Finding the sound files...");
     nlohmann::json index;
     if (!GetJson(indexUrl, index, error)) return false;
@@ -194,7 +196,7 @@ bool Download(const ProgressFn& progress, std::string& error)
     std::vector<Sound> sounds;
     for (const auto& [key, entry] : index.value("objects", nlohmann::json::object()).items())
     {
-        if (key.rfind(SOUND_PREFIX, 0) != 0 || key.find("..") != std::string::npos) continue;
+        if (key.rfind(ASSET_PREFIX, 0) != 0 || key.find("..") != std::string::npos) continue;
         std::string hash = entry.value("hash", "");
         if (hash.size() < 3) continue;
         sounds.push_back({ "assets/" + key, hash, entry.value("size", 0ull) }); // minecraft/sounds/x -> assets/minecraft/sounds/x
@@ -245,14 +247,14 @@ bool Download(const ProgressFn& progress, std::string& error)
     {
         float part = sounds.empty() ? 1.0f : static_cast<float>(done.load()) / static_cast<float>(sounds.size());
         report(EXTRACT_END + (1.0f - EXTRACT_END) * part,
-            "Downloading sounds (" + std::to_string(done.load()) + " of " + std::to_string(sounds.size()) + ")...");
+            "Downloading sounds and language files (" + std::to_string(done.load()) + " of " + std::to_string(sounds.size()) + ")...");
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     for (std::thread& worker : workers) worker.join();
 
     if (failed.load() > 0)
     {
-        error = std::to_string(failed.load()) + " sound file(s) failed to download (" + firstError + "). Run again to retry.";
+        error = std::to_string(failed.load()) + " asset file(s) failed to download (" + firstError + "). Run again to retry.";
         return false;
     }
 

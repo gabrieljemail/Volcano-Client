@@ -31,7 +31,7 @@ struct ModFile {
 
 class ModLoader {
 public:
-    ModLoader(GlobalState* state, const std::string& modsDir = "mods")
+    ModLoader(Application* state, const std::string& modsDir = "mods")
         : state(state), modsDir(modsDir)
     {}
     ~ModLoader();
@@ -64,7 +64,7 @@ public:
 private:
     uint32_t Register(ModHandler handler);
 
-    GlobalState* state;
+    Application* state;
     std::string modsDir;
     std::vector<ModFile> mods;
     ModFile* initializing{nullptr};

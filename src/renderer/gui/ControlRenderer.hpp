@@ -13,7 +13,7 @@
 #include "models/Screen.hpp"
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 }
 
 namespace Volcano::GUI {
@@ -25,7 +25,7 @@ namespace Volcano::GUI {
 // Render thread only.
 class ControlRenderer {
 public:
-    explicit ControlRenderer(GlobalState* globalState) : state(globalState) {}
+    explicit ControlRenderer(Application* globalState) : state(globalState) {}
 
     // The Minecraft font with its fallbacks, loaded on first use. Shared by everything Pincel draws.
     static Pincel::FontFamily UiFont();
@@ -115,7 +115,7 @@ private:
     void OpenDropdown(size_t controlIndex);
     void CloseDropdown();
 
-    GlobalState* state;
+    Application* state;
     PincelSurface surface;
     std::unique_ptr<Pincel::Canvas> canvas;
     bool ready = false;

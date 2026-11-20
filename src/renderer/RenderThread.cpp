@@ -28,14 +28,14 @@ namespace Volcano {
 // function's siblings: that header drags in asio.hpp, which on Windows
 // pulls in <windows.h>. This one free function is all PollInputs actually
 // needs from it.
-void SendHeldItemSlot(GlobalState* state, uint8_t slot);
-void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position, glm::ivec3 face);
-void SendPlayerAbilities(GlobalState* state, bool flying);
+void SendHeldItemSlot(Application* state, uint8_t slot);
+void SendPlayerAction(Application* state, DigStatus status, glm::ivec3 position, glm::ivec3 face);
+void SendPlayerAbilities(Application* state, bool flying);
 }
 
 namespace Volcano {
 
-RenderThread::RenderThread(Volcano::GlobalState* globalState) : state(globalState)
+RenderThread::RenderThread(Volcano::Application* globalState) : state(globalState)
 {
     if (state && state->targetFPS > 0)
     {
@@ -256,7 +256,7 @@ void RenderThread::PollInputs()
     // Hotbar slot selection ("1".."9" - see their registration in
     // VolcanoClient.cpp). Gated the same way "G"/ToggleLighting is: typing a
     // digit into chat or a text field must not also swap the held slot.
-    // Applied immediately to local state (read straight off GlobalState by
+    // Applied immediately to local state (read straight off Application by
     // GUIController::RenderHotbarAndArmor, no round trip needed for the HUD
     // to update) and reported to the server so its own notion of the held
     // slot - which future block-interaction packets need to agree with -
@@ -423,7 +423,7 @@ void RenderThread::DrawFrame()
 namespace {
 
 // Vanilla's own day-time convention: 0/24000 = dawn, 6000 = noon (brightest),
-// 12000 = dusk, 18000 = midnight (darkest) - see GlobalState::dayTimeTicks.
+// 12000 = dusk, 18000 = midnight (darkest) - see Application::dayTimeTicks.
 // A single cosine gives a smooth day/night gradient without hardcoding a
 // multi-segment sunrise/sunset table: brightness is 1.0 exactly at noon,
 // 0.0 exactly at midnight, and 0.5 at both twilight points (dawn/dusk),
@@ -465,7 +465,7 @@ glm::mat4 ViewBobMatrix(const TickLoop::ViewBob& bob)
 
 // Vanilla's GameRenderer.bobHurt: a hit rolls the view away from where it came from (14 degrees, scaled by the
 // Damage Tilt setting), and a dying player's view rolls a few degrees as it settles.
-glm::mat4 CameraTiltMatrix(GlobalState* state)
+glm::mat4 CameraTiltMatrix(Application* state)
 {
     int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     glm::mat4 m(1.0f);

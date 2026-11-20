@@ -6,13 +6,13 @@
 #include <cmath>
 #include <vector>
 #include <glm/gtc/matrix_transform.hpp>
-#include "../RenderPass.hpp"
-#include "../RenderEngine.hpp"
-#include "../../misc/ItemRenderer.hpp"
-#include "../../terrain/OcclusionSnapshot.hpp"
-#include "../../../GlobalState.hpp"
-#include "../../../inventory/ItemRegistry.hpp"
-#include "../../entity/models/EntityRegistry.hpp"
+#include "../../RenderPass.hpp"
+#include "../../RenderEngine.hpp"
+#include "../../../misc/ItemRenderer.hpp"
+#include "../../../terrain/OcclusionSnapshot.hpp"
+#include "../../../../Application.hpp"
+#include "../../../../inventory/ItemRegistry.hpp"
+#include "../../../entity/models/EntityRegistry.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -33,7 +33,7 @@ public:
 
     void Record(FrameContext& frame) override
     {
-        GlobalState* state = frame.state;
+        Application* state = frame.state;
         renderer = state->itemRenderer;
         if (renderer == nullptr) return;
         renderer->EnsureWorldPipeline(frame.engine->GetShaderLibrary());

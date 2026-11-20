@@ -7,7 +7,7 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
-#include "../RenderPass.hpp"
+#include "../../RenderPass.hpp"
 
 namespace Volcano::Engine::Passes {
 

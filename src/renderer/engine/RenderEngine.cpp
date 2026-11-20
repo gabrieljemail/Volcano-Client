@@ -1,7 +1,7 @@
 #include <chrono>
 #include <exception>
 #include "RenderEngine.hpp"
-#include "../../GlobalState.hpp"
+#include "../../Application.hpp"
 #include "../../Logger.hpp"
 
 namespace Volcano::Engine {
@@ -165,7 +165,7 @@ bool RenderEngine::HasEnabledPass(PassStage stage) const
 
 void RenderEngine::RecordPasses(FrameContext& frame, PassStage stage)
 {
-    // See GlobalState::trianglesDrawn's own comment
+    // See Application::trianglesDrawn's own comment
     if (stage == PassStage::PRE_MAIN && frame.state && frame.state->debugHudVisible)
     {
         for (uint64_t& count : frame.state->trianglesDrawn) count = 0;
@@ -191,8 +191,8 @@ void RenderEngine::RecordPasses(FrameContext& frame, PassStage stage)
 
     if (profile && stage == PassStage::OVERLAY)
     {
-        GlobalState* s = frame.state;
-        for (int i = 0; i < GlobalState::CHUNK_PHASE_COUNT; i++)
+        Application* s = frame.state;
+        for (int i = 0; i < Application::CHUNK_PHASE_COUNT; i++)
         {
             s->chunkPhaseMs[i] += (s->chunkPhaseFrameMs[i] - s->chunkPhaseMs[i]) * 0.05f;
         }

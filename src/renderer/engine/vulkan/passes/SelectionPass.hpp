@@ -2,8 +2,8 @@
 #ifndef VOLCANO_ENGINE_PASSES_SELECTION_PASS_H
 #define VOLCANO_ENGINE_PASSES_SELECTION_PASS_H
 
-#include "../RenderPass.hpp"
-#include "../../misc/SelectionRenderer.hpp"
+#include "../../RenderPass.hpp"
+#include "../../../misc/SelectionRenderer.hpp"
 
 namespace Volcano::Engine::Passes {
 

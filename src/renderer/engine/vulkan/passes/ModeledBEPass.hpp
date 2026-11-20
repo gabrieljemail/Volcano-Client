@@ -3,9 +3,9 @@
 #define VOLCANO_ENGINE_PASSES_MODELED_BE_PASS_H
 
 #include <vector>
-#include "../RenderPass.hpp"
-#include "../../blockentity/ModeledBERenderer.hpp"
-#include "../vulkan/VulkanRenderEngine.hpp"
+#include "../../RenderPass.hpp"
+#include "../../../blockentity/ModeledBERenderer.hpp"
+#include "../../vulkan/VulkanRenderEngine.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -35,7 +35,7 @@ public:
         blockEntities.CopyDraws(draws);
         uint64_t triangles = EntityRenderer::RecordBlockEntities(frame.commandBuffer, frame.frameIndex, draws,
             frame.scene->proj * frame.scene->view, frame.scene->indirectDraw, frame.engine->GetVulkan());
-        if (frame.state->debugHudVisible) frame.state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += triangles;
+        if (frame.state->debugHudVisible) frame.state->trianglesDrawn[Application::TRIANGLES_ENTITY] += triangles;
     }
 
     void Destroy() override

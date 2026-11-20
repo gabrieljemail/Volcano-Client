@@ -6,12 +6,12 @@
 #include <stb_image.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include "CloudPass.hpp"
-#include "../ShaderLibrary.hpp"
-#include "../../VulkanInit.hpp"
-#include "../../../Config.hpp"
-#include "../../../GlobalState.hpp"
-#include "../../../Logger.hpp"
-#include "../../../resources/ImageLoad.hpp"
+#include "../../ShaderLibrary.hpp"
+#include "../../../VulkanInit.hpp"
+#include "../../../../Config.hpp"
+#include "../../../../Application.hpp"
+#include "../../../../Logger.hpp"
+#include "../../../../resources/ImageLoad.hpp"
 
 namespace Volcano::Engine::Passes {
 

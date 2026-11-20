@@ -16,7 +16,7 @@
 #include <vector>
 #include <nlohmann/json.hpp>
 #include "../../../Config.hpp"
-#include "../../../GlobalState.hpp"
+#include "../../../Application.hpp"
 #include "../../../Logger.hpp"
 #include "../../../platform/OS.hpp"
 #include "../GUIController.hpp"
@@ -134,7 +134,7 @@ struct World {
     }
 
     // Missing or mistyped fields keep their defaults.
-    static World Deserialize(const json& entry, GlobalState* state)
+    static World Deserialize(const json& entry, Application* state)
     {
         World world;
         FromDefaults(&world, state);
@@ -148,7 +148,7 @@ struct World {
     }
 
     // Sets these values to defaults, inheriting some from settings.json.
-    static void FromDefaults(World* self, GlobalState* state)
+    static void FromDefaults(World* self, Application* state)
     {
         self->name = "New world";
         self->version = ServerVersion{0, 26, 1}; // 26.1, our protocol implementation.
@@ -198,7 +198,7 @@ inline std::vector<World>* GetWorlds()
 
 // Reads worlds.json into the in-memory list. A missing file is an empty list;
 // an invalid one is renamed to worlds.json.bad so a later save can't erase it.
-inline void LoadWorlds(GlobalState* state)
+inline void LoadWorlds(Application* state)
 {
     auto& worlds = WorldStorage::List();
     worlds.clear();
@@ -405,7 +405,7 @@ struct WorldListActions {
 };
 
 // Fills `screen` with the singleplayer world list: Play, Edit and Delete per world, and a form to create one.
-void ConfigureWorldScreen(Screen* screen, GlobalState* state, WorldListActions actions);
+void ConfigureWorldScreen(Screen* screen, Application* state, WorldListActions actions);
 
 } // namespace Volcano::GUI
 

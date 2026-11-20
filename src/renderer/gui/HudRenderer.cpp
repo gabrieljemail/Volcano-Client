@@ -3,7 +3,7 @@
 #include <cmath>
 #include <mutex>
 #include <imgui.h>
-#include "GlobalState.hpp"
+#include "Application.hpp"
 #include "InputHandler.hpp"
 #include "Logger.hpp"
 #include "PlayerAttributes.hpp"

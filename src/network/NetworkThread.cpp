@@ -7,7 +7,7 @@
 
 namespace Volcano {
 
-NetworkThread::NetworkThread(GlobalState* globalState, std::string host, uint16_t port, std::string username,
+NetworkThread::NetworkThread(Application* globalState, std::string host, uint16_t port, std::string username,
     std::string localServerDir)
     : state(globalState), host(std::move(host)), port(port), username(std::move(username)),
       localServerDir(std::move(localServerDir))
@@ -39,7 +39,7 @@ void NetworkThread::ThreadEntry(std::stop_token stopToken)
         if (!javaPathOverride.empty()) javaPath = javaPathOverride;
         if (!javaArgumentsOverride.empty()) javaArguments = javaArgumentsOverride;
 
-        // Mirrors every logged server line into GlobalState::serverLogLines
+        // Mirrors every logged server line into Application::serverLogLines
         // too, for the starting-server screen to show live
         {
             std::lock_guard<std::mutex> lock(state->serverLogMutex);

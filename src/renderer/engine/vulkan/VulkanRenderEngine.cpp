@@ -5,19 +5,19 @@
 #include <stdexcept>
 #include <string>
 #include "VulkanRenderEngine.hpp"
-#include "../passes/EntityPass.hpp"
-#include "../passes/ModeledBEPass.hpp"
-#include "../passes/GUIPass.hpp"
-#include "../passes/HandPass.hpp"
-#include "../passes/ItemPass.hpp"
-#include "../passes/NonCubicPass.hpp"
-#include "../passes/SelectionPass.hpp"
-#include "../passes/ShaderPackPass.hpp"
-#include "../passes/SkyboxPass.hpp"
-#include "../passes/CloudPass.hpp"
-#include "../passes/ParticlePass.hpp"
-#include "../passes/ShadowPass.hpp"
-#include "../passes/TerrainPass.hpp"
+#include "passes/EntityPass.hpp"
+#include "passes/ModeledBEPass.hpp"
+#include "passes/GUIPass.hpp"
+#include "passes/HandPass.hpp"
+#include "passes/ItemPass.hpp"
+#include "passes/NonCubicPass.hpp"
+#include "passes/SelectionPass.hpp"
+#include "passes/ShaderPackPass.hpp"
+#include "passes/SkyboxPass.hpp"
+#include "passes/CloudPass.hpp"
+#include "passes/ParticlePass.hpp"
+#include "passes/ShadowPass.hpp"
+#include "passes/TerrainPass.hpp"
 #include "../../VulkanInit.hpp"
 #include "../../TextureManager.hpp"
 #include "../../models/CameraUBO.hpp"
@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 #include "../../gui/GUIController.hpp"
-#include "../../../GlobalState.hpp"
+#include "../../../Application.hpp"
 #include "../../../Logger.hpp"
 
 namespace Volcano::Engine::Vulkan {

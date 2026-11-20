@@ -1,9 +1,9 @@
 #include <mutex>
 #include "TerrainPass.hpp"
-#include "../vulkan/VulkanRenderEngine.hpp"
-#include "../../../GlobalState.hpp"
-#include "../../models/PackedVertex.hpp"
-#include "../../terrain/VisibleChunkController.hpp"
+#include "../../vulkan/VulkanRenderEngine.hpp"
+#include "../../../../Application.hpp"
+#include "../../../models/PackedVertex.hpp"
+#include "../../../terrain/VisibleChunkController.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -51,17 +51,17 @@ void TerrainPass::Record(FrameContext& frame)
     std::lock_guard<std::mutex> lock(frame.state->renderListMutex);
     const std::vector<const Mesh*>& visible = GetVisible(cache, frame.state->renderList, frame, false);
 
-    PhaseTimer drawTimer(frame.state, GlobalState::CHUNK_PHASE_DRAW);
+    PhaseTimer drawTimer(frame.state, Application::CHUNK_PHASE_DRAW);
     if (indirect)
     {
         uint64_t triangles = batch.Draw(cmd, frame.frameIndex, visible, sizeof(PackedVertex), true);
-        if (frame.state->debugHudVisible) frame.state->trianglesDrawn[GlobalState::TRIANGLES_TERRAIN] += triangles;
+        if (frame.state->debugHudVisible) frame.state->trianglesDrawn[Application::TRIANGLES_TERRAIN] += triangles;
         return;
     }
 
     for (const Mesh* mesh : visible)
     {
-        DrawMesh(cmd, *mesh, frame.state, GlobalState::TRIANGLES_TERRAIN);
+        DrawMesh(cmd, *mesh, frame.state, Application::TRIANGLES_TERRAIN);
     }
 }
 

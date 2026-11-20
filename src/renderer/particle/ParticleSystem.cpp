@@ -5,7 +5,7 @@
 #include <variant>
 #include <nlohmann/json.hpp>
 #include "../../Config.hpp"
-#include "../../GlobalState.hpp"
+#include "../../Application.hpp"
 #include "../../Logger.hpp"
 #include "../terrain/models/World.hpp"
 
@@ -125,7 +125,7 @@ void ParticleSystem::Spawn(const ParticleSpawn& request)
     if (pending.size() < MAX_QUEUED) pending.push_back(request);
 }
 
-void ParticleSystem::Update(GlobalState* state, float deltaSeconds)
+void ParticleSystem::Update(Application* state, float deltaSeconds)
 {
     // The particle setting: All, Decreased or Minimal keeps this share of what is asked for.
     float keep = 1.0f;
@@ -226,7 +226,7 @@ void ParticleSystem::SpawnOne(const ParticleSpawn& request, const glm::dvec3& at
     particles.push_back(particle);
 }
 
-void ParticleSystem::Tick(GlobalState* state)
+void ParticleSystem::Tick(Application* state)
 {
     const World* world = state != nullptr ? state->world : nullptr;
 

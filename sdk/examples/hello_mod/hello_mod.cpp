@@ -11,7 +11,7 @@
 #include <imgui.h>
 
 #include "mods/VolcanoModAPI.h"
-#include "GlobalState.hpp"
+#include "Application.hpp"
 #include "Config.hpp"
 #include "Logger.hpp"
 #include "audio/AudioManager.hpp"
@@ -46,14 +46,14 @@ public:
 };
 
 // Extended handlers receive the event payload and a user-data pointer.
-void OnChat(GlobalState*, const VC_EventData* data, void*)
+void OnChat(Application*, const VC_EventData* data, void*)
 {
     Log::Info(std::string("[hello_mod] chat: ") + (data->text != nullptr ? data->text : ""));
 }
 
 // A HUD widget: the hotbar mirrored in the top-left corner. TakeSnapshot()
 // copies the inventory under its lock, so drawing needs no locking at all.
-void DrawHud(GlobalState* state)
+void DrawHud(Application* state)
 {
     InventoryManager::Snapshot inventory = state->inventory.TakeSnapshot();
 
@@ -89,7 +89,7 @@ VC_MOD_EXPORT const VC_ModInfo* VC_GetModInfo()
     return &info;
 }
 
-VC_MOD_EXPORT void VC_InitMod(GlobalState* state)
+VC_MOD_EXPORT void VC_InitMod(Application* state)
 {
     // Config values are plain typed keys in settings.json.
     greeting = std::get<std::string>(state->config->Get("HelloMod.Greeting", std::string("Hello from a mod")));
@@ -98,14 +98,14 @@ VC_MOD_EXPORT void VC_InitMod(GlobalState* state)
     // Plain C-style handlers have no payload; the Ex form adds payload and user data.
     VC_EventHandlerEx(static_cast<uint8_t>(EventType::CHAT_RECEIVED), OnChat, nullptr);
     VC_EventHandlerEx(static_cast<uint8_t>(EventType::TICK),
-        [](GlobalState*, const VC_EventData*, void* counter) { ++*static_cast<std::atomic<uint64_t>*>(counter); }, &ticks);
+        [](Application*, const VC_EventData*, void* counter) { ++*static_cast<std::atomic<uint64_t>*>(counter); }, &ticks);
 
     // Things that need the engine exist only after the matching event.
-    VC_EventHandler(static_cast<uint8_t>(EventType::RENDER_START), [](GlobalState* game)
+    VC_EventHandler(static_cast<uint8_t>(EventType::RENDER_START), [](Application* game)
     {
         game->renderEngine->InsertPassBefore("GUI", std::make_unique<FrameCounterPass>());
     });
-    VC_EventHandler(static_cast<uint8_t>(EventType::AUDIO_LOADED), [](GlobalState* game)
+    VC_EventHandler(static_cast<uint8_t>(EventType::AUDIO_LOADED), [](Application* game)
     {
         soundListenerId = game->audioManager->AddSoundListener([](SoundEvent&) { sounds++; });
     });
@@ -119,7 +119,7 @@ VC_MOD_EXPORT void VC_InitMod(GlobalState* state)
 }
 
 // Undo everything that points into this DLL before it is unloaded.
-VC_MOD_EXPORT void VC_ShutdownMod(GlobalState* state)
+VC_MOD_EXPORT void VC_ShutdownMod(Application* state)
 {
     GUIController::RemoveHudElement("hello_mod");
     PacketEvents::RemoveListener(packetListenerId);

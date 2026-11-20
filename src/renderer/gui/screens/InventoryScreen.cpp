@@ -21,9 +21,9 @@
 
 // The network side, declared here rather than including NetworkClient.hpp (see GUIController.cpp for why).
 namespace Volcano {
-void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendInventoryClick(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                         uint8_t button, const ItemStack& slotItem, const ItemStack& carriedItem);
-void SendInventoryAction(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendInventoryAction(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                          uint8_t button, int32_t mode, const ItemStack& carriedItem);
 }
 
@@ -69,7 +69,7 @@ struct Layout {
     }
 };
 
-Layout ComputeLayout(GlobalState* state)
+Layout ComputeLayout(Application* state)
 {
     Layout layout;
     {
@@ -172,7 +172,7 @@ Element AddArt(Element parent, const Sprite& sprite, int left, int top)
     return *image;
 }
 
-void BuildInventory(ControlRenderer& ui, GlobalState* state, Screen& screen, InventoryView& view)
+void BuildInventory(ControlRenderer& ui, Application* state, Screen& screen, InventoryView& view)
 {
     int art = ui.Units(1.0f) + 1; // Screen pixels per vanilla texture pixel.
     int logical = 256;            // The container sheets' size in those, whatever the pack's resolution.
@@ -249,7 +249,7 @@ void BuildInventory(ControlRenderer& ui, GlobalState* state, Screen& screen, Inv
     view.tooltipDamage = -1;
 }
 
-void UpdateInventory(ControlRenderer& ui, GlobalState* state, Screen& screen, InventoryView& view)
+void UpdateInventory(ControlRenderer& ui, Application* state, Screen& screen, InventoryView& view)
 {
     // A different window (the player's, a chest, a furnace...) has different slots.
     if (!ComputeLayout(state).SameAs(view.layout))
@@ -453,7 +453,7 @@ void UpdateInventory(ControlRenderer& ui, GlobalState* state, Screen& screen, In
 
 } // namespace
 
-Screen* CreateInventoryScreen(GlobalState* state)
+Screen* CreateInventoryScreen(Application* state)
 {
     Screen* screen = GUIController::CreateScreen("Inventory", /* closable */ true);
     screen->showTitle = false; // The panel carries its own.

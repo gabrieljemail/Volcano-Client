@@ -13,7 +13,7 @@
 #include "ShaderLibrary.hpp"
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 class TextureManager;
 }
 
@@ -27,7 +27,7 @@ namespace Vulkan { class VulkanRenderEngine; }
 // this interface
 class RenderEngine {
 public:
-    explicit RenderEngine(GlobalState* globalState) : state(globalState) {}
+    explicit RenderEngine(Application* globalState) : state(globalState) {}
     virtual ~RenderEngine() = default;
 
     RenderEngine(const RenderEngine&) = delete;
@@ -115,7 +115,7 @@ public:
     std::vector<std::string> GetPassNames() const;
 
     // {name, smoothed Record() CPU ms} per pass, in draw order. Values only
-    // update while GlobalState::debugHudVisible.
+    // update while Application::debugHudVisible.
     std::vector<std::pair<std::string, float>> GetPassRecordTimes() const;
 
     // ---- Shaders ----
@@ -135,7 +135,7 @@ public:
     void RequestShaderReload() { shaderReloadRequested.store(true); }
 
 protected:
-    GlobalState* state;
+    Application* state;
     ShaderLibrary shaders;
     std::vector<std::unique_ptr<RenderPass>> passes;
     bool passesCreated = false;

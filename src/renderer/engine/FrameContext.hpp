@@ -10,7 +10,7 @@
 typedef struct VkCommandBuffer_T* VkCommandBuffer;
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 }
 
 namespace Volcano::Engine {
@@ -35,7 +35,7 @@ struct RenderExtent {
 // across frames.
 struct FrameContext {
     RenderEngine* engine = nullptr;
-    GlobalState* state = nullptr;
+    Application* state = nullptr;
     const SceneView* scene = nullptr;
 
     // Which per-frame-in-flight slot is being recorded (0..framesInFlight-1)

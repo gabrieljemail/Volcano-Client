@@ -2,8 +2,8 @@
 #ifndef VOLCANO_ENGINE_PASSES_GUI_PASS_H
 #define VOLCANO_ENGINE_PASSES_GUI_PASS_H
 
-#include "../RenderPass.hpp"
-#include "../../gui/GUIController.hpp"
+#include "../../RenderPass.hpp"
+#include "../../../gui/GUIController.hpp"
 
 namespace Volcano::Engine::Passes {
 

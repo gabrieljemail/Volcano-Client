@@ -22,7 +22,7 @@ namespace {
 // three render-list maps by SectionKey
 struct SectionMeshTiming { double cubeMs; double nonCubicMs; bool retry; };
 
-SectionMeshTiming MeshAndUpsertSection(GlobalState* state, const TextureManager* textureManager,
+SectionMeshTiming MeshAndUpsertSection(Application* state, const TextureManager* textureManager,
     const Chunk& chunk, const SectionKey& key)
 {
     auto meshStart = std::chrono::steady_clock::now();
@@ -87,11 +87,11 @@ void ReleaseMeshSlabs(const Mesh& mesh)
     if (!ChunkMesher::ReleaseMesh(mesh)) NonCubicMesher::ReleaseMesh(mesh);
 }
 
-MeshingThread::MeshingThread(GlobalState* stateIn, const TextureManager* textureManagerIn)
+MeshingThread::MeshingThread(Application* stateIn, const TextureManager* textureManagerIn)
     : state(stateIn), textureManager(textureManagerIn)
 {
-    // GlobalState::ResetWorldState can't include the meshers itself (NetDiag
-    // builds GlobalState without them), so it calls through this hook.
+    // Application::ResetWorldState can't include the meshers itself (NetDiag
+    // builds Application without them), so it calls through this hook.
     releaseMeshSlabsHook = &ReleaseMeshSlabs;
 }
 

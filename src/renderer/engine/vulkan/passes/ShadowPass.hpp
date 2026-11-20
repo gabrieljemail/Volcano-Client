@@ -4,10 +4,10 @@
 
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
-#include "../RenderPass.hpp"
-#include "../vulkan/VulkanRenderEngine.hpp"
-#include "../../entity/EntityRenderer.hpp"
-#include "ShadowSettings.hpp"
+#include "../../RenderPass.hpp"
+#include "../../vulkan/VulkanRenderEngine.hpp"
+#include "../../../entity/EntityRenderer.hpp"
+#include "../../shared/ShadowSettings.hpp"
 
 namespace Volcano::Engine::Passes {
 

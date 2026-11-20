@@ -1,9 +1,9 @@
 #include <mutex>
 #include <vector>
 #include "NonCubicPass.hpp"
-#include "../vulkan/VulkanRenderEngine.hpp"
-#include "../../../GlobalState.hpp"
-#include "../../misc/MiscVertex.hpp"
+#include "../../vulkan/VulkanRenderEngine.hpp"
+#include "../../../../Application.hpp"
+#include "../../../misc/MiscVertex.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -69,18 +69,18 @@ void NonCubicPass::Record(FrameContext& frame)
 
         const std::vector<const Mesh*>& meshes = GetVisible(cutoutCache, frame.state->nonCubicRenderList, frame, true);
 
-        PhaseTimer drawTimer(frame.state, GlobalState::CHUNK_PHASE_DRAW);
+        PhaseTimer drawTimer(frame.state, Application::CHUNK_PHASE_DRAW);
         if (indirect)
         {
             uint64_t triangles = cutoutBatch.Draw(cmd, frame.frameIndex, meshes, sizeof(MiscVertex), true);
-            if (frame.state->debugHudVisible) frame.state->trianglesDrawn[GlobalState::TRIANGLES_CUTOUT] += triangles;
+            if (frame.state->debugHudVisible) frame.state->trianglesDrawn[Application::TRIANGLES_CUTOUT] += triangles;
         }
         else
         {
             for (const Mesh* mesh : meshes)
             {
                 if (mesh->vertexCount == 0) continue;
-                DrawMesh(cmd, *mesh, frame.state, GlobalState::TRIANGLES_CUTOUT);
+                DrawMesh(cmd, *mesh, frame.state, Application::TRIANGLES_CUTOUT);
             }
         }
     } // nonCubicRenderListMutex released here
@@ -104,18 +104,18 @@ void NonCubicPass::Record(FrameContext& frame)
     const std::vector<const Mesh*>& translucentMeshes =
         GetVisible(translucentCache, frame.state->translucentRenderList, frame, true);
 
-    PhaseTimer drawTimer(frame.state, GlobalState::CHUNK_PHASE_DRAW);
+    PhaseTimer drawTimer(frame.state, Application::CHUNK_PHASE_DRAW);
     if (indirect)
     {
         uint64_t triangles = translucentBatch.Draw(cmd, frame.frameIndex, translucentMeshes, sizeof(MiscVertex));
-        if (frame.state->debugHudVisible) frame.state->trianglesDrawn[GlobalState::TRIANGLES_TRANSLUCENT] += triangles;
+        if (frame.state->debugHudVisible) frame.state->trianglesDrawn[Application::TRIANGLES_TRANSLUCENT] += triangles;
         return;
     }
 
     for (const Mesh* mesh : translucentMeshes)
     {
         if (mesh->vertexCount == 0) continue;
-        DrawMesh(cmd, *mesh, frame.state, GlobalState::TRIANGLES_TRANSLUCENT);
+        DrawMesh(cmd, *mesh, frame.state, Application::TRIANGLES_TRANSLUCENT);
     }
 }
 

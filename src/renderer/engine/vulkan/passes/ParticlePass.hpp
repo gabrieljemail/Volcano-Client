@@ -6,12 +6,12 @@
 #include <cstdint>
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
-#include "../RenderPass.hpp"
-#include "../../particle/ParticleSystem.hpp"
+#include "../../RenderPass.hpp"
+#include "../../../particle/ParticleSystem.hpp"
 
 namespace Volcano::Engine::Passes {
 
-// Draws GlobalState::particles: every particle is one instance of a camera-facing quad, sampled from an atlas of
+// Draws Application::particles: every particle is one instance of a camera-facing quad, sampled from an atlas of
 // the particle textures (see ParticleSprites). Blended and depth-tested but not depth-writing, so particles never
 // hide things in the Hi-Z pyramid. Runs the particles' ticks as well, since it is where the frame's time passes.
 // Setting: Graphics.Particles (0 all, 1 decreased, 2 minimal).

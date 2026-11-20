@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <glm/glm.hpp>
-#include "../GlobalState.hpp"
+#include "../Application.hpp"
 #include "../Helpers.hpp"
 #include "../InputHandler.hpp"
 #include "../inventory/ItemBehavior.hpp"
@@ -70,7 +70,7 @@ enum class AttackType : uint8_t {
 // breaking and secondary use/place actions dispatch serverbound packets.
 class InteractionManager {
 public:
-    explicit InteractionManager(GlobalState* globalState);
+    explicit InteractionManager(Application* globalState);
 
     // Runs once per frame (see the class comment for which thread/call
     // site). `inputAllowed` matches RenderThread::PollInputs' own flag -
@@ -81,7 +81,7 @@ public:
     // Vanilla's Player::getAttackStrengthScale: 0 right after a swing, 1.0
     // once state->attackStrengthTicker has counted up to a full recovery -
     // recomputed from the live generic.attack_speed attribute every call
-    // (see GlobalState::attackStrengthTicker's own comment), not cached.
+    // (see Application::attackStrengthTicker's own comment), not cached.
     // Public since a future HUD attack-cooldown indicator (vanilla has one)
     // would read this too.
     //
@@ -106,7 +106,7 @@ public:
     }
 
 private:
-    GlobalState* state;
+    Application* state;
 
     // Snapshotted each Update() (see RefreshHeldItems) rather than held as
     // pointers into state->inventory - a pointer surviving past its lock
@@ -209,7 +209,7 @@ private:
     // a hold was actually in progress
     void CancelMining();
 
-    // Mirrors `mining` into GlobalState::miningTicksRequired/miningStartNs
+    // Mirrors `mining` into Application::miningTicksRequired/miningStartNs
     // for the tick thread's crosshair indicator.
     void PublishMining();
 
@@ -253,7 +253,7 @@ private:
     std::optional<UsingState> usingState;
 
     // Resolves the camera's look ray against blocks/entities within reach
-    // and updates targetedBlock/targetedEntityId (and GlobalState::
+    // and updates targetedBlock/targetedEntityId (and Application::
     // lookingAtEntity) accordingly. Called per-frame.
     void RaycastSelection();
 };

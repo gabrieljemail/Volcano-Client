@@ -1,6 +1,6 @@
 #include "ResourceReloader.hpp"
 #include "ResourceManager.hpp"
-#include "../GlobalState.hpp"
+#include "../Application.hpp"
 #include "../Logger.hpp"
 #include "../ModLoader.hpp"
 #include "../audio/SoundRegistry.hpp"
@@ -48,7 +48,7 @@ void Step(const char* what, Fn&& fn)
 
 // Marks every loaded section dirty so MeshingThread remeshes it against the
 // new layer indices and visual ids.
-size_t RemeshWorld(GlobalState* state)
+size_t RemeshWorld(Application* state)
 {
     if (state->world == nullptr) return 0;
 
@@ -66,7 +66,7 @@ void Attach(TextureManager* textureManager, MeshingThread* meshingThread)
     attachedMeshing = meshingThread;
 }
 
-void Reload(GlobalState* state)
+void Reload(Application* state)
 {
     if (running || attachedTextures == nullptr || state == nullptr || state->renderEngine == nullptr) return;
     running = true;

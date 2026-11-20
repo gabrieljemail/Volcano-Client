@@ -3,7 +3,7 @@
 #define VOLCANO_BLOCK_SOUNDS_H
 
 #include <string>
-#include "../GlobalState.hpp"
+#include "../Application.hpp"
 #include "../renderer/terrain/models/BlockRegistry.hpp"
 
 namespace Volcano {
@@ -13,7 +13,7 @@ namespace Volcano {
 // sound table, so the material is guessed from the block's texture name.
 class BlockSounds {
 public:
-    explicit BlockSounds(GlobalState* state) : state(state) {}
+    explicit BlockSounds(Application* state) : state(state) {}
 
     void PlayStep(const Block& block);
     void PlayBreak(const Block& block);
@@ -38,7 +38,7 @@ private:
     std::string MaterialFor(const Block& block) const;
     void Play(const char* folder, const Block& block, float volume, float pitch, bool randomPitch);
 
-    GlobalState* state;
+    Application* state;
 };
 
 } // namespace Volcano

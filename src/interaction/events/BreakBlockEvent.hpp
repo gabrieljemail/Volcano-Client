@@ -5,7 +5,7 @@
 #include <mutex>
 #include <vector>
 #include <glm/glm.hpp>
-#include "../../GlobalState.hpp"
+#include "../../Application.hpp"
 #include "../../audio/BlockSounds.hpp"
 #include "../../renderer/terrain/LightEngine.hpp"
 #include "../../network/NetworkClient.hpp"
@@ -23,7 +23,7 @@ struct BreakBlockEvent {
     // the start of a real timed hold
     bool sendStart = true;
 
-    void Dispatch(GlobalState* state) const
+    void Dispatch(Application* state) const
     {
         if (sendStart) SendPlayerAction(state, DigStatus::StartDigging, position, face);
         SendPlayerAction(state, DigStatus::FinishDigging, position, face);

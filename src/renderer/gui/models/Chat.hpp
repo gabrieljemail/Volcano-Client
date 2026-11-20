@@ -24,8 +24,8 @@ struct ChatLine {
 // `mutex`.
 //
 // A static singleton, like GUIController itself, rather than something
-// reached via GlobalState: Log:: call sites deep in networking code
-// (Connection.cpp, MSAuth.cpp, ...) have no GlobalState pointer to thread
+// reached via Application: Log:: call sites deep in networking code
+// (Connection.cpp, MSAuth.cpp, ...) have no Application pointer to thread
 // through, and there's only ever one chat log for the whole client anyway.
 class Chat {
 public:

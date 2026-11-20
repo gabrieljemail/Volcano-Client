@@ -86,7 +86,7 @@ namespace {
     constexpr float SWIM_STRIDE_DISTANCE = 1.5f;
 } // namespace
 
-TickLoop::TickLoop(GlobalState* stateIn) : state(stateIn)
+TickLoop::TickLoop(Application* stateIn) : state(stateIn)
 {
     previousPosition = currentPosition = state->player->GetPosition();
     renderPreviousPosition = renderCurrentPosition = currentPosition;
@@ -108,7 +108,7 @@ void TickLoop::Tick()
     // Hold off simulating entirely until the world has something to stand
     // on - otherwise gravity runs from frame one against an empty World
     // (every lookup reads Air) and the player free-falls before any chunk
-    // has had a chance to load. See GlobalState::worldReady for the
+    // has had a chance to load. See Application::worldReady for the
     // ordering guarantee that makes reading cached position state below
     // safe once this becomes true.
     //
@@ -533,7 +533,7 @@ void TickLoop::FixedStep(bool inputAllowedNow)
         }
     }
 
-    // See GlobalState::attackStrengthTicker's own comment
+    // See Application::attackStrengthTicker's own comment
     int32_t mainhandItemId;
     {
         std::lock_guard<std::mutex> lock(state->inventory.mutex);

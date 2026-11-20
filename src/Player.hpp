@@ -35,7 +35,7 @@ public:
 
 private:
     // Untouched until MeshingThread applies the server's real spawn
-    // position (see GlobalState::worldReady)
+    // position (see Application::worldReady)
     std::atomic<float> x{0.0f}, y{0.0f}, z{0.0f};
 };
 
