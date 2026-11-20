@@ -91,7 +91,18 @@ void RenderEngine::CreatePasses()
 {
     try
     {
-        for (auto& pass : passes) pass->Create(shaders);
+        for (auto& pass : passes)
+        {
+            try
+            {
+                pass->Create(shaders);
+            }
+            catch (const std::exception& e)
+            {
+                Log::Error("[ERROR] Render pass \"" + pass->GetName() + "\" failed to create: " + e.what());
+                throw;
+            }
+        }
     }
     catch (const std::exception& e)
     {

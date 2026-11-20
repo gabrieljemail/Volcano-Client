@@ -341,7 +341,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
         throw std::runtime_error("[ERROR] Failed to create pipeline layout.");
     }
 
-    cout << "Compiling shaders..." << endl;
+    Volcano::Log::InfoStream() << "Compiling shaders...";
 
     // 10. CREATE GRAPHICS PIPELINE
     VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -1262,7 +1262,7 @@ void Init(Application* state)
     // Initialize GLFW.
     if (!glfwInit())
     {
-        cerr << "[ERROR] Failed to initialize GLFW." << endl;
+        Volcano::Log::ErrorStream() << "[ERROR] Failed to initialize GLFW.";
         Cleanup();
         exit(5);
         return;
@@ -1283,7 +1283,7 @@ void Init(Application* state)
 
     if (!window)
     {
-        cerr << "[ERROR] Failed to create window." << endl;
+        Volcano::Log::ErrorStream() << "[ERROR] Failed to create window.";
         glfwTerminate();
         Cleanup();
         exit(6);
@@ -1345,7 +1345,7 @@ void Init(Application* state)
 
     if (!instanceReturn)
     {
-        cerr << "[ERROR] Failed to create Vulkan instance: " << instanceReturn.error().message() << endl;
+        Volcano::Log::ErrorStream() << "[ERROR] Failed to create Vulkan instance: " << instanceReturn.error().message();
         Cleanup();
         exit(2);
         return;
@@ -1356,7 +1356,7 @@ void Init(Application* state)
     VkResult error = glfwCreateWindowSurface(instance.instance, window, nullptr, &surface);
     if (error != VK_SUCCESS)
     {
-        cerr << "[ERROR] Failed to create window surface." << endl;
+        Volcano::Log::ErrorStream() << "[ERROR] Failed to create window surface.";
         glfwTerminate();
         Cleanup();
         exit(7);
@@ -1406,22 +1406,22 @@ void Init(Application* state)
                 if (!matched && lowered(candidate.name).find(needle) != std::string::npos)
                 {
                     physDeviceSelector.set_name(candidate.name);
-                    cout << "Graphics.PreferredDevice \"" << preferredDevice
-                         << "\" matched Vulkan device: " << candidate.name << endl;
+                    Volcano::Log::InfoStream() << "Graphics.PreferredDevice \"" << preferredDevice
+                         << "\" matched Vulkan device: " << candidate.name;
                     matched = true;
                 }
             }
             if (!matched)
             {
-                cerr << "[WARN] Graphics.PreferredDevice \"" << preferredDevice
+                Volcano::Log::WarnStream() << "Graphics.PreferredDevice \"" << preferredDevice
                      << "\" matched no suitable Vulkan device (available: " << available
-                     << ") - falling back to the default device." << endl;
+                     << ") - falling back to the default device.";
             }
         }
         else
         {
-            cerr << "[WARN] Could not enumerate Vulkan devices to honor Graphics.PreferredDevice: "
-                 << candidates.error().message() << " - falling back to the default device." << endl;
+            Volcano::Log::WarnStream() << "Could not enumerate Vulkan devices to honor Graphics.PreferredDevice: "
+                 << candidates.error().message() << " - falling back to the default device.";
         }
     }
 
@@ -1429,15 +1429,15 @@ void Init(Application* state)
 
     if (!physDeviceSelectorReturn)
     {
-        cerr << "[ERROR] No suitable Vulkan devices: " << physDeviceSelectorReturn.error().message() << endl;
+        Volcano::Log::ErrorStream() << "[ERROR] No suitable Vulkan devices: " << physDeviceSelectorReturn.error().message();
         Cleanup();
         exit(3);
         return;
     }
     physicalDevice = physDeviceSelectorReturn.value();
     FullscreenExclusive::ConfigureDevice(physicalDevice);
-    cout << "Found Vulkan GPU: " << physicalDevice.name << endl;
-    cout << "Vulkan API version: " << physicalDevice.properties.apiVersion << endl;
+    Volcano::Log::InfoStream() << "Found Vulkan GPU: " << physicalDevice.name;
+    Volcano::Log::InfoStream() << "Vulkan API version: " << physicalDevice.properties.apiVersion;
     g_globalState->systemInfo.DetectGPU(physicalDevice.properties.deviceName,
         physicalDevice.properties.vendorID, physicalDevice.properties.apiVersion);
 
@@ -1450,19 +1450,19 @@ void Init(Application* state)
     indirectFeatures.multiDrawIndirect = VK_TRUE;
     indirectFeatures.drawIndirectFirstInstance = VK_TRUE;
     indirectDrawSupported = physicalDevice.enable_features_if_present(indirectFeatures);
-    cout << "Multi-draw indirect: " << (indirectDrawSupported ? "supported" : "not supported") << endl;
+    Volcano::Log::InfoStream() << "Multi-draw indirect: " << (indirectDrawSupported ? "supported" : "not supported");
 
     auto deviceBuilderReturn = deviceBuilder.build();
 
     if (!deviceBuilderReturn)
     {
-        cerr << "[ERROR] Device creation failed: " << deviceBuilderReturn.error().message() << endl;
+        Volcano::Log::ErrorStream() << "[ERROR] Device creation failed: " << deviceBuilderReturn.error().message();
         Cleanup();
         exit(4);
         return;
     }
     device = deviceBuilderReturn.value();
-    cout << "Vulkan device initialized." << endl;
+    Volcano::Log::InfoStream() << "Vulkan device initialized.";
 
     // Set up the VMA allocator.
     VmaAllocatorCreateInfo allocInfo{};
@@ -1479,7 +1479,7 @@ void Init(Application* state)
 
     if (!swapchainBuilderReturn)
     {
-        cerr << "[ERROR] Failed to create swapchain: " << swapchainBuilderReturn.error().message() << endl;
+        Volcano::Log::ErrorStream() << "[ERROR] Failed to create swapchain: " << swapchainBuilderReturn.error().message();
         glfwTerminate();
         Cleanup();
         exit(8);
@@ -1496,8 +1496,8 @@ void Init(Application* state)
     graphicsQueue = device.get_queue(vkb::QueueType::graphics).value();
     presentQueue  = device.get_queue(vkb::QueueType::present).value();
     graphicsQueueFamilyIndex = device.get_queue_index(vkb::QueueType::graphics).value();
-    cout << "[DEBUG] Graphics queue: " << graphicsQueue << endl;
-    cout << "[DEBUG] Present queue: " << presentQueue << endl;
+    Volcano::Log::InfoStream() << "[DEBUG] Graphics queue: " << graphicsQueue;
+    Volcano::Log::InfoStream() << "[DEBUG] Present queue: " << presentQueue;
 
     // Set swapchainExtent.
     swapchainExtent = swapchain.extent;

@@ -18,7 +18,8 @@ constexpr const char* MSA_SCOPE = "XboxLive.signin offline_access";
 constexpr const char* MSA_DEVICE_CODE_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
 constexpr const char* MSA_TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 constexpr const char* ACCOUNTS_FILE = "accounts.json";
-constexpr const char* NO_CLIENT_ID = "Set Auth.ClientId in settings.json to your Microsoft Entra application's ID first.";
+constexpr const char* DEFAULT_CLIENT_ID = "40634fde-9b0e-4569-86b1-f87939fef7c3";
+constexpr const char* NO_CLIENT_ID = "Auth.ClientId in settings.json is empty; set it to a Microsoft Entra application's ID.";
 
 uint64_t NowSeconds()
 {
@@ -178,7 +179,44 @@ MSAccountManager::~MSAccountManager()
 
 std::string MSAccountManager::ClientId()
 {
-    return config != nullptr ? std::get<std::string>(config->Get("Auth.ClientId", std::string(""))) : std::string();
+    // Volcano Client's own Microsoft Entra application. Public (device-code flow, no secret), so it ships in the
+    // binary; Auth.ClientId in settings.json overrides it, e.g. to use a fork's registration.
+    return config != nullptr ? std::get<std::string>(config->Get("Auth.ClientId", std::string(DEFAULT_CLIENT_ID)))
+                             : std::string(DEFAULT_CLIENT_ID);
+}
+
+std::string MSAccountManager::OfflineUsername()
+{
+    std::string raw = config != nullptr ? std::get<std::string>(config->Get("Network.DevUsername", std::string("VoidDev")))
+                                        : std::string("VoidDev");
+    std::string name;
+    for (char c : raw)
+    {
+        bool valid = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        if (valid && name.size() < 16) name += c;
+    }
+    return name.size() >= 3 ? name : std::string("Player");
+}
+
+void MSAccountManager::SetOfflineUsername(const std::string& name)
+{
+    if (config != nullptr) config->Set("Network.DevUsername", name);
+}
+
+void MSAccountManager::SaveSettings()
+{
+    if (config != nullptr) config->Save();
+}
+
+std::string MSAccountManager::CurrentUsername()
+{
+    std::optional<size_t> index = CurrentIndex();
+    if (index.has_value())
+    {
+        std::vector<MicrosoftAccount> list = Snapshot();
+        if (*index < list.size()) return list[*index].GetProfileName();
+    }
+    return OfflineUsername();
 }
 
 void MSAccountManager::Load()

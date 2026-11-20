@@ -27,6 +27,9 @@ constexpr const char* OBJECTS_URL = "https://resources.download.minecraft.net/";
 constexpr const char* ASSET_PREFIX = "minecraft/";
 constexpr const char* ASSETS_ROOT = "assets/minecraft/";
 constexpr size_t SOUND_WORKERS = 6;
+constexpr const char* DATA_URL = "https://raw.githubusercontent.com/PrismarineJS/minecraft-data/master/data/pc/";
+constexpr const char* DATA_FILES[] = { "protocol.json", "blocks.json", "blockCollisionShapes.json", "items.json",
+    "foods.json", "entities.json", "particles.json" };
 
 // Share of the bar each step gets.
 constexpr float JAR_END = 0.35f;
@@ -78,6 +81,7 @@ bool Installed()
     std::error_code error;
     return fs::exists(fs::path(DIRECTORY) / "version.json", error)
         && fs::exists(fs::path(DIRECTORY) / ASSETS_ROOT / "sounds.json", error)
+        && fs::exists(fs::path(DATA_DIRECTORY) / "data/pc" / DATA_VERSION / "protocol.json", error)
         && fs::is_directory(fs::path(DIRECTORY) / ASSETS_ROOT / "sounds", error);
 }
 
@@ -182,7 +186,25 @@ bool Download(const ProgressFn& progress, std::string& error)
     std::error_code ignored;
     fs::remove(temporary, ignored);
 
-    // 4. The sounds, sounds.json, lang and fonts, which live outside the jar as hashed files. Existing files of the right size are kept.
+    // 4. The protocol/registry JSON from the minecraft-data project (MIT licensed), which the client parses at startup.
+    report(EXTRACT_END, "Downloading game data...");
+    for (const char* file : DATA_FILES)
+    {
+        std::vector<uint8_t> bytes;
+        std::string url = std::string(DATA_URL) + DATA_VERSION + "/" + file;
+        if (!OS::HttpGet(url, bytes, error))
+        {
+            error = "Couldn't download " + std::string(file) + " from minecraft-data: " + error;
+            return false;
+        }
+        if (!WriteFile(fs::path(DATA_DIRECTORY) / "data/pc" / DATA_VERSION / file, bytes))
+        {
+            error = "Couldn't write " + std::string(file) + ".";
+            return false;
+        }
+    }
+
+    // 5. The sounds, sounds.json, lang and fonts, which live outside the jar as hashed files. Existing files of the right size are kept.
     report(EXTRACT_END, "Finding the sound files...");
     nlohmann::json index;
     if (!GetJson(indexUrl, index, error)) return false;
@@ -194,7 +216,9 @@ bool Download(const ProgressFn& progress, std::string& error)
         uint64_t size;
     };
     std::vector<Sound> sounds;
-    for (const auto& [key, entry] : index.value("objects", nlohmann::json::object()).items())
+    // Bind the objects by reference: iterating .items() of a temporary (e.g. from value()) dangles and finds nothing.
+    const nlohmann::json& objects = index["objects"];
+    for (const auto& [key, entry] : objects.items())
     {
         if (key.rfind(ASSET_PREFIX, 0) != 0 || key.find("..") != std::string::npos) continue;
         std::string hash = entry.value("hash", "");

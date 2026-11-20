@@ -35,7 +35,7 @@ private:
 
     Pincel::Element root;
     Pincel::Element toggleButton;
-    Pincel::Element offlineButton;
+    Pincel::Element offlineInput; // The offline username; typing in it also switches to offline mode.
     Pincel::Element addButton;
     Pincel::Element cancelButton;
     Pincel::Element copyCodeButton;

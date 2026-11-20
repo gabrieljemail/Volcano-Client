@@ -200,7 +200,7 @@ std::optional<std::vector<uint8_t>> ZipArchive::Read(const std::string& entryNam
     {
         output = std::move(compressed);
     }
-    else
+    else if (entry.uncompressedSize > 0) // An empty entry has nothing to inflate (zlib would report a buffer error).
     {
         output.resize(entry.uncompressedSize);
         z_stream stream{};

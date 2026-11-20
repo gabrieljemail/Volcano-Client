@@ -55,7 +55,10 @@ class VulkanRenderEngine : public RenderEngine {
 public:
     explicit VulkanRenderEngine(Application* globalState) : RenderEngine(globalState) {}
 
+    // Window, instance and device only. Call InitPasses() once the base assets are available.
     void Init() override;
+    // Creates every render pass (they load Mojang textures, so the base assets must be installed first).
+    void InitPasses();
     void AttachTextures(const TextureManager& textures) override;
     void AttachGUI(const TextureManager* textures) override;
     void StopRendering() override;

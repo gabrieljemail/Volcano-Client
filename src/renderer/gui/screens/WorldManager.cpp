@@ -5,6 +5,7 @@
 #include "WorldManager.hpp"
 #include "../ControlRenderer.hpp"
 #include "../../../platform/OS.hpp"
+#include "../../../network/JavaRuntime.hpp"
 
 namespace Volcano::GUI {
 
@@ -47,6 +48,7 @@ struct Download {
     uint64_t total = 0;
     bool done = false;
     std::string error;
+    std::string label; // What is downloading right now ("server", "Java").
 };
 
 struct WorldScreen {
@@ -85,6 +87,7 @@ struct WorldScreen {
     std::shared_ptr<Download> download;
     Pincel::Element progressText;
     std::string createdName;
+    bool javaOnly = false; // The download is just the Java runtime for an existing world (nothing to undo on failure).
 };
 
 std::string VersionLine(const World& world)
@@ -158,7 +161,8 @@ void BuildForm(ControlRenderer& ui, WorldScreen& screen)
 
     if (screen.download)
     {
-        column.AddText("Downloading " + ServerDistroToString(screen.draft.distro) + "...");
+        column.AddText(screen.javaOnly ? std::string("Downloading Java...")
+            : "Downloading " + ServerDistroToString(screen.draft.distro) + "...");
         screen.progressText = column.AddText("");
         screen.progressText.SetForeground(Color{ 160, 160, 160 });
         return;
@@ -225,15 +229,32 @@ void StartCreate(ControlRenderer& ui, WorldScreen& screen)
     screen.error.clear();
 
     std::shared_ptr<Download> download = screen.download;
+    screen.javaOnly = false;
     std::thread([world, download]()
     {
-        std::string error;
-        DownloadServerJar(world, error, [download](uint64_t received, uint64_t total)
+        auto report = [download](uint64_t received, uint64_t total)
         {
             std::lock_guard<std::mutex> lock(download->mutex);
             download->received = received;
             download->total = total;
-        });
+        };
+        {
+            std::lock_guard<std::mutex> lock(download->mutex);
+            download->label = "server";
+        }
+        std::string error;
+        bool ok = DownloadServerJar(world, error, report);
+
+        // The default Java is ours to fetch too, the first time any world needs it.
+        if (ok && JavaRuntime::IsManagedPath(world.jvmPath) && !JavaRuntime::Installed())
+        {
+            {
+                std::lock_guard<std::mutex> lock(download->mutex);
+                download->label = "Java";
+            }
+            report(0, 0);
+            ok = JavaRuntime::Download(report, error);
+        }
         std::lock_guard<std::mutex> lock(download->mutex);
         download->error = error;
         download->done = true;
@@ -252,7 +273,8 @@ void UpdateDownload(ControlRenderer& ui, WorldScreen& screen)
         error = screen.download->error;
         const uint64_t received = screen.download->received;
         const uint64_t total = screen.download->total;
-        text = total > 0 ? std::to_string(received * 100 / total) + "%" : std::to_string(received / (1024 * 1024)) + " MB";
+        text = screen.download->label + " " + (total > 0 ? std::to_string(received * 100 / total) + "%"
+            : std::to_string(received / (1024 * 1024)) + " MB");
     }
 
     if (!done)
@@ -266,8 +288,9 @@ void UpdateDownload(ControlRenderer& ui, WorldScreen& screen)
         return;
     }
 
-    // Failed: drop the half-made world so the form can be tried again.
-    DeleteWorld(screen.draft.dir, screen.createdName);
+    // Failed: drop the half-made world so the form can be tried again (an existing world is left alone).
+    if (!screen.javaOnly) DeleteWorld(screen.draft.dir, screen.createdName);
+    if (screen.javaOnly) BackToList(ui, screen);
     screen.download.reset();
     screen.error = "Download failed: " + error;
     ui.Rebuild();
@@ -354,6 +377,30 @@ void UpdateList(ControlRenderer& ui, WorldScreen& screen, const WorldListActions
             if (!std::filesystem::exists(world.Path() / "server.jar"))
             {
                 screen.error = "'" + world.name + "' has no server.jar";
+                ui.Rebuild();
+            }
+            else if (JavaRuntime::IsManagedPath(world.jvmPath) && !JavaRuntime::Installed())
+            {
+                // First launch without Java: fetch it with the same progress screen, then Play again.
+                screen.mode = WorldScreen::Mode::CREATE;
+                screen.javaOnly = true;
+                screen.download = std::make_shared<Download>();
+                screen.download->label = "Java";
+                screen.error.clear();
+                std::shared_ptr<Download> download = screen.download;
+                std::thread([download]()
+                {
+                    std::string error;
+                    JavaRuntime::Download([download](uint64_t received, uint64_t total)
+                    {
+                        std::lock_guard<std::mutex> lock(download->mutex);
+                        download->received = received;
+                        download->total = total;
+                    }, error);
+                    std::lock_guard<std::mutex> lock(download->mutex);
+                    download->error = error;
+                    download->done = true;
+                }).detach();
                 ui.Rebuild();
             }
             else if (EnsureEula(world) && SetOfflineMode(world) && actions.play)

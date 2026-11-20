@@ -2,17 +2,9 @@
   {
     "dir": "saves",
     "distro": 6,
-    "jvmArgs": "-Xms256M -Xmx768M -Xss512K -XX:+UseSerialGC -XX:-UseJVMCICompiler -XX:TieredStopAtLevel=1 -XX:CICompilerCount=1",
-    "jvmPath": "C:\\Apps\\GraalVM JDK\\bin\\javaw.exe",
-    "name": "Survival",
-    "version": "26.1"
-  },
-  {
-    "dir": "saves",
-    "distro": 0,
-    "jvmArgs": "-Xms256M -Xmx1024M -Xss512K -XX:+UseSerialGC -XX:-UseJVMCICompiler -XX:TieredStopAtLevel=1 -XX:CICompilerCount=1",
-    "jvmPath": "C:/Apps/GraalVM JDK/bin/javaw.exe",
-    "name": "Ultra Lightweight",
+    "jvmArgs": "-Xmx768M -Xms768M -XX:+AlwaysPreTouch -XX:+UseSerialGC",
+    "jvmPath": "java/bin/java.exe",
+    "name": "New world",
     "version": "26.1"
   }
 ]
