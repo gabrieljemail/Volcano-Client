@@ -178,7 +178,7 @@ MSAccountManager::~MSAccountManager()
 
 std::string MSAccountManager::ClientId()
 {
-    return config != nullptr ? std::get<std::string>(config->Get("Auth.ClientId", std::string(""))) : std::string();
+    return config != nullptr ? std::get<std::string>(config->Get("Auth.ClientId", std::string("40634fde-9b0e-4569-86b1-f87939fef7c3"))) : std::string();
 }
 
 void MSAccountManager::Load()

@@ -7,7 +7,7 @@
 
 namespace Volcano::Engine::Passes {
 
-// Opaque full-cube chunk geometry (GlobalState::renderList), frustum-culled
+// Opaque full-cube chunk geometry (Application::renderList), frustum-culled
 // per chunk
 class TerrainPass : public ChunkMeshPass {
 public:

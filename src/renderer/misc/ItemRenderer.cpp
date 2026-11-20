@@ -6,6 +6,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <chrono>
 #include "ItemModel.hpp"
+#include "ItemDraw.hpp"
 #include "../entity/EntityRenderer.hpp"
 #include "../VulkanInit.hpp"
 #include "../../Logger.hpp"
@@ -16,15 +17,8 @@ namespace {
 
 constexpr VkFormat ICON_FORMAT = VK_FORMAT_R8G8B8A8_UNORM; // Same gamma-space convention as the texture array.
 
-// Must match item.vert's PushConstants block: 128 bytes, the guaranteed minimum.
-struct ItemPushConstants {
-    glm::mat4 mvp;
-    glm::vec4 normalRow0;
-    glm::vec4 normalRow1;
-    glm::vec4 normalRow2;
-    glm::vec4 params; // x: 1 = flat item; y: how much of the light to take away (0 = none).
-};
-static_assert(sizeof(ItemPushConstants) == 128, "ItemPushConstants must fit the 128-byte push constant minimum");
+// Must match item.vert's PushConstants block (see ItemDraw.hpp).
+using ItemPushConstants = ItemDrawParams;
 
 } // namespace
 
@@ -375,22 +369,8 @@ void ItemRenderer::RecordItem(VkCommandBuffer cmd, const std::string& itemName, 
     if (model == nullptr) return;
     const GpuMesh* mesh = MeshFor(itemName, *model);
 
-    glm::mat4 display = model->DisplayMatrix(context);
-    glm::vec3 center = glm::vec3(display * glm::vec4(0.5f, 0.5f, 0.5f, 1.0f));
-    glm::mat4 pivot = glm::translate(glm::mat4(1.0f), center) * pivotRotation * glm::translate(glm::mat4(1.0f), -center);
-    glm::mat4 modelMatrix = placement * pivot * display;
-    glm::mat3 normalMatrix(modelMatrix);
-    // Lights are fixed in the placement's space; strip any uniform scale.
-    normalMatrix = glm::mat3(glm::normalize(normalMatrix[0]), glm::normalize(normalMatrix[1]), glm::normalize(normalMatrix[2]));
-
-    ItemPushConstants push{};
-    push.mvp = viewProj * modelMatrix;
-    push.normalRow0 = glm::vec4(normalMatrix[0][0], normalMatrix[1][0], normalMatrix[2][0], 0.0f);
-    push.normalRow1 = glm::vec4(normalMatrix[0][1], normalMatrix[1][1], normalMatrix[2][1], 0.0f);
-    push.normalRow2 = glm::vec4(normalMatrix[0][2], normalMatrix[1][2], normalMatrix[2][2], 0.0f);
-    static const auto start = std::chrono::steady_clock::now();
-    float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
-    push.params = glm::vec4(model->IsFlat() ? 1.0f : 0.0f, darkness, seconds, 0.0f);
+    ItemPushConstants push = ItemDraw::MakeWorld(*model, context, placement, viewProj, pivotRotation, darkness,
+        ItemDraw::GlintSeconds());
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipeline);
     VkDescriptorSet texturesSet = textureSet;
@@ -470,20 +450,8 @@ bool ItemRenderer::RenderGuiIcon(const std::string& itemName, IconImage& out, bo
         return false;
     }
 
-    // The model's own "gui" transform, viewed down -Z through a unit-sized
-    // orthographic window (one item = one 16px vanilla slot). Y is flipped
-    // for Vulkan's clip space, like the world projection.
-    glm::mat4 modelMatrix = model->DisplayMatrix("gui");
-    glm::mat4 projection = glm::orthoRH_ZO(-0.5f, 0.5f, -0.5f, 0.5f, -2.0f, 2.0f);
-    projection[1][1] *= -1.0f;
-
-    glm::mat3 normalMatrix(modelMatrix);
-    ItemPushConstants push{};
-    push.mvp = projection * modelMatrix;
-    push.normalRow0 = glm::vec4(normalMatrix[0][0], normalMatrix[1][0], normalMatrix[2][0], 0.0f);
-    push.normalRow1 = glm::vec4(normalMatrix[0][1], normalMatrix[1][1], normalMatrix[2][1], 0.0f);
-    push.normalRow2 = glm::vec4(normalMatrix[0][2], normalMatrix[1][2], normalMatrix[2][2], 0.0f);
-    push.params = glm::vec4(model->IsFlat() ? 1.0f : 0.0f, 0.0f, 9.0f, 0.0f); // z: a fixed glint moment.
+    // Y is flipped for Vulkan's clip space, like the world projection.
+    ItemPushConstants push = ItemDraw::MakeGuiIcon(*model, true);
 
     VkCommandBuffer cmd = BeginOneShotCommands();
 

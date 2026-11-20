@@ -9,7 +9,12 @@
 #include <glm/glm.hpp>
 #include "Connection.hpp"
 #include "microsoft/MSAccountManager.hpp"
-#include "../GlobalState.hpp"
+#include "../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../Application.hpp"
+#endif
 #include "../interaction/InteractionTypes.hpp"
 
 namespace Volcano {
@@ -34,10 +39,10 @@ public:
     // packet loop until disconnected or stopToken is cancelled. Parsed
     // chunks and the server-reported spawn position are handed off via
     // state->networkInbox for the main thread to consume
-    void RunSession(GlobalState* state, std::stop_token stopToken);
+    void RunSession(Application* state, std::stop_token stopToken);
 
     // Exposes the underlying Connection so NetworkThread can publish it to
-    // GlobalState::activeConnection once the Play session actually starts
+    // Application::activeConnection once the Play session actually starts
     // (see NetworkThread::ThreadEntry)
     Connection& GetConnection() { return connection; }
 
@@ -45,22 +50,22 @@ public:
     // text, an exception message, ...) - set alongside every disconnect/
     // error Log::Error() call in ConnectAndLogin/RunSession/RunConfiguration
     // /RunPlayLoop, empty if the session is still live. NetworkThread reads
-    // this once ConnectAndLogin/RunSession returns to tell GlobalState why,
+    // this once ConnectAndLogin/RunSession returns to tell Application why,
     // so the main thread can show it on the connect screen.
     const std::string& GetLastError() const { return lastError; }
 
 private:
     Connection connection;
     std::string lastError;
-    std::string loginUsername; // From Login Success; published to GlobalState by RunSession.
+    std::string loginUsername; // From Login Success; published to Application by RunSession.
     std::string loginTextures; // The "textures" profile property from Login Success, if the server sent one.
     std::string fallbackSkinUrl; // The signed-in account's own skin, used when the server sent no textures property.
     bool fallbackSkinSlim = false;
 
     // Reads Graphics.RenderDistance from state->config for the Client
     // Information packet
-    bool RunConfiguration(GlobalState* state);
-    void RunPlayLoop(GlobalState* state, std::stop_token stopToken);
+    bool RunConfiguration(Application* state);
+    void RunPlayLoop(Application* state, std::stop_token stopToken);
 
     // Reports the player's current position+rotation via
     // PlayC2S::SetPlayerPositionAndRotation. Called once, right after the
@@ -75,27 +80,27 @@ private:
 // any thread; see PlayC2S::ChatMessage and Connection::QueuePacket's own
 // comments for why this is safe to call from outside the network thread
 // (it queues rather than writing the socket directly).
-void SendChatMessage(GlobalState* state, const std::string& message);
+void SendChatMessage(Application* state, const std::string& message);
 
 // Same as SendChatMessage but for a command (no leading "/") - sent via
 // PlayC2S::ChatCommand so the server actually executes it through its
 // command dispatcher instead of broadcasting it as a literal chat line.
-void SendChatCommand(GlobalState* state, const std::string& command);
+void SendChatCommand(Application* state, const std::string& command);
 
 // Requests respawn after death (PlayC2S::ClientCommand, action 0)
-void SendRespawnRequest(GlobalState* state);
+void SendRespawnRequest(Application* state);
 
 // Tells the server which hotbar slot (0-8) is now selected, via
 // PlayC2S::SetHeldItem
-void SendHeldItemSlot(GlobalState* state, uint8_t slot);
+void SendHeldItemSlot(Application* state, uint8_t slot);
 
 // Reports the local flight state via PlayC2S::PlayerAbilities (flags i8:
 // mayFly | flying bits). Called when the double-tap Fly toggle flips.
-void SendPlayerAbilities(GlobalState* state, bool flying);
+void SendPlayerAbilities(Application* state, bool flying);
 
 // Reports one predicted player-inventory click and its resulting slot/cursor
 // state. `stateId` is the latest revision received from the server.
-void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendInventoryClick(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                         uint8_t button, const ItemStack& slotItem, const ItemStack& carriedItem);
 
 // A non-plain container click, with no predicted result: the server works out
@@ -103,49 +108,49 @@ void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, i
 // mode: 1 shift-click (button 0/1 = the mouse button), 2 number-key swap
 // (button = hotbar slot 0-8), 4 drop (button 0 = one, 1 = the whole stack).
 // `slot` is the hovered protocol slot index; `carriedItem` the cursor stack.
-void SendInventoryAction(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendInventoryAction(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                          uint8_t button, int32_t mode, const ItemStack& carriedItem);
 
 // Closes an open server container window. Opening the player's own inventory
 // with E is local-only and does not send a packet.
-void SendInventoryClose(GlobalState* state, int32_t windowId);
+void SendInventoryClose(Application* state, int32_t windowId);
 
 // Interaction packets
 
 // PlayC2S::Attack
-void SendAttack(GlobalState* state, uint32_t entityId);
+void SendAttack(Application* state, uint32_t entityId);
 
 // PlayC2S::UseEntity
-void SendInteractEntity(GlobalState* state, uint32_t entityId, Hand hand, bool sneaking);
+void SendInteractEntity(Application* state, uint32_t entityId, Hand hand, bool sneaking);
 
 // PlayC2S::BlockDig
-void SendPlayerAction(GlobalState* state, DigStatus status, glm::ivec3 position, glm::ivec3 face);
+void SendPlayerAction(Application* state, DigStatus status, glm::ivec3 position, glm::ivec3 face);
 
 // PlayC2S::ArmAnimation
-void SendArmAnimation(GlobalState* state, Hand hand);
+void SendArmAnimation(Application* state, Hand hand);
 
 // PlayC2S::BlockPlace
-void SendBlockPlace(GlobalState* state, Hand hand, glm::ivec3 position, glm::ivec3 face, glm::vec3 cursor);
+void SendBlockPlace(Application* state, Hand hand, glm::ivec3 position, glm::ivec3 face, glm::vec3 cursor);
 
 // PlayC2S::UseItem
-void SendUseItem(GlobalState* state, Hand hand, float yaw, float pitch);
+void SendUseItem(Application* state, Hand hand, float yaw, float pitch);
 
 // PlayC2S::PickItemFromBlock
-void SendPickItemFromBlock(GlobalState* state, glm::ivec3 position);
+void SendPickItemFromBlock(Application* state, glm::ivec3 position);
 
 // PlayC2S::SetCreativeSlot - writes one player-inventory slot directly in
 // creative mode (no window is open). `slot` uses player-inventory menu
 // numbering (window 0: main 9-35, hotbar 36-44, armor 5-8, offhand 45);
 // -1 drops the stack into the world. ItemStack carries no components, so
 // enchanted/damaged variants round-trip as plain items.
-void SendSetCreativeSlot(GlobalState* state, int16_t slot, const ItemStack& item);
+void SendSetCreativeSlot(Application* state, int16_t slot, const ItemStack& item);
 
 // Swings an arm (PlayC2S::SwingArm - an alias of ArmAnimation, see
 // PacketIds.hpp) - the animation other players see. hand: 0 = main hand,
 // 1 = offhand. Same wire packet as SendArmAnimation above; kept as its own
 // function since AttackEntity's callers pass a raw hand index rather than
 // the Hand enum.
-void SendSwing(GlobalState* state, int32_t hand);
+void SendSwing(Application* state, int32_t hand);
 
 } // namespace Volcano
 

@@ -44,7 +44,7 @@ struct CommandNode {
 };
 
 // The server's Brigadier command tree, as sent in the Commands packet.
-// Immutable once read, so it is shared by pointer: see GlobalState::commands.
+// Immutable once read, so it is shared by pointer: see Application::commands.
 class CommandTree {
 public:
     // Reads a Commands packet body. Throws if it is malformed or has a parser this client doesn't know.

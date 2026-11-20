@@ -1,0 +1,101 @@
+---
+title: Code Architecture
+subtitle: How Volcano's codebase is structured.
+---
+
+Volcano Client uses C++20, which means we have access to features like modules and more metaprogramming. Since this is a pretty big codebase, clear separation between components is now necessary. This document outlines the levels of organization this client uses.
+
+### Level 1: Application
+The codebase passes around a pointer to a structure called Application. It is initialized in the main file, `VolcanoClient.cpp`, and contains pointers to the main class of every other Component in the client.
+> [!NOTE]
+> This structure used to be called `GlobalState`, but was renamed to `Application` for clarity.
+
+### Level 2: Components
+The client itself is split into Components. Each component has its own subdirectory in `src/`. This is the highest level of organization there is. In this specific codebase, each component has a main class called `<COMPONENT_NAME>Component.hpp`. As you can see, you must add "Component" to the end of the header file. Each component's main class is also a field in the `Application` struct, which is the equivalent of an `App` class in other codebases.
+
+### Level 3: Models & Systems
+Each Component is further split into two sides: Models and Systems. A Model is a data structure stored and processed by that Component. A System is a functional implementation that processes these Models, interacts with other Components through the Component's main class, and makes the application actually do something.
+
+## Organization Plan
+As of writing this, the client is currently organized as a spaghetti of classes that interact with each other through `Application`. The client is going to be split into the following Components, with their own Models and Systems created to satisfy the Component's needs. Components that use their own threads are marked with \[\], while Components that use coroutines are marked with \[⮔\]
+* **Audio:** The OpenAL context manager and music system.
+    * Model `OpenALContext`: The OpenAL context and device info.
+    * System `AudioSystem`: The simple, main audio system that plays and manages sounds.
+    * System `MusicSystem`: A context-based music player engine.
+* **Bootstrapper:** Satisfies startup dependencies, such as asset downloading, mod loading, and attaching the crash reporter.
+    * System `AssetDownloadSystem`: Verifies assets and downloads missing ones.
+    * System `ModLoaderSystem`: Loads mod DLLs from the `mods/` dir and sets up their event hooks.
+    * System `CrashReporterSystem`: Attaches the crash reporter to the client.
+* **Interaction:** Handles player interaction with entities and the world.
+    * System `BlockInteractSystem`: Manages block interactions such as placing and breaking.
+    * System `BlockEntityInteractSystem`: Manages block entity interactions such as opening containers.
+    * System `EntityInteractSystem`: Manages entity interactions such as attacking and interacting.
+    * System `CombatSystem`: Controls the attack indicator and client predictions such as crits and hurt colors.
+* **Inventory:** Manages the player's inventory, containers, and the creative inventory tools.
+    * Model `PlayerInventory`: Represents your own inventory, derived from `EntityStorage`.
+    * Model `EntityStorage`: Represents containers attached to any entity, including yourself.
+    * Model `Container`: Represents a container, such as a chest, ender chest, barrel, or server container.
+    * System `PlayerInventorySystem`: Manages your own inventory, a `PlayerInventory`.
+    * System `EntityInventorySystem`: Manages inventories of other entities, such as donkeys with storage.
+    * System `ContainerSystem`: Manages container interactions, such as using a chest or a server's container packet UI.
+* \[⮔\] **Mods:** Holds mod-specific APIs that interact with other Components.
+* \[\] **Magma:** Volcano's Vulkan and DirectX 11 rendering engine and abstraction layer, with future mod APIs for rendering and animating any object in the world.
+    * Model `MainWindow`: Represents the client's window.
+    * Model `RenderContext`: Provides an abstraction to Vulkan/DX11 rendering contexts.
+    * Model `RenderPass`: Provides an abstraction to Vulkan/DX11 render passes.
+    * Model `MeshArena`: Wraps mesh data arenas in GPU memory, like a smart pointer. Uses `memcpy()` on host-visible and incremental shader updates on device-local.
+    * Model `ChunkMesh`: Holds mesh output for one chunk section (16x16x16).
+    * Model `EntityMesh`: Holds the mesh for one modeled entity, with a skeleton.
+    * Model `BlockEntityMesh`: Holds the mesh for a single block entity in the world, merged with `ChunkMesh` at meshing time.
+    * System `InputSystem`: Manages input states for triggers and axes, holds event callbacks, and manages the OS event queue.
+    * System `RenderSystem`: Wraps the Vulkan/DX11-specific renderer implementations as an abstraction to them.
+    * System `VulkanRenderSystem`: A Vulkan-specific implementation of the renderer.
+    * System `Direct3D11RenderSystem`: A DX11-specific implementation of the renderer.
+    * System `PincelRasterSystem`: Manages the API abstractions that rasterize Pincel GUI draw data.
+* \[\] \[⮔\] **Network:** Manages the network client, holds packet mappings, and interacts with other Components to talk to the server. Also manages server sync and keepalives. Uses its own thread.
+    * Model `NetworkConnection`: Represents a single network connection.
+    * Model `Packet`: Represents a single C2S or S2C packet.
+    * Model `PacketEvent`: A virtual class that other events derive from, representing a mod event dispatched because of an S2C packet.
+    * Model `ASIOContext`: Holds the ASIO networking context as an abstraction.
+    * Model `WinSockContext`: A planned ultra low-latency WinSock implementation of networking, alongside ASIO, for Windows.
+    * Model `NativeTransportContext`: A planned ultra low-latency native transport implementation of networking, alongside ASIO, for Linux.
+    * System `NetworkSystem`: Manages the abstracted ASIO network context and network connections.
+    * System `EventHandlerSystem`: Listens for and dispatches packet events.
+* **UserInterface:** Manages the Pincel GUI and controls user interaction in GUI contexts.
+    * Model `Screen`: Represents a Screen, like Minecraft.
+    * Model `Component`: A tiny abstraction to Pincel elements to draw Minecraft GUI elements.
+    * Model `ServerAPIScreen`: A planned network API that allows servers with the VolcanoLib plugin to interact directly with the client and use Pincel features.
+    * Model `HUDElement`: Represents a HUD element, displayed when no screen is open.
+    * System `ScreenSystem`: Manages screen opening and closing, draws components in them, and returns your actions.
+    * System `HUDSystem`: Manages HUD element rendering when no screens are open and updates them.
+* **Utils:** A stateless Component that holds multiple utility libraries for the engine, such as the logger.
+    * System `LogSystem`: A utility that manages logging to stdout/stderr and writing to log files.
+    * System `HeadlessSystem`: A utility that powers Volcano's headless command line options for server owners and client modders to test network connections faster and simpler without actually playing the game.
+    * System `ConfigSystem`: A utility used almost everywhere in the client that allows you to read and write config keys. This system also syncs these keys with "settings.json".
+
+## Module Usage
+Because we are using C++20, we have access to an amazing feature called Modules. These allow us to bypass simple #include directives and import models and systems exported directly, while also keeping the #include directives in each module private. Modules are to be used with all internal code. An example of usage would be like this:
+```cpp
+module;
+#include <cstdint>
+
+import <iostream>;
+import <string>;
+
+export module HelloWorldModule;
+
+// This is private.
+std::string MakeHelloWorld(uint8_t age, const std::string& name)
+{
+    return std::string(
+        "Hello, World! My name is " + name + ", and I am " + age + " years old!"
+    ).c_str();
+}
+
+// But this is public since it's exported.
+export void SayHelloWorld(uint8_t age, const char* name)
+{
+    std::string message = MakeHelloWorld(age, std::string(name));
+    std::cout << message.c_str() << std:endl;
+}
+```

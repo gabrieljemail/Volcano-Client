@@ -3,7 +3,12 @@
 #define VOLCANO_INTERACT_ENTITY_EVENT_H
 
 #include <cstdint>
-#include "../../GlobalState.hpp"
+#include "../../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../../Application.hpp"
+#endif
 #include "../../network/NetworkClient.hpp"
 #include "../InteractionTypes.hpp"
 
@@ -17,7 +22,7 @@ struct InteractEntityEvent {
     Hand hand;
     bool sneaking;
 
-    void Dispatch(GlobalState* state) const
+    void Dispatch(Application* state) const
     {
         SendInteractEntity(state, entityId, hand, sneaking);
         SendArmAnimation(state, hand);

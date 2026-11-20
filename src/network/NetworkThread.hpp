@@ -7,7 +7,12 @@
 #include <stop_token>
 #include <string>
 #include <thread>
-#include "../GlobalState.hpp"
+#include "../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../Application.hpp"
+#endif
 #include "../TickLoop.hpp"
 #include "NetworkClient.hpp"
 #include "LocalServer.hpp"
@@ -26,7 +31,7 @@ public:
     // launches that server.jar and waits for host:port to come up before
     // connecting to it exactly like any other server. Empty for a normal
     // multiplayer connection, the default.
-    NetworkThread(GlobalState* globalState, std::string host, uint16_t port, std::string username,
+    NetworkThread(Application* application, std::string host, uint16_t port, std::string username,
         std::string localServerDir = "");
     ~NetworkThread();
     void Start();
@@ -45,7 +50,7 @@ public:
 private:
     std::atomic<bool> sessionEnded{false};
 
-    GlobalState* state;
+    Application* state;
     asio::io_context ioContext;
     std::string host;
     uint16_t port;

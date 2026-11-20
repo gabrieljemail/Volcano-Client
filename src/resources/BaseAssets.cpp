@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -70,12 +72,39 @@ bool GetJson(const std::string& url, nlohmann::json& out, std::string& error)
     return true;
 }
 
+std::string ReadText(const fs::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return {};
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+// Whether `version.json` on disk is for the version we want. A folder from before the marker file existed was only
+// ever given version.json after the jar was fully unpacked, so that is enough to trust it.
+bool VersionFileMatches(const fs::path& path)
+{
+    nlohmann::json parsed = nlohmann::json::parse(ReadText(path), nullptr, false);
+    return parsed.is_object() && parsed.value("id", "") == VERSION;
+}
+
+// The client jar is only needed once. This file records the hash of the jar that has been fully unpacked, so a
+// download that failed later on (a sound that wouldn't fetch, no connection) doesn't fetch and unpack it again.
+fs::path JarMarkerPath() { return fs::path(DIRECTORY) / ".jar-sha1"; }
+
+// Held until the very end, then renamed over version.json - which stays the last thing written.
+fs::path PendingVersionPath() { return fs::path(DIRECTORY) / "version.json.part"; }
+
+// minecraft/sounds.json (which sound plays for which event) is only in the asset index, not the jar, so it is
+// wanted alongside the sound files themselves.
+constexpr const char* SOUND_EVENTS_KEY = "minecraft/sounds.json";
+
 } // namespace
 
 bool Installed()
 {
     std::error_code error;
     return fs::exists(fs::path(DIRECTORY) / "version.json", error)
+        && fs::exists(fs::path(DIRECTORY) / ASSETS_ROOT / "sounds.json", error)
         && fs::is_directory(fs::path(DIRECTORY) / ASSETS_ROOT / "sounds", error);
 }
 
@@ -113,6 +142,22 @@ bool Download(const ProgressFn& progress, std::string& error)
         return false;
     }
 
+    // Skip the jar when an earlier run already unpacked this exact one.
+    std::error_code existsError;
+    const fs::path versionPath = fs::path(DIRECTORY) / "version.json";
+    const fs::path pendingVersion = PendingVersionPath();
+    const std::string marker = ReadText(JarMarkerPath());
+    const bool versionKept = fs::exists(versionPath, existsError) || fs::exists(pendingVersion, existsError);
+    const bool jarUnpacked = marker.empty()
+        ? VersionFileMatches(versionPath)
+        : (marker == jarSha1 && versionKept);
+
+    if (jarUnpacked)
+    {
+        report(EXTRACT_END, "Game files are already unpacked.");
+    }
+    else
+    {
     // 2. The client jar, checked against the hash Mojang published.
     std::vector<uint8_t> jar;
     auto lastReport = std::chrono::steady_clock::now();
@@ -180,6 +225,15 @@ bool Download(const ProgressFn& progress, std::string& error)
     std::error_code ignored;
     fs::remove(temporary, ignored);
 
+    // Keep version.json aside until the sounds are done, but remember that the jar is finished.
+    if (!WriteFile(pendingVersion, versionFile)
+        || !WriteFile(JarMarkerPath(), std::vector<uint8_t>(jarSha1.begin(), jarSha1.end())))
+    {
+        error = "Couldn't write to " + std::string(DIRECTORY) + ".";
+        return false;
+    }
+    } // !jarUnpacked
+
     // 4. The sounds, which live outside the jar as hashed files. Existing files of the right size are kept.
     report(EXTRACT_END, "Finding the sound files...");
     nlohmann::json index;
@@ -194,7 +248,7 @@ bool Download(const ProgressFn& progress, std::string& error)
     std::vector<Sound> sounds;
     for (const auto& [key, entry] : index.value("objects", nlohmann::json::object()).items())
     {
-        if (key.rfind(SOUND_PREFIX, 0) != 0 || key.find("..") != std::string::npos) continue;
+        if ((key.rfind(SOUND_PREFIX, 0) != 0 && key != SOUND_EVENTS_KEY) || key.find("..") != std::string::npos) continue;
         std::string hash = entry.value("hash", "");
         if (hash.size() < 3) continue;
         sounds.push_back({ "assets/" + key, hash, entry.value("size", 0ull) }); // minecraft/sounds/x -> assets/minecraft/sounds/x
@@ -256,7 +310,22 @@ bool Download(const ProgressFn& progress, std::string& error)
         return false;
     }
 
-    if (!WriteFile(fs::path(DIRECTORY) / "version.json", versionFile))
+    // Installed() looks for the sounds folder; make sure it exists even if the index listed no sound files.
+    std::error_code soundsDirError;
+    fs::create_directories(fs::path(DIRECTORY) / ASSETS_ROOT / "sounds", soundsDirError);
+
+    // Everything is on disk: version.json goes last, as it marks the folder as usable.
+    if (fs::exists(pendingVersion, existsError))
+    {
+        std::error_code renameError;
+        fs::rename(pendingVersion, versionPath, renameError);
+        if (renameError)
+        {
+            error = "Couldn't write version.json.";
+            return false;
+        }
+    }
+    else if (!fs::exists(versionPath, existsError))
     {
         error = "Couldn't write version.json.";
         return false;

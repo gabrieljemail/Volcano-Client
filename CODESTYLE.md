@@ -65,7 +65,7 @@ MyClassMethod(myClass);
 
 A free function is only acceptable as a narrow escape hatch when a class
 method genuinely isn't reachable — e.g. `GUIController.cpp` forward-declares
-`SendChatMessage(GlobalState*, ...)` instead of including
+`SendChatMessage(Application*, ...)` instead of including
 `NetworkClient.hpp`, purely to avoid that header's `asio`/`<windows.h>`
 include pulling in a macro collision. That's a compilation workaround, not a
 model to copy — default to an instance method every other time.
@@ -132,11 +132,11 @@ path (e.g. `TickLoop.hpp` → `VOLCANO_TICK_LOOP_H`):
 
 ## Global Access
 
-`GlobalState` is the single, thread-safe access point for the whole client:
+`Application` is the single, thread-safe access point for the whole client:
 it holds raw pointers to every thread-owning class and major manager
 (`InputHandler`, `Player`, `World`, `PlayerAttributes`, `TickLoop`, ...).
 When a new thread or manager class is added, it gets a pointer added to
-`GlobalState` so anything else — another internal system, or a mod DLL
+`Application` so anything else — another internal system, or a mod DLL
 linking against the same classes — can reach it the same way everything
 else does, rather than threading a new parameter through unrelated call
 chains.
@@ -145,14 +145,14 @@ Any mutable data exposed this way that crosses threads gets its own
 dedicated mutex, named `<field>Mutex` and declared immediately next to the
 field it guards, rather than one lock covering unrelated state — see
 `health`/`healthMutex`, `entities`/`entitiesMutex`, and
-`playerList`/`playerListMutex` in `GlobalState.hpp`. Document who writes and
+`playerList`/`playerListMutex` in `Application.hpp`. Document who writes and
 who reads the field in a comment above it; the mutex name alone doesn't say
 that.
 
 `Config::Active()` is the one narrow exception — a static accessor that
-exists purely for code with no `GlobalState*` in hand at all (`Logger`'s free
+exists purely for code with no `Application*` in hand at all (`Logger`'s free
 functions). It's a fallback for that specific case, not a second pattern to
-reach for — new code should take a `GlobalState*` rather than inventing its
+reach for — new code should take a `Application*` rather than inventing its
 own static/singleton accessor.
 
 ## Public API for mods
@@ -162,7 +162,7 @@ There is no separate mod layer: the API is the public methods of the classes it 
 * Every `Volcano::` function is exported from the exe (`tools/gen_exports.py`). Keep entry points mods may want to detour with MinHook non-inline.
 * Mark a class `VC_API` (`mods/VolcanoModAPI.h`) if mods derive from it (it has virtual functions): vtables are data and need a real export.
 * Document the thread a callback runs on, and which lock it holds, in the header.
-* Changing `GlobalState`'s layout breaks existing mods: bump `VC_API_VERSION_MAJOR`.
+* Changing `Application`'s layout breaks existing mods: bump `VC_API_VERSION_MAJOR`.
 
 ## Shader Languages
 This project uses two source shader languages: GLSL (for most things) and HLSL (for compute shaders and PBR). All of these are compiled into SPIR-V bytecode for use with the Vulkan backend, and optionally OpenGL 4.6 and DirectX 12 backends in the future.

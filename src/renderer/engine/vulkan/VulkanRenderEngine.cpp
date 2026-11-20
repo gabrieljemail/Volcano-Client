@@ -5,19 +5,19 @@
 #include <stdexcept>
 #include <string>
 #include "VulkanRenderEngine.hpp"
-#include "../passes/EntityPass.hpp"
-#include "../passes/ModeledBEPass.hpp"
-#include "../passes/GUIPass.hpp"
-#include "../passes/HandPass.hpp"
-#include "../passes/ItemPass.hpp"
-#include "../passes/NonCubicPass.hpp"
-#include "../passes/SelectionPass.hpp"
-#include "../passes/ShaderPackPass.hpp"
-#include "../passes/SkyboxPass.hpp"
-#include "../passes/CloudPass.hpp"
-#include "../passes/ParticlePass.hpp"
-#include "../passes/ShadowPass.hpp"
-#include "../passes/TerrainPass.hpp"
+#include "passes/EntityPass.hpp"
+#include "passes/ModeledBEPass.hpp"
+#include "passes/GUIPass.hpp"
+#include "passes/HandPass.hpp"
+#include "passes/ItemPass.hpp"
+#include "passes/NonCubicPass.hpp"
+#include "passes/SelectionPass.hpp"
+#include "passes/ShaderPackPass.hpp"
+#include "passes/SkyboxPass.hpp"
+#include "passes/CloudPass.hpp"
+#include "passes/ParticlePass.hpp"
+#include "passes/ShadowPass.hpp"
+#include "passes/TerrainPass.hpp"
 #include "../../VulkanInit.hpp"
 #include "../../TextureManager.hpp"
 #include "../../models/CameraUBO.hpp"
@@ -27,7 +27,8 @@
 #include <utility>
 #include <vector>
 #include "../../gui/GUIController.hpp"
-#include "../../../GlobalState.hpp"
+#include "../../../ApplicationDeps.hpp"
+import Volcano;
 #include "../../../Logger.hpp"
 
 namespace Volcano::Engine::Vulkan {
@@ -37,6 +38,8 @@ void VulkanRenderEngine::Init()
     // Window, instance, device, swapchain, render pass, descriptor sets,
     // command buffers, sync objects
     ::Init(state);
+    SetSlabBufferBackend(SlabBufferBackend::Vulkan);
+    ApplyFramesInFlight();
     initialized = true;
 
     shaders.SetActivePack(std::get<std::string>(state->config->Get("Graphics.ShaderPack", std::string(""))));
@@ -48,6 +51,19 @@ void VulkanRenderEngine::Init()
 
     Log::Info(std::string("[INFO] Render engine initialized (") + GetBackendName() + ", "
         + std::to_string(passes.size()) + " passes).");
+}
+
+// Graphics.BufferCount doubles as the render-ahead depth, like the D3D11
+// backend's DXGI frame latency. Every per-frame resource (command buffers,
+// fences, UBOs, Hi-Z and indirect-draw slots) is allocated for 3 slots, so 2
+// or 3 only changes how many are cycled through. Only call with the device
+// idle (Init, right after a swapchain rebuild).
+void VulkanRenderEngine::ApplyFramesInFlight()
+{
+    uint32_t wanted = std::clamp(std::get<uint32_t>(state->config->Get("Graphics.BufferCount", uint32_t{2})), 2u, 3u);
+    if (wanted == maxFramesInFlight) return;
+    maxFramesInFlight = wanted;
+    currentFrame = 0;
 }
 
 VkDevice VulkanRenderEngine::GetVkDevice() const { return ::GetDevice(); }
@@ -314,8 +330,10 @@ void VulkanRenderEngine::RegisterBuiltInPasses()
     AddPass(std::make_unique<Passes::GUIPass>());
 }
 
-void VulkanRenderEngine::AttachTextures(const TextureManager& textures)
+void VulkanRenderEngine::AttachTextures(TextureManager& textures)
 {
+    textures.UploadVulkan();
+
     VkDescriptorImageInfo imageInfo{};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     imageInfo.imageView = textures.array.view;
@@ -369,7 +387,7 @@ void VulkanRenderEngine::StopRendering()
 void VulkanRenderEngine::Shutdown()
 {
     // Normally already done by StopRendering(); harmless if so.
-    if (passesCreated) StopRendering();
+    if (initialized || passesCreated) StopRendering();
 
     ::Cleanup();
     initialized = false;
@@ -384,6 +402,7 @@ bool VulkanRenderEngine::BeginFrame()
     if (state->framebufferResized.exchange(false))
     {
         RecreateSwapchain(state->pendingFramebufferWidth.load(), state->pendingFramebufferHeight.load());
+        ApplyFramesInFlight(); // a BufferCount change arrives as a resize; the device is idle here
     }
 
     // Between frames is also the only safe point to rebuild pipelines.

@@ -23,9 +23,12 @@ TextureManager::~TextureManager() {
 
 void TextureManager::Destroy()
 {
-    if (array.sampler != VK_NULL_HANDLE) vkDestroySampler(GetDevice(), array.sampler, nullptr);
-    if (array.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), array.view, nullptr);
-    if (array.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, array.image, array.allocation);
+    if (GetDevice() != VK_NULL_HANDLE)
+    {
+        if (array.sampler != VK_NULL_HANDLE) vkDestroySampler(GetDevice(), array.sampler, nullptr);
+        if (array.view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), array.view, nullptr);
+        if (array.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, array.image, array.allocation);
+    }
     array = TextureArray{};
     layerLookup.clear();
     layerSize = 0;
@@ -184,9 +187,7 @@ void TextureManager::LoadResourcePack(const std::function<void(float)>& onProgre
     }
     uint32_t size = std::bit_ceil(largest);
 
-    VkPhysicalDeviceProperties props;
-    vkGetPhysicalDeviceProperties(GetPhysicalDevice(), &props);
-    uint32_t maxSize = std::min(TEXTURE_MAX_LAYER_SIZE, props.limits.maxImageDimension2D);
+    uint32_t maxSize = TEXTURE_MAX_LAYER_SIZE;
     if (size > maxSize)
     {
         Log::Info("Largest texture needs " + std::to_string(size) + "px layers; clamping to " + std::to_string(maxSize));
@@ -195,9 +196,8 @@ void TextureManager::LoadResourcePack(const std::function<void(float)>& onProgre
     layerSize = size;
     mipLevels = static_cast<uint32_t>(std::bit_width(size));
 
-    // maxImageArrayLayers can be as low as 2048; drop the overflow (items
-    // load last) rather than build a broken image.
-    uint32_t maxLayers = props.limits.maxImageArrayLayers;
+    // Feature level 11.0 guarantees at least 2048 texture-array layers.
+    constexpr uint32_t maxLayers = 2048;
     if (textures.size() > maxLayers)
     {
         Log::Error("Too many textures (" + std::to_string(textures.size()) + ") for maxImageArrayLayers "
@@ -205,7 +205,9 @@ void TextureManager::LoadResourcePack(const std::function<void(float)>& onProgre
         textures.resize(maxLayers);
     }
 
-    CreateArrayImage(static_cast<uint32_t>(textures.size()));
+    array.layerCount = static_cast<uint32_t>(textures.size());
+    const size_t layerBytes = static_cast<size_t>(layerSize) * layerSize * 4;
+    array.rgbaPixels.resize(layerBytes * array.layerCount);
 
     std::vector<uint8_t> scaled(static_cast<size_t>(layerSize) * layerSize * 4);
     uint32_t layer = 0;
@@ -218,7 +220,8 @@ void TextureManager::LoadResourcePack(const std::function<void(float)>& onProgre
         {
             Log::Error("Failed to decode texture: " + texture.stem);
             std::fill(scaled.begin(), scaled.end(), 0); // Keep the layer defined.
-            UploadLayer(layer, scaled.data(), layerSize, layerSize);
+            std::memcpy(array.rgbaPixels.data() + static_cast<size_t>(layer) * layerBytes,
+                scaled.data(), layerBytes);
             layer++;
             continue;
         }
@@ -236,7 +239,8 @@ void TextureManager::LoadResourcePack(const std::function<void(float)>& onProgre
         }
         stbi_image_free(pixels);
 
-        UploadLayer(layer, scaled.data(), layerSize, layerSize);
+        std::memcpy(array.rgbaPixels.data() + static_cast<size_t>(layer) * layerBytes,
+            scaled.data(), layerBytes);
         layerLookup[texture.stem] = static_cast<uint16_t>(layer);
         texture.bytes = {};
         layer++;
@@ -244,13 +248,9 @@ void TextureManager::LoadResourcePack(const std::function<void(float)>& onProgre
         if (onProgress) onProgress(static_cast<float>(layer) / static_cast<float>(textures.size()));
     }
 
-    GenerateMipmaps();
-    CreateSampler();
-
     double megabytes = static_cast<double>(layerSize) * layerSize * 4 * layer * 4.0 / 3.0 / (1024.0 * 1024.0);
-    Log::Info("Loaded " + std::to_string(layer) + " textures into array ("
-        + std::to_string(layerSize) + "px, " + std::to_string(mipLevels) + " mips, ~"
-        + std::to_string(static_cast<int>(megabytes)) + " MB).");
+    Log::Info("Decoded " + std::to_string(layer) + " textures into CPU array ("
+        + std::to_string(layerSize) + "px, ~" + std::to_string(static_cast<int>(megabytes)) + " MB).");
 }
 
 uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
@@ -267,6 +267,38 @@ uint16_t TextureManager::GetLayerIndex(const std::string& textureName) const
 bool TextureManager::HasLayer(const std::string& textureName) const
 {
     return layerLookup.contains(textureName);
+}
+
+const uint8_t* TextureManager::GetLayerPixels(uint32_t layer) const
+{
+    if (layer >= array.layerCount || layerSize == 0) return nullptr;
+    size_t layerBytes = static_cast<size_t>(layerSize) * layerSize * 4;
+    return array.rgbaPixels.data() + static_cast<size_t>(layer) * layerBytes;
+}
+
+void TextureManager::UploadVulkan()
+{
+    if (array.layerCount == 0 || array.rgbaPixels.empty())
+    {
+        throw std::runtime_error("[ERROR] Cannot upload an empty texture array.");
+    }
+    if (GetDevice() == VK_NULL_HANDLE || vmaAllocator == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error("[ERROR] Vulkan texture upload requested without an initialized device.");
+    }
+
+    CreateArrayImage(array.layerCount);
+    size_t layerBytes = static_cast<size_t>(layerSize) * layerSize * 4;
+    for (uint32_t layer = 0; layer < array.layerCount; ++layer)
+    {
+        UploadLayer(layer, GetLayerPixels(layer), layerSize, layerSize);
+    }
+    GenerateMipmaps();
+    CreateSampler();
+
+    double megabytes = static_cast<double>(layerBytes) * array.layerCount * 4.0 / 3.0 / (1024.0 * 1024.0);
+    Log::Info("Uploaded " + std::to_string(array.layerCount) + " Vulkan texture layers (~"
+        + std::to_string(static_cast<int>(megabytes)) + " MB including mips).");
 }
 
 void TextureManager::GenerateMipmaps()

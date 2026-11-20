@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <vector>
 #include "SelectionRenderer.hpp"
+#include "SelectionScene.hpp"
 #include "../VulkanInit.hpp"
 #include "../terrain/models/BlockRegistry.hpp"
 #include "../../Helpers.hpp"
@@ -289,8 +290,8 @@ void CreateCrackPipeline(const Engine::ShaderLibrary& shaders)
     if (result != VK_SUCCESS) Log::Error("[ERROR] Block-break crack pipeline unavailable.");
 }
 
-// Draws the crack texture for `stage` over every box of the block at `position`.
-void DrawCracks(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state, const glm::ivec3& position, int stage)
+// Draws the crack texture for the crack's stage over every box of its block.
+void DrawCracks(VkCommandBuffer cmd, uint32_t frameIndex, const SelectionScene::Crack& crack)
 {
     static int lastLoggedStage = -1;
     if (g_crackPipeline == VK_NULL_HANDLE)
@@ -299,30 +300,25 @@ void DrawCracks(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state, co
         lastLoggedStage = -2;
         return;
     }
-    VkDescriptorSet crackSet = EntityRenderer::GetCrackSet(stage);
-    Block block = state->world->GetBlock(position.x, position.y, position.z);
-    BlockRegistry::CollisionBoxes shape = BlockRegistry::GetCollisionBoxes(block);
-    if (stage != lastLoggedStage)
+    VkDescriptorSet crackSet = EntityRenderer::GetCrackSet(crack.stage);
+    if (crack.stage != lastLoggedStage)
     {
-        lastLoggedStage = stage;
-        Log::Info("[CRACK] Stage " + std::to_string(stage) + " at " + std::to_string(position.x) + "," + std::to_string(position.y)
-            + "," + std::to_string(position.z) + ": texture " + (crackSet != VK_NULL_HANDLE ? "ok" : "MISSING")
-            + ", " + std::to_string(shape.count) + " shape box(es).");
+        lastLoggedStage = crack.stage;
+        Log::Info("[CRACK] Stage " + std::to_string(crack.stage) + " at " + std::to_string(crack.position.x) + ","
+            + std::to_string(crack.position.y) + "," + std::to_string(crack.position.z) + ": texture "
+            + (crackSet != VK_NULL_HANDLE ? "ok" : "MISSING") + ", " + std::to_string(crack.boxes.size()) + " shape box(es).");
     }
-    if (crackSet == VK_NULL_HANDLE || shape.count == 0) return;
+    if (crackSet == VK_NULL_HANDLE || crack.boxes.empty()) return;
 
-    constexpr float INFLATE = 0.002f;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_crackPipeline);
     VkDescriptorSet sets[] = { cameraSets[frameIndex], crackSet };
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_crackLayout, 0, 2, sets, 0, nullptr);
     VkDeviceSize zero = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &g_crackVertexBuffer.buffer, &zero);
     vkCmdBindIndexBuffer(cmd, g_crackIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
-    for (int i = 0; i < shape.count; i++)
+    for (const SelectionScene::Box& box : crack.boxes)
     {
-        glm::vec3 origin(position);
-        CrackPushConstants pc{ glm::vec4(origin + shape.boxes[static_cast<size_t>(i)].min - glm::vec3(INFLATE), 0.0f),
-            glm::vec4(origin + shape.boxes[static_cast<size_t>(i)].max + glm::vec3(INFLATE), 0.0f) };
+        CrackPushConstants pc{ glm::vec4(box.min, 0.0f), glm::vec4(box.max, 0.0f) };
         vkCmdPushConstants(cmd, g_crackLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
         vkCmdDrawIndexed(cmd, CRACK_INDEX_COUNT, 1, 0, 0, 0);
     }
@@ -560,43 +556,16 @@ void SelectionRenderer::Shutdown()
     g_lineIndexBuffer = AllocatedBuffer{};
 }
 
-void SelectionRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state)
+void SelectionRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Application* state)
 {
-    std::optional<TargetedBlock> target = state->interaction->GetTargetedBlock();
+    // What to draw (targeted block, its shape, cracks, colors) is shared with the Direct3D 11 pass.
+    static SelectionScene::Frame scene;
+    SelectionScene::Collect(state, scene);
 
-    // Cracks first, so the outline draws over them: our own mining, then everyone else's.
-    int32_t ticksRequired = state->miningTicksRequired.load(std::memory_order_relaxed);
-    if (target && ticksRequired > 0)
-    {
-        int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        float ticks = static_cast<float>(nowNs - state->miningStartNs.load(std::memory_order_relaxed)) * 1e-9f * 20.0f;
-        int stage = std::clamp(static_cast<int>(ticks / static_cast<float>(ticksRequired) * 10.0f), 0, 9);
-        DrawCracks(cmd, frameIndex, state, target->position, stage);
-    }
-    {
-        std::lock_guard<std::mutex> lock(state->blockBreaksMutex);
-        for (const auto& [breaker, progress] : state->blockBreaks)
-        {
-            DrawCracks(cmd, frameIndex, state, progress.position, progress.stage);
-        }
-    }
+    // Cracks first, so the outline draws over them.
+    for (const SelectionScene::Crack& crack : scene.cracks) DrawCracks(cmd, frameIndex, crack);
 
-    if (!target) return;
-
-    Block block = state->world->GetBlock(target->position.x, target->position.y, target->position.z);
-    BlockRegistry::CollisionBoxes shape = BlockRegistry::GetCollisionBoxes(block);
-    if (shape.count == 0) return; // Shouldn't happen (only solid blocks get targeted)
-
-    Color4i outline = state->interaction->GetSelectionOutlineColor();
-    Color4i fill = state->interaction->GetSelectionFillColor();
-    glm::vec4 outlineColor(outline.r / 255.0f, outline.g / 255.0f, outline.b / 255.0f, outline.a);
-    glm::vec4 fillColor(fill.r / 255.0f, fill.g / 255.0f, fill.b / 255.0f, fill.a);
-
-    glm::vec3 blockOrigin(target->position);
-    // Nudges the box just outside the block's real face so its coplanar
-    // fill/outline don't z-fight against the block itself.
-    constexpr float INFLATE = 0.002f;
+    if (scene.boxes.empty()) return;
 
     VkDescriptorSet sets[] = { cameraSets[frameIndex] };
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipelineLayout, 0, 1, sets, 0, nullptr);
@@ -604,18 +573,15 @@ void SelectionRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Glo
     VkDeviceSize vertexOffset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &g_vertexBuffer.buffer, &vertexOffset);
 
-    for (int i = 0; i < shape.count; i++)
+    for (const SelectionScene::Box& box : scene.boxes)
     {
-        glm::vec3 worldMin = blockOrigin + shape.boxes[static_cast<size_t>(i)].min - glm::vec3(INFLATE);
-        glm::vec3 worldMax = blockOrigin + shape.boxes[static_cast<size_t>(i)].max + glm::vec3(INFLATE);
-
-        PushConstants pc{ glm::vec4(worldMin, 0.0f), glm::vec4(worldMax, 0.0f), fillColor };
+        PushConstants pc{ glm::vec4(box.min, 0.0f), glm::vec4(box.max, 0.0f), scene.fillColor };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_fillPipeline);
         vkCmdPushConstants(cmd, g_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
         vkCmdBindIndexBuffer(cmd, g_fillIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
         vkCmdDrawIndexed(cmd, FILL_INDEX_COUNT, 1, 0, 0, 0);
 
-        pc.color = outlineColor;
+        pc.color = scene.outlineColor;
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_linePipeline);
         vkCmdPushConstants(cmd, g_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
         vkCmdBindIndexBuffer(cmd, g_lineIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);

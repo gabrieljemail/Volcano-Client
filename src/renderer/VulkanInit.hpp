@@ -8,7 +8,12 @@
 #include <vulkan/vulkan.h>
 #include <VkBootstrap.h>
 #include <vk_mem_alloc.h>
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "Application.hpp" // Mods (sdk/) include this header and cannot import.
+#endif
 #include "models/AllocatedBuffer.hpp"
 #include "engine/ShaderLibrary.hpp"
 
@@ -21,7 +26,7 @@ constexpr const char* ENGINE_NAME       = "Volcano Game Engine";
 constexpr const uint32_t ENGINE_VERSION = VK_MAKE_API_VERSION(1,0,1,1);
 
 // Window.Width/Window.Height, Graphics.VSync and Graphics.BufferCount now
-// live in GlobalState::config (see settings.json)
+// live in Application::config (see settings.json)
 
 // Number of perpendicular billboard planes NonCubicMesher generates for
 // cross-shaped blocks (grass, flowers, saplings, ...) - 2 matches vanilla
@@ -158,7 +163,7 @@ VkShaderModule CreateShaderModule(const Volcano::Engine::ShaderLibrary& shaders,
 VkShaderModule CreateShaderModule(const std::vector<char>& code, const std::string& debugName);
 
 AllocatedBuffer CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool isUMA = false);
-void Init(GlobalState* state);
+void Init(Application* state);
 void Cleanup();
 VkRenderPass GetRenderPass();
 

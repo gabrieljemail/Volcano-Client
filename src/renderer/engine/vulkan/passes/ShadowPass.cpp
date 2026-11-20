@@ -6,13 +6,14 @@
 #include <string>
 #include <glm/gtc/matrix_transform.hpp>
 #include "ShadowPass.hpp"
-#include "../ShaderLibrary.hpp"
-#include "../../VulkanInit.hpp"
-#include "../../models/PackedVertex.hpp"
-#include "../../misc/MiscVertex.hpp"
-#include "../../terrain/VisibleChunkController.hpp"
-#include "../../../GlobalState.hpp"
-#include "../../../Logger.hpp"
+#include "../../ShaderLibrary.hpp"
+#include "../../../VulkanInit.hpp"
+#include "../../../models/PackedVertex.hpp"
+#include "../../../misc/MiscVertex.hpp"
+#include "../../../terrain/VisibleChunkController.hpp"
+#include "../../../../ApplicationDeps.hpp"
+import Volcano;
+#include "../../../../Logger.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -276,17 +277,18 @@ void ShadowPass::RecordCascade(FrameContext& frame, uint32_t index)
 
         for (const Mesh* mesh : casters)
         {
-            if (mesh->vertexBuffer == VK_NULL_HANDLE) continue;
+            if (mesh->vertexBuffer == nullptr) continue;
             terrainCasters++;
 
+            const VkBuffer vertexBuffer = static_cast<VkBuffer>(mesh->vertexBuffer);
             VkDeviceSize vertexOffset = mesh->vertexOffset;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vertexBuffer, &vertexOffset);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, &vertexOffset);
             Push push{ lightViewProj * mesh->modelMatrix };
             vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
 
             if (mesh->indexCount > 0)
             {
-                vkCmdBindIndexBuffer(cmd, mesh->indexBuffer, mesh->indexOffset, VK_INDEX_TYPE_UINT32);
+                vkCmdBindIndexBuffer(cmd, static_cast<VkBuffer>(mesh->indexBuffer), mesh->indexOffset, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
             }
             else
@@ -309,17 +311,18 @@ void ShadowPass::RecordCascade(FrameContext& frame, uint32_t index)
             VisibleChunkController::GetVisibleMeshes(frame.state->nonCubicRenderList, lightViewProj, false);
         for (const Mesh* mesh : casters)
         {
-            if (mesh->vertexBuffer == VK_NULL_HANDLE) continue;
+            if (mesh->vertexBuffer == nullptr) continue;
             cutoutCasters++;
 
+            const VkBuffer vertexBuffer = static_cast<VkBuffer>(mesh->vertexBuffer);
             VkDeviceSize vertexOffset = mesh->vertexOffset;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vertexBuffer, &vertexOffset);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer, &vertexOffset);
             Push push{ lightViewProj * mesh->modelMatrix };
             vkCmdPushConstants(cmd, cutoutLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
 
             if (mesh->indexCount > 0)
             {
-                vkCmdBindIndexBuffer(cmd, mesh->indexBuffer, mesh->indexOffset, VK_INDEX_TYPE_UINT32);
+                vkCmdBindIndexBuffer(cmd, static_cast<VkBuffer>(mesh->indexBuffer), mesh->indexOffset, VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(cmd, mesh->indexCount, 1, 0, 0, 0);
             }
             else if (mesh->vertexCount > 0)

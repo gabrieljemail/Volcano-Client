@@ -24,7 +24,7 @@
 
 // The network side, declared here rather than including NetworkClient.hpp (see GUIController.cpp for why).
 namespace Volcano {
-void SendSetCreativeSlot(GlobalState* state, int16_t slot, const ItemStack& item);
+void SendSetCreativeSlot(Application* state, int16_t slot, const ItemStack& item);
 }
 
 namespace Volcano::GUI {
@@ -247,7 +247,7 @@ const ItemStack& ItemAt(const std::array<ItemStack, SURVIVAL_SLOTS>& snapshot, i
     return snapshot[static_cast<size_t>(index)];
 }
 
-void SnapshotWindow0(GlobalState* state, std::array<ItemStack, SURVIVAL_SLOTS>& out)
+void SnapshotWindow0(Application* state, std::array<ItemStack, SURVIVAL_SLOTS>& out)
 {
     std::lock_guard<std::mutex> lock(state->inventory.mutex);
     for (int32_t i = 0; i < SURVIVAL_SLOTS; i++)
@@ -306,7 +306,7 @@ void BuildSearch(ControlRenderer& ui, Element parent, CreativeView& view, int wi
         .SetPlaceholder("Search items by name or ID...");
 }
 
-void BuildCreative(ControlRenderer& ui, GlobalState* state, Screen& screen, CreativeView& view)
+void BuildCreative(ControlRenderer& ui, Application* /*state*/, Screen& /*screen*/, CreativeView& view)
 {
     int fontPixels = (ui.Units(1.0f) + 1) * static_cast<int>(Theme::SMALL_FONT_SIZE);
     const int slotPx = Px(ui, SLOT_ART);
@@ -394,6 +394,7 @@ void BuildCreative(ControlRenderer& ui, GlobalState* state, Screen& screen, Crea
     view.gridViewport.SetSize(static_cast<uint16_t>(gridW), static_cast<uint16_t>(gridH))
         .SetBackground(Theme::PANEL_DARK)
         .SetBorder(1, Theme::PANEL_LIGHT)
+        .SetPadding(8)
         .SetCornerRadius(4)
         .SetOverflow(Pincel::Overflow::Scroll);
     view.gridRows = view.gridViewport.AddStack(Orientation::Vertical);
@@ -511,7 +512,7 @@ void RebuildGrid(ControlRenderer& ui, CreativeView& view)
 // Picker clicks only move the client-side cursor stack; nothing is sent.
 // The picker is an infinite source, so a different item replaces the carried
 // stack and the same item tops it up to a full stack.
-void PickerClick(GlobalState* state, int32_t itemId, uint8_t button)
+void PickerClick(Application* state, int32_t itemId, uint8_t button)
 {
     const ItemRegistry::ItemTypeInfo* info = ItemRegistry::Lookup(itemId);
     int32_t maxStack = info != nullptr ? info->maxStackSize : 64;
@@ -531,7 +532,7 @@ void PickerClick(GlobalState* state, int32_t itemId, uint8_t button)
 
 // Sends SetCreativeSlot for every window-0 slot that differs between two
 // snapshots - the diff half of SurvivalClick/QuickMove.
-void ReportChanges(GlobalState* state, const std::array<ItemStack, SURVIVAL_SLOTS>& before,
+void ReportChanges(Application* state, const std::array<ItemStack, SURVIVAL_SLOTS>& before,
     const std::array<ItemStack, SURVIVAL_SLOTS>& after)
 {
     for (int32_t i = 0; i < SURVIVAL_SLOTS; i++)
@@ -542,7 +543,7 @@ void ReportChanges(GlobalState* state, const std::array<ItemStack, SURVIVAL_SLOT
 // A player-inventory click: predicted with the same logic the survival screen
 // uses, then every slot that actually changed is reported with SetCreativeSlot -
 // vanilla's CreativeInventoryListener does exactly this per slotChanged.
-void SurvivalClick(GlobalState* state, int32_t index, uint8_t button)
+void SurvivalClick(Application* state, int32_t index, uint8_t button)
 {
     std::array<ItemStack, SURVIVAL_SLOTS> before;
     SnapshotWindow0(state, before);
@@ -555,7 +556,7 @@ void SurvivalClick(GlobalState* state, int32_t index, uint8_t button)
 // Shift-click quick move between the main inventory and the hotbar: the whole
 // stack goes to the first slot with room (same item first, then empty), or
 // stays put when the other section is full.
-void QuickMove(GlobalState* state, int32_t index)
+void QuickMove(Application* state, int32_t index)
 {
     int32_t first, count;
     if (index >= 9 && index <= 35) { first = 36; count = 9; }
@@ -601,7 +602,7 @@ void QuickMove(GlobalState* state, int32_t index)
 }
 
 // Clicking the backdrop drops the carried stack into the world (slot -1).
-void BackdropClick(GlobalState* state, uint8_t button)
+void BackdropClick(Application* state, uint8_t button)
 {
     ItemStack before;
     {
@@ -631,7 +632,7 @@ void BackdropClick(GlobalState* state, uint8_t button)
 
 // Shift+click on the destroy slot empties the whole player inventory; a plain
 // click just clears the cursor stack (the cursor is client-side only).
-void DestroyClick(GlobalState* state, bool shiftHeld)
+void DestroyClick(Application* state, bool shiftHeld)
 {
     if (!shiftHeld)
     {
@@ -660,7 +661,7 @@ void DestroyClick(GlobalState* state, bool shiftHeld)
 // Number keys: on a survival slot they swap it with that hotbar slot; on a
 // picker item they overwrite the hotbar slot with a full stack (vanilla's
 // creative SWAP behavior).
-void HotbarKey(GlobalState* state, int32_t hoveredSurvival, int32_t hoveredPicker, int hotbarSlot)
+void HotbarKey(Application* state, int32_t hoveredSurvival, int32_t hoveredPicker, int hotbarSlot)
 {
     if (hoveredSurvival >= 0)
     {
@@ -696,7 +697,7 @@ void HotbarKey(GlobalState* state, int32_t hoveredSurvival, int32_t hoveredPicke
 
 // Q-style drop on a survival slot: the dropped part goes to the world (slot
 // -1), the remainder stays and is reported.
-void DropSurvivalSlot(GlobalState* state, int32_t index, int32_t amount)
+void DropSurvivalSlot(Application* state, int32_t index, int32_t amount)
 {
     ItemStack stack;
     {
@@ -724,7 +725,7 @@ void DropSurvivalSlot(GlobalState* state, int32_t index, int32_t amount)
 
 // Shift+MMB deletes the hovered survival slot outright (Bedrock's Y-delete);
 // plain MMB clones the slot's item onto the cursor at max stack.
-void MiddleClickSurvival(GlobalState* state, int32_t index, bool shiftHeld)
+void MiddleClickSurvival(Application* state, int32_t index, bool shiftHeld)
 {
     ItemStack stack;
     {
@@ -753,9 +754,8 @@ void MiddleClickSurvival(GlobalState* state, int32_t index, bool shiftHeld)
     state->inventory.carriedItem = clone;
 }
 
-void UpdateCreative(ControlRenderer& ui, GlobalState* state, Screen& screen, CreativeView& view)
+void UpdateCreative(ControlRenderer& ui, Application* state, Screen& /*screen*/, CreativeView& view)
 {
-    int fontPixels = (ui.Units(1.0f) + 1) * static_cast<int>(Theme::SMALL_FONT_SIZE);
     const int slotPx = Px(ui, SLOT_ART);
     const int pitchPx = Px(ui, PITCH_ART);
 
@@ -976,7 +976,7 @@ void UpdateCreative(ControlRenderer& ui, GlobalState* state, Screen& screen, Cre
 
 } // namespace
 
-Screen* CreateCreativeScreen(GlobalState* state)
+Screen* CreateCreativeScreen(Application* state)
 {
     Screen* screen = GUIController::CreateScreen("Creative Inventory", /* closable */ true);
     screen->showTitle = false; // The layout carries its own.

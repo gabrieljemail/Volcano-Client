@@ -5,15 +5,14 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <vulkan/vulkan.h>
 #include <Pincel/Pincel.hpp>
 #include "AccountPanel.hpp"
 #include "ImGuiInput.hpp"
-#include "PincelSurface.hpp"
+#include "PincelRasterizer.hpp"
 #include "models/Screen.hpp"
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 }
 
 namespace Volcano::GUI {
@@ -25,12 +24,12 @@ namespace Volcano::GUI {
 // Render thread only.
 class ControlRenderer {
 public:
-    explicit ControlRenderer(GlobalState* globalState) : state(globalState) {}
+    explicit ControlRenderer(Application* application) : state(application) {}
 
     // The Minecraft font with its fallbacks, loaded on first use. Shared by everything Pincel draws.
     static Pincel::FontFamily UiFont();
 
-    bool Init(VkRenderPass renderPass);
+    bool Init(Engine::RenderEngine& engine);
     void Shutdown();
 
     // Screens with customContent draw themselves with raw ImGui, so they aren't this renderer's.
@@ -58,12 +57,13 @@ public:
     void Rebuild() { builtScreen = nullptr; }
 
     // Brings the screen up to date, gives Pincel this frame's input and draws it
-    // to the GPU texture. `scale` is the GUI scale (pixels per UI unit). Call it
-    // after GUIController::NewFrame and outside the render pass.
-    void Update(Screen& screen, float scale);
+    // to the GPU texture. `scale` is the GUI scale (pixels per UI unit), `extent`
+    // the drawable size. Call it after GUIController::NewFrame and outside the
+    // render pass.
+    void Update(Screen& screen, float scale, const Engine::RenderExtent& extent);
 
     // Lays the finished screen over the frame, inside the main render pass.
-    void Record(VkCommandBuffer commandBuffer);
+    void Record(Engine::FrameContext& frame);
 
     // Whether a Pincel input on the current screen has keyboard focus - while
     // it does, typed keys belong to the field, not to game keybinds like "E".
@@ -115,8 +115,8 @@ private:
     void OpenDropdown(size_t controlIndex);
     void CloseDropdown();
 
-    GlobalState* state;
-    PincelSurface surface;
+    Application* state;
+    std::unique_ptr<PincelRasterizer> rasterizer;
     std::unique_ptr<Pincel::Canvas> canvas;
     bool ready = false;
 

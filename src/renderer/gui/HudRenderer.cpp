@@ -3,7 +3,8 @@
 #include <cmath>
 #include <mutex>
 #include <imgui.h>
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+import Volcano;
 #include "InputHandler.hpp"
 #include "Logger.hpp"
 #include "PlayerAttributes.hpp"
@@ -25,7 +26,7 @@ using Pincel::PointerEvents;
 using Pincel::Position;
 using namespace Theme;
 
-Color TokenColor(const CommandToken& token)
+[[maybe_unused]] Color TokenColor(const CommandToken& token)
 {
     switch (token.kind)
     {
@@ -127,10 +128,15 @@ int HudRenderer::Units(float units) const
     return static_cast<int>(std::lround(units * static_cast<float>(scale)));
 }
 
-bool HudRenderer::Init(VkRenderPass renderPass)
+bool HudRenderer::Init(Engine::RenderEngine& engine)
 {
     Pincel::Init();
-    if (!surface.Create(renderPass)) return false;
+    rasterizer = CreatePincelRasterizer(engine);
+    if (!rasterizer || !rasterizer->Create(engine))
+    {
+        rasterizer.reset();
+        return false;
+    }
 
     canvas = std::make_unique<Pincel::Canvas>();
     canvas->SetBackground(Color{ 0, 0, 0, 0.0f });
@@ -157,7 +163,11 @@ void HudRenderer::Shutdown()
 {
     ready = false;
     canvas.reset();
-    surface.Destroy();
+    if (rasterizer != nullptr)
+    {
+        rasterizer->Destroy();
+        rasterizer.reset();
+    }
 }
 
 void HudRenderer::ReloadResources()
@@ -812,14 +822,15 @@ void HudRenderer::Refresh()
     RefreshMovement();
 }
 
-std::optional<std::string> HudRenderer::Update(float guiScale, const ChatBox& chat)
+std::optional<std::string> HudRenderer::Update(float guiScale, const ChatBox& chat,
+    const Engine::RenderExtent& extent)
 {
-    if (!ready || swapchainExtent.width == 0 || swapchainExtent.height == 0) return std::nullopt;
+    if (!ready || extent.width == 0 || extent.height == 0) return std::nullopt;
 
     int newScale = std::max(1, static_cast<int>(std::lround(guiScale)));
-    bool resized = swapchainExtent.width != width || swapchainExtent.height != height;
-    width = swapchainExtent.width;
-    height = swapchainExtent.height;
+    bool resized = extent.width != width || extent.height != height;
+    width = extent.width;
+    height = extent.height;
     canvas->SetSize(width, height);
 
     float maxHealth = static_cast<float>(state->attributes->GetDouble("generic.max_health", 20.0));
@@ -833,7 +844,7 @@ std::optional<std::string> HudRenderer::Update(float guiScale, const ChatBox& ch
     Refresh();
     RefreshChat(chat);
     input.Feed(*canvas, static_cast<float>(scale));
-    Pincel::Texture* texture = canvas->Draw();
+    Pincel::DrawData drawData = canvas->BuildDrawData();
 
     if (chat.open)
     {
@@ -883,13 +894,13 @@ std::optional<std::string> HudRenderer::Update(float guiScale, const ChatBox& ch
         outgoing.pop_front();
         nextSendTime = now + SEND_INTERVAL;
     }
-    surface.Upload(*texture);
+    if (rasterizer != nullptr) rasterizer->Upload(drawData);
     return submitted;
 }
 
-void HudRenderer::Record(VkCommandBuffer commandBuffer)
+void HudRenderer::Record(Engine::FrameContext& frame)
 {
-    if (ready) surface.Record(commandBuffer);
+    if (ready && rasterizer != nullptr) rasterizer->Record(frame);
 }
 
 } // namespace Volcano::GUI

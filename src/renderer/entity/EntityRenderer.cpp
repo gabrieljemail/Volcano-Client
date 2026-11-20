@@ -12,8 +12,10 @@
 #include <nlohmann/json.hpp>
 #include <stb_image.h>
 #include "../../resources/ImageLoad.hpp"
+#include "../../resources/BaseAssets.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include "EntityRenderer.hpp"
+#include "EntityScene.hpp"
 #include "models/Entity.hpp"
 #include "../../network/SkinFetcher.hpp"
 #include "../../network/Uuid.hpp"
@@ -47,16 +49,13 @@ namespace {
 // that instead of introducing a second, possibly-inconsistent constant.
 constexpr uint32_t FRAMES_IN_FLIGHT = 3;
 
+// The backend-independent entity data (draw lists, poses, armor layout) lives
+// in EntityScene; this file keeps the Vulkan side: meshes, skins, pipelines,
+// buffers and the draw calls.
+using namespace EntityScene;
+
 // Local vertex format for every untextured procedural entity mesh
 using EntityVertex = EntityMeshVertex;
-
-// std430 layout: 4 vec4s, 16-byte aligned throughout.
-struct GPUEntityInstance {
-    glm::vec4 positionYaw; // xyz: world position (feet), w: yaw radians.
-    glm::vec4 halfExtents; // xyz: half bounding-box extents, w: unused.
-    glm::vec4 color;       // rgb: base tint, a: unused.
-    glm::vec4 hurtColor;   // rgb: hit-flash color, a: blend amount (0 when not hurt).
-};
 
 VkPipeline g_pipeline = VK_NULL_HANDLE;
 VkPipelineLayout g_pipelineLayout = VK_NULL_HANDLE;
@@ -111,20 +110,12 @@ enum EntityShapeSlot : uint32_t {
 // EntityRenderer::RecordDraw's own comment for why these entities are split
 // out of those instance lists rather than merged in.
 //
-// One record per drawn part: entity_textured.vert reads it as instance-rate
-// vertex attributes (binding 1), so a part, an entity or a hundred of them
-// are all the same kind of draw. See TexturedBatch.
-struct TexturedInstance {
-    glm::vec4 positionYaw;
-    glm::vec4 hurtColor; // Same convention as GPUEntityInstance::hurtColor.
-    glm::vec4 partPivot;    // xyz: point the part turns about, model-local; w: tint as 0xRRGGBB (0 for none).
-    glm::vec4 partOffset;   // xyz: translation added after the turn, model-local; w: light, sky * 16 + block.
-    glm::vec4 partRotation; // xyz: radians, applied Z * Y * X; w: death roll of the whole body.
-    glm::vec4 bodyPose;     // x: pitch of the whole body, radians, nose down positive.
-};
+// (TexturedInstance - one record per drawn part, read by entity_textured.vert
+// as instance-rate vertex attributes - is shared: see EntityScene.hpp and
+// TexturedBatch below.)
 
 // One loaded skin
-struct SkinTexture {
+struct SkinTexture : EntityScene::SkinBase {
     AllocatedImage image{};
     VkImageView view = VK_NULL_HANDLE;
     VkSampler sampler = VK_NULL_HANDLE;
@@ -137,176 +128,25 @@ struct SkinTexture {
 // thinner arms/legs vs humanoid.json) and each model also declares its own
 // textureWidth/textureHeight, so UV is baked correctly per mesh at load
 // time instead of needing a runtime per-draw correction.
-struct EntityModelMesh {
+// The CPU description (index count, scale, parts, roles) is the shared
+// MeshBase; this adds the Vulkan buffers.
+struct EntityModelMesh : EntityScene::MeshBase {
     AllocatedBuffer vertexBuffer;
     AllocatedBuffer indexBuffer;
-    uint32_t indexCount = 0;
-    float scale = 1.0f;
-    float feetHeight = 1.5f; // Ground level in the model frame, in blocks.
-    std::vector<EntityJsonModel::PartInfo> parts; // Empty for meshes that don't animate.
-    EntityAnimation::Roles roles;
 };
 
-// One humanoid entity's fully-resolved draw parameters, snapshotted under
-// entitiesMutex. Deliberately NOT a `const Entity*`: unlike the cube path
-// (which finishes writing its instance buffer before the lock drops), the
-// humanoid draw loop runs after RecordDraw releases entitiesMutex, and the
-// network thread can erase an entity from state->entities in that window -
-// so a pointer into the map would be a use-after-free by the time it's
-// dereferenced. The skin pointer is fine to keep: it aims at a file-scope
-// global that outlives every frame.
-struct MobLayer {
-    const EntityModelMesh* mesh;
-    const SkinTexture* skin;
-};
+// The Vulkan object behind a shared mesh/skin reference.
+const EntityModelMesh& AsVulkan(const EntityScene::MeshBase& mesh) { return static_cast<const EntityModelMesh&>(mesh); }
+const SkinTexture& AsVulkan(const EntityScene::SkinBase& skin) { return static_cast<const SkinTexture&>(skin); }
 
-// One textured mob from mobs.json: base layer first, then overlays.
-struct MobModel {
-    std::vector<MobLayer> layers;
-    // Armor meshes fitted to this body (same parts, same pivots), or null for a mob that wears none.
-    const EntityModelMesh* armorOuter = nullptr; // Helmet, chestplate, boots.
-    const EntityModelMesh* armorInner = nullptr; // Leggings.
-    int pitchMode = 0; // 1: the entity's look pitch tilts the body (nose down positive); -1: a projectile, pitch up positive.
-};
-
-struct HumanoidDraw {
-    glm::vec3 position;
-    float yaw;
-    glm::vec4 hurtColor;
-    const MobModel* model;
-    EntityAnimation::Inputs anim;
-    const std::string* mainhandItem = nullptr; // Registry names, which outlive the frame.
-    const std::string* offhandItem = nullptr;
-    std::array<const std::string*, 4> armor{}; // Head, chest, legs, feet.
-    uint8_t armorGlint = 0; // Bit per armor slot that is enchanted.
-    bool mainhandGlint = false;
-    bool offhandGlint = false;
-    bool hideHead = false; // First-person body view: the camera sits inside the head.
-    float deathRoll = 0.0f; // Radians the body has tipped over; 0 while alive.
-    float pitch = 0.0f;     // Radians the whole body tilts nose down.
-    const SkinTexture* skin = nullptr; // A player's own skin, for every layer; null uses the model's.
-};
-
-// Walk cycles per entity, keyed by network id; the local player uses LOCAL_WALK_KEY.
-constexpr uint32_t LOCAL_WALK_KEY = 0xFFFFFFFFu;
-std::unordered_map<uint32_t, EntityAnimation::WalkState> g_walkStates;
-uint64_t g_walkFrame = 0;
-
-// Vanilla's (rotation, offset) in model space -> this renderer's world-local
-// space: the model's Y-down, Z-flipped frame is a half turn about X.
-glm::vec3 ToWorldRotation(glm::vec3 vanilla) { return glm::vec3(vanilla.x, -vanilla.y, -vanilla.z); }
-glm::vec3 ToWorldOffset(glm::vec3 vanilla, float scale) { return glm::vec3(vanilla.x, -vanilla.y, -vanilla.z) * (scale / 16.0f); }
-
-// Item registry name of a stack, or null for an empty hand.
-const std::string* HeldItemName(const ItemStack& stack)
-{
-    if (stack.IsEmpty()) return nullptr;
-    const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(stack.itemId);
-    return item != nullptr ? &item->name : nullptr;
-}
-
-// What one worn armor piece draws: its sheet, and for leather its dye and undyed overlay.
-struct ArmorLook {
-    std::string texture;
-    std::string overlayTexture;
-    uint32_t tint = 0;
-};
-
-// Whether an item name is armor for a slot (0 head, 1 chest, 2 legs, 3 feet), and how it looks.
-bool ArmorLookOf(const std::string& itemName, int slot, ArmorLook& look)
-{
-    static const char* const SUFFIX[4] = { "_helmet", "_chestplate", "_leggings", "_boots" };
-    size_t colon = itemName.find(':');
-    std::string name = itemName.substr(colon == std::string::npos ? 0 : colon + 1);
-    const std::string suffix = SUFFIX[slot];
-    if (name.size() <= suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) return false;
-
-    std::string material = name.substr(0, name.size() - suffix.size());
-    if (material == "golden") material = "gold";
-    else if (material == "turtle") material = "turtle_scute";
-    const std::string sheet = slot == 2 ? "equipment/humanoid_leggings/" : "equipment/humanoid/";
-    look.texture = sheet + material + ".png";
-    if (material == "leather")
-    {
-        look.overlayTexture = sheet + "leather_overlay.png";
-        look.tint = 0xA06540; // Undyed: the dye color is a data component this client doesn't read.
-    }
-    return true;
-}
+// Aliases for the state EntityScene shares with the shadow pass (which reads
+// the walk cycles and the local player's last pose).
+std::unordered_map<uint32_t, EntityAnimation::WalkState>& g_walkStates = EntityScene::WalkStates();
+HumanoidDraw& g_localShadow = EntityScene::LocalShadow();
+bool& g_localShadowValid = EntityScene::LocalShadowValid();
 
 // An armor sheet, or null when the packs have none for that material.
 const SkinTexture* ArmorSkin(const std::string& path);
-
-// Parts of the armor mesh each slot covers, by index (the models share humanoid.json's order).
-constexpr std::array<std::array<int, 3>, 4> ARMOR_PARTS = {{ { 0, -1, -1 }, { 1, 2, 3 }, { 1, 4, 5 }, { 4, 5, -1 } }};
-
-// The local player's body turn, advanced while they're drawn in third person.
-BodyRotation g_localBody;
-std::chrono::steady_clock::time_point g_localBodyTime = std::chrono::steady_clock::now();
-
-// The local player's pose as last posed by RecordDraw, for the shadow pass
-// (which records first in the frame). Valid only while they exist in the world.
-HumanoidDraw g_localShadow{};
-bool g_localShadowValid = false;
-
-// Whether an entity sits on a vehicle, and whether that vehicle is a boat.
-struct RideInfo {
-    bool riding = false;
-    bool boat = false;
-};
-
-// Whether an entity sits on a tracked vehicle, and the seat it renders at.
-// Call under entitiesMutex.
-RideInfo RideInfoFor(GlobalState* state, const Entity& entity)
-{
-    glm::vec3 seat;
-    float vehicleYaw = 0.0f;
-    EntitySeat::Kind kind = EntitySeat::Resolve(state, entity, std::chrono::steady_clock::now(), seat, vehicleYaw);
-    return RideInfo{ kind != EntitySeat::Kind::None, kind == EntitySeat::Kind::Boat };
-}
-
-// Where a remote entity renders: its seat when riding, else its interpolated position.
-glm::vec3 RenderPositionOf(GlobalState* state, const Entity& entity, std::chrono::steady_clock::time_point now)
-{
-    glm::vec3 seat;
-    float vehicleYaw = 0.0f;
-    if (EntitySeat::Resolve(state, entity, now, seat, vehicleYaw) != EntitySeat::Kind::None) return seat;
-    return entity.InterpolatedPosition(now);
-}
-
-// How far a dying body has tipped over, in radians, `ticks` after its death: vanilla's sqrt ramp up to 90 degrees.
-float DeathRoll(float ticks)
-{
-    float f = std::sqrt(std::clamp((ticks - 1.0f) / 20.0f * 1.6f, 0.0f, 1.0f));
-    return glm::radians(90.0f * f);
-}
-
-// The chunk light at a point on an entity, packed sky * 16 + block for TexturedInstance.
-float EntityLight(GlobalState* state, const glm::vec3& feet)
-{
-    if (state->world == nullptr) return 15.0f * 16.0f;
-    LightSample sample = state->world->GetLightSample(static_cast<int>(std::floor(feet.x)),
-        static_cast<int>(std::floor(feet.y + 1.0f)), static_cast<int>(std::floor(feet.z)));
-    return static_cast<float>(sample.sky) * 16.0f + static_cast<float>(sample.block);
-}
-
-// The local player's vehicle kind, from the vehicle they ride.
-RideInfo LocalRideInfo(GlobalState* state)
-{
-    int32_t vehicleId = state->ridingEntityId.load();
-    if (vehicleId < 0) return RideInfo{};
-    std::lock_guard<std::mutex> lock(state->entitiesMutex);
-    const Entity* vehicle = state->FindEntity(static_cast<uint32_t>(vehicleId));
-    if (vehicle == nullptr) return RideInfo{ true, false };
-    return RideInfo{ true, EntitySeat::KindOf(*vehicle) == EntitySeat::Kind::Boat };
-}
-
-// Same snapshot-under-the-lock reasoning as HumanoidDraw.
-struct BlockDraw {
-    glm::vec3 position;
-    glm::vec4 hurtColor;
-    int32_t stateId;
-};
 
 VkPipeline g_humanoidPipeline = VK_NULL_HANDLE;
 VkPipelineLayout g_humanoidPipelineLayout = VK_NULL_HANDLE;
@@ -335,7 +175,6 @@ struct PlayerSkin
     bool slim = false;
 };
 constexpr uint32_t MAX_PLAYER_SKINS = 96;
-const char* const LOCAL_SKIN_KEY = "local";
 std::unordered_map<std::string, PlayerSkin> g_playerSkins;
 VkDescriptorPool g_playerSkinPool = VK_NULL_HANDLE;
 
@@ -749,7 +588,7 @@ void DestroySkin(SkinTexture& skin)
 }
 
 // Puts the downloaded skins the fetcher finished onto the GPU (render thread).
-void UploadFinishedSkins(GlobalState* state)
+void UploadFinishedSkins(Application* state)
 {
     if (state->skinFetcher == nullptr) return;
     for (SkinImage& image : state->skinFetcher->TakeCompleted())
@@ -773,9 +612,10 @@ void UploadFinishedSkins(GlobalState* state)
 
 // Picks a player's skin and the matching (wide or slim) model: the downloaded skin when it has arrived, asking the
 // fetcher for it the first time it's wanted; otherwise the model's own default skin. `model` is the wide "player" model.
-void ResolvePlayerLook(GlobalState* state, const std::string& key, const MobModel*& model, const SkinTexture*& skin)
+void ResolvePlayerLook(Application* state, const std::string& key, const MobModel*& model,
+    const EntityScene::SkinBase*& skin)
 {
-    GlobalState::SkinSource source;
+    Application::SkinSource source;
     {
         std::lock_guard<std::mutex> lock(state->skinSourcesMutex);
         auto it = state->skinSources.find(key);
@@ -845,6 +685,25 @@ const SkinTexture* ArmorSkin(const std::string& path)
     cache[path] = skin;
     return skin;
 }
+
+// How EntityScene reaches this backend's models and skins.
+class VulkanEntityAssets final : public EntityScene::Assets {
+public:
+    const MobModel* FindMob(const std::string& entityName) const override
+    {
+        auto found = g_mobModels.find(entityName);
+        return found != g_mobModels.end() ? &found->second : nullptr;
+    }
+
+    void ResolvePlayerLook(Application* state, const std::string& key, const MobModel*& model,
+        const EntityScene::SkinBase*& skin) override
+    {
+        Volcano::ResolvePlayerLook(state, key, model, skin);
+    }
+
+    const EntityScene::SkinBase* ArmorSkin(const std::string& path) override { return Volcano::ArmorSkin(path); }
+    const EntityScene::SkinBase* ArmorGlintSkin() override { return GlintSkin(true); }
+};
 
 const EntityModelMesh* CachedMesh(const std::string& modelFile, float scale)
 {
@@ -1645,62 +1504,6 @@ void CreateHumanoidPipeline(const Engine::ShaderLibrary& shaders)
     DestroyShaderPair(vertModule, fragModule);
 }
 
-// A mob the Hi-Z test hides while it is close to the camera is the case worth a line in the log: a mob that near is
-// rarely really behind terrain, so this tells client culling from a mob the server hid or put somewhere wrong.
-// At most one line per entity every few seconds.
-void LogNearHiZCull(uint32_t id, const Entity& entity, const glm::vec3& position, const glm::vec3& camera,
-    std::chrono::steady_clock::time_point now)
-{
-    constexpr float NEAR_BLOCKS = 5.0f;
-    constexpr auto REPEAT = std::chrono::seconds(3);
-    static std::unordered_map<uint32_t, std::chrono::steady_clock::time_point> lastLogged;
-
-    float distance = glm::length(position - camera);
-    if (distance > NEAR_BLOCKS) return;
-    auto found = lastLogged.find(id);
-    if (found != lastLogged.end() && now - found->second < REPEAT) return;
-    lastLogged[id] = now;
-    if (lastLogged.size() > 512) lastLogged.clear();
-
-    const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity.type);
-    Log::Info("[HIZ] Hides " + std::string(info != nullptr ? info->name : "entity") + " #" + std::to_string(id)
-        + " " + std::to_string(distance) + " blocks away at (" + std::to_string(position.x) + ", "
-        + std::to_string(position.y) + ", " + std::to_string(position.z) + "), camera at ("
-        + std::to_string(camera.x) + ", " + std::to_string(camera.y) + ", " + std::to_string(camera.z)
-        + "), box " + std::to_string(entity.boundingBox.x) + " x " + std::to_string(entity.boundingBox.y));
-}
-
-// Left/Right/Bottom/Top frustum planes (Gribb/Hartmann) extracted from a
-// combined view-projection matrix. Near/far are deliberately skipped: the
-// rasterizer's own clip-space clipping already handles anything we'd miss
-// there, and the distance-sorted MAX_VISIBLE_ENTITIES cap in RecordDraw is a
-// more meaningful "too far/too much" limit than a math-derived far plane.
-std::array<glm::vec4, 4> ExtractFrustumPlanes(const glm::mat4& m)
-{
-    std::array<glm::vec4, 4> planes = {
-        glm::vec4(m[0][3] + m[0][0], m[1][3] + m[1][0], m[2][3] + m[2][0], m[3][3] + m[3][0]), // Left
-        glm::vec4(m[0][3] - m[0][0], m[1][3] - m[1][0], m[2][3] - m[2][0], m[3][3] - m[3][0]), // Right
-        glm::vec4(m[0][3] + m[0][1], m[1][3] + m[1][1], m[2][3] + m[2][1], m[3][3] + m[3][1]), // Bottom
-        glm::vec4(m[0][3] - m[0][1], m[1][3] - m[1][1], m[2][3] - m[2][1], m[3][3] - m[3][1]), // Top
-    };
-
-    for (glm::vec4& p : planes)
-    {
-        float len = glm::length(glm::vec3(p));
-        if (len > 0.0f) p /= len;
-    }
-    return planes;
-}
-
-bool SphereInFrustum(const std::array<glm::vec4, 4>& planes, const glm::vec3& center, float radius)
-{
-    for (const glm::vec4& p : planes)
-    {
-        if (glm::dot(glm::vec3(p), center) + p.w < -radius) return false;
-    }
-    return true;
-}
-
 // Both pipelines and their layouts
 void DestroyPipelines()
 {
@@ -1854,8 +1657,11 @@ void EntityRenderer::Init(const Engine::ShaderLibrary& shaders)
     UploadJsonMesh("resources/volcano/models/entity/chest.json", g_chestMeshes[0]);
     UploadJsonMesh("resources/volcano/models/entity/chest_left.json", g_chestMeshes[1]);
     UploadJsonMesh("resources/volcano/models/entity/chest_right.json", g_chestMeshes[2]);
-    LoadSkins();
-    LoadMobManifest();
+    // Skins and mob models live in the base pack, which on a first run isn't
+    // downloaded until after engine init - VolcanoClient.cpp calls
+    // LoadContent() once it lands. Everything above needs no pack files, so
+    // Init still gives HandModel its descriptor layout either way.
+    if (Volcano::BaseAssets::Installed()) LoadContent();
     CreateHumanoidPipeline(shaders);
 
     Log::Info("Entity renderer initialized.");
@@ -1890,6 +1696,11 @@ void EntityRenderer::ReloadTextures()
     if (g_playerSkinPool != VK_NULL_HANDLE) vkResetDescriptorPool(GetDevice(), g_playerSkinPool, 0);
 
     // Meshes stay cached (they come from client JSON, not the pack).
+    LoadContent();
+}
+
+void EntityRenderer::LoadContent()
+{
     LoadSkins();
     LoadMobManifest();
 }
@@ -2122,365 +1933,47 @@ void EntityRenderer::Shutdown()
     g_meshCache.clear();
 }
 
-void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state,
+void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Application* state,
     const glm::mat4& view, const glm::mat4& proj, const glm::vec3& cameraPosition, bool indirect)
 {
     UploadFinishedSkins(state);
 
-    std::array<glm::vec4, 4> frustumPlanes = ExtractFrustumPlanes(proj * view);
+    // Culling, posing and armor layout are shared with the Direct3D 11 backend
+    // (see EntityScene.hpp); what is left here is putting the result on the GPU.
+    static VulkanEntityAssets assets;
+    static EntityScene::Frame scene; // Reused so its lists keep their capacity.
+    EntityScene::Collect(state, view, proj, cameraPosition, assets, scene);
 
-    // Frustum-cull first, then keep only the closest MAX_VISIBLE_ENTITIES -
-    // the "simple entity limit" culling method from the entity renderer
-    // plan, applied after frustum culling so it prioritizes what's actually
-    // in view instead of arbitrarily dropping visible entities in favor of
-    // off-screen ones.
-    auto now = std::chrono::steady_clock::now();
+    // One flat buffer, partitioned cube/quadruped/golem/pig/cow back to
+    // back. Each shape's indirect command below points at its own slice
+    // via firstInstance, which Vulkan folds into gl_InstanceIndex for us
+    // - entity.vert doesn't need to know shapes were split up at all.
+    const std::vector<GPUEntityInstance>& cubeInstances = scene.flat[FLAT_CUBE];
+    const std::vector<GPUEntityInstance>& quadrupedInstances = scene.flat[FLAT_QUADRUPED];
+    const std::vector<GPUEntityInstance>& golemInstances = scene.flat[FLAT_GOLEM];
+    const std::vector<GPUEntityInstance>& pigInstances = scene.flat[FLAT_PIG];
+    const std::vector<GPUEntityInstance>& cowInstances = scene.flat[FLAT_COW];
 
-    // Read per frame so a settings reload applies immediately. All four
-    // channels are 0-255; alpha is how strongly the color replaces the model.
-    // TODO: Graphics.EntityHurt.IncludeArmor
-    auto hurtChannel = [state](const char* channel, uint32_t fallback) {
-        std::string key = std::string("Graphics.EntityHurt.Color.") + channel;
-        return static_cast<float>(std::get<uint32_t>(state->config->Get(key, uint32_t{fallback}))) / 255.0f;
-    };
-    glm::vec4 hurtColor(hurtChannel("Red", 255), hurtChannel("Green", 0), hurtChannel("Blue", 0), hurtChannel("Alpha", 64));
-    auto HurtColorFor = [&](const Entity& entity) {
-        return entity.IsHurt(now) ? hurtColor : glm::vec4(hurtColor.r, hurtColor.g, hurtColor.b, 0.0f);
-    };
+    const uint32_t cubeInstanceCount = static_cast<uint32_t>(cubeInstances.size());
+    const uint32_t quadrupedInstanceCount = static_cast<uint32_t>(quadrupedInstances.size());
+    const uint32_t golemInstanceCount = static_cast<uint32_t>(golemInstances.size());
+    const uint32_t pigInstanceCount = static_cast<uint32_t>(pigInstances.size());
+    const uint32_t cowInstanceCount = static_cast<uint32_t>(cowInstances.size());
+    const uint32_t quadrupedFirstInstance = cubeInstanceCount;
+    const uint32_t golemFirstInstance = quadrupedFirstInstance + quadrupedInstanceCount;
+    const uint32_t pigFirstInstance = golemFirstInstance + golemInstanceCount;
+    const uint32_t cowFirstInstance = pigFirstInstance + pigInstanceCount;
+    const uint32_t totalInstances = cowFirstInstance + cowInstanceCount;
 
-    // Off draws every in-frustum entity, for telling client culling from server hiding.
-    bool occlusionCulling = std::get<bool>(state->config->Get("Graphics.EntityOcclusionCulling", false));
-
-    std::vector<std::pair<float, const Entity*>> visible;
-    // Humanoid-shaped entities (player/zombie/mannequin/skeleton) are pulled
-    // out of the instanced path entirely and drawn separately below via
-    // EntityJsonModel
-    std::vector<HumanoidDraw> humanoidVisible;
-    std::vector<BlockDraw> blockVisible;
-
-    // Wall-clock "age" in ticks for the idle arm sway.
-    static const auto animationStart = std::chrono::steady_clock::now();
-    float ageTicks = std::fmod(std::chrono::duration<float>(now - animationStart).count(), 3000.0f) * 20.0f;
-    g_walkFrame++;
-    if (g_walkFrame % 600 == 0)
+    if (totalInstances > 0)
     {
-        std::erase_if(g_walkStates, [](const auto& entry) { return g_walkFrame - entry.second.lastSeenFrame > 300; });
-    }
-    uint32_t cubeInstanceCount = 0;
-    uint32_t quadrupedInstanceCount = 0;
-    uint32_t golemInstanceCount = 0;
-    uint32_t pigInstanceCount = 0;
-    uint32_t cowInstanceCount = 0;
-    uint32_t quadrupedFirstInstance = 0;
-    uint32_t golemFirstInstance = 0;
-    uint32_t pigFirstInstance = 0;
-    uint32_t cowFirstInstance = 0;
-    {
-        std::lock_guard<std::mutex> lock(state->entitiesMutex);
-        visible.reserve(state->entities.size() + state->playerEntities.size());
-
-        // Other players (playerEntities) render exactly like every other
-        // humanoid
-        state->ForEachEntity([&](uint32_t id, const Entity& entity)
-        {
-            if (!entity.visible) return;
-            const PlayerEntity* player = state->FindPlayerEntity(id);
-            if (player && player->invisible) return;
-
-            // Dropped items with a 3D model are drawn by ItemPass instead.
-            if (state->itemRenderer != nullptr && entity.itemId != 0)
-            {
-                const ItemRegistry::ItemTypeInfo* item = ItemRegistry::Lookup(entity.itemId);
-                if (item != nullptr && state->itemRenderer->HasModel(item->name)) return;
-            }
-
-            float halfWidth = entity.boundingBox.x * 0.5f;
-            float halfHeight = entity.boundingBox.y * 0.5f;
-            // Riders get no position packets, so cull and draw them at their seat.
-            glm::vec3 renderPosition = RenderPositionOf(state, entity, now);
-            glm::vec3 center = renderPosition + glm::vec3(0.0f, halfHeight, 0.0f);
-            float radius = glm::length(glm::vec3(halfWidth, halfHeight, halfWidth));
-
-            if (!SphereInFrustum(frustumPlanes, center, radius)) return;
-
-            // Hi-Z: skip non-players hidden behind terrain. Players stay
-            // drawn so they can be seen through walls.
-            if (player == nullptr && occlusionCulling
-                && occlusionSnapshot.IsEntityOccluded(renderPosition, entity.boundingBox.x, entity.boundingBox.y))
-            {
-                LogNearHiZCull(id, entity, renderPosition, cameraPosition, now);
-                return;
-            }
-
-            float distanceSq = glm::dot(center - cameraPosition, center - cameraPosition);
-            visible.emplace_back(distanceSq, &entity);
-        });
-
-        if (visible.size() > MAX_VISIBLE_ENTITIES)
-        {
-            std::partial_sort(visible.begin(), visible.begin() + MAX_VISIBLE_ENTITIES, visible.end(),
-                [](const auto& a, const auto& b) { return a.first < b.first; });
-            visible.resize(MAX_VISIBLE_ENTITIES);
-        }
-
-        // Build the GPU instance buffer while still holding the lock, since
-        // `visible` (and humanoidVisible, built alongside it here) holds raw
-        // pointers into state->entities/playerEntities. Split by
-        // EntityRegistry::ShapeKind rather than one flat list
-        std::vector<GPUEntityInstance> cubeInstances;
-        std::vector<GPUEntityInstance> quadrupedInstances;
-        std::vector<GPUEntityInstance> golemInstances;
-        std::vector<GPUEntityInstance> pigInstances;
-        std::vector<GPUEntityInstance> cowInstances;
-        cubeInstances.reserve(visible.size());
-        for (const auto& [distanceSq, entity] : visible)
-        {
-            const EntityRegistry::EntityTypeInfo* info = EntityRegistry::Lookup(entity->type);
-            EntityRegistry::ShapeKind shape = info ? info->shape : EntityRegistry::ShapeKind::Cube;
-
-            // Thrown items are drawn as their item by ItemPass.
-            if (info != nullptr && EntityRegistry::ThrownItemName(info->name) != nullptr) continue;
-
-            // Any type listed in mobs.json takes the textured path, whatever its shape.
-            if (info != nullptr)
-            {
-                auto mob = g_mobModels.find(info->name);
-                if (mob != g_mobModels.end())
-                {
-                    HumanoidDraw draw{
-                        RenderPositionOf(state, *entity, now), entity->InterpolatedYaw(now), HurtColorFor(*entity),
-                        &mob->second };
-                    if (const PlayerEntity* skinned = state->FindPlayerEntity(entity->id))
-                    {
-                        ResolvePlayerLook(state, FormatUuid(skinned->uuid), draw.model, draw.skin);
-                    }
-
-                    if (mob->second.armorOuter != nullptr)
-                    {
-                        const EquipmentSlot slots[4] = { EquipmentSlot::Head, EquipmentSlot::Chest, EquipmentSlot::Legs, EquipmentSlot::Feet };
-                        for (size_t i = 0; i < 4; i++)
-                        {
-                            const ItemStack& piece = entity->GetEquipment(slots[i]);
-                            draw.armor[i] = HeldItemName(piece);
-                            if (piece.glint) draw.armorGlint |= static_cast<uint8_t>(1u << i);
-                        }
-                    }
-
-                    draw.pitch = static_cast<float>(mob->second.pitchMode) * entity->InterpolatedPitch(now);
-                    if (entity->dead && entity->deathTime != std::chrono::steady_clock::time_point{})
-                    {
-                        draw.deathRoll = DeathRoll(std::chrono::duration<float>(now - entity->deathTime).count() * 20.0f);
-                    }
-
-                    EntityAnimation::WalkState& walk = g_walkStates[entity->id];
-                    const glm::vec3 previousDrawPosition = walk.lastPosition;
-                    const bool hadPosition = walk.valid;
-                    walk.Update(draw.position, now);
-                    walk.lastSeenFrame = g_walkFrame;
-                    draw.anim.walkPosition = walk.position;
-                    draw.anim.walkSpeed = walk.speed;
-                    draw.anim.ageTicks = ageTicks;
-
-                    float sinceSwing = std::chrono::duration<float>(now - entity->lastSwingTime).count();
-                    if (entity->lastSwingTime != std::chrono::steady_clock::time_point{}
-                        && sinceSwing < EntityAnimation::SWING_SECONDS)
-                    {
-                        draw.anim.attackTime = sinceSwing / EntityAnimation::SWING_SECONDS;
-                    }
-
-                    bool swimming = false;
-                    if (const PlayerEntity* holder = state->FindPlayerEntity(entity->id))
-                    {
-                        draw.mainhandItem = HeldItemName(holder->GetEquipment(EquipmentSlot::MainHand));
-                        draw.offhandItem = HeldItemName(holder->GetEquipment(EquipmentSlot::OffHand));
-                        draw.mainhandGlint = holder->GetEquipment(EquipmentSlot::MainHand).glint;
-                        draw.offhandGlint = holder->GetEquipment(EquipmentSlot::OffHand).glint;
-                        swimming = holder->IsSwimming();
-                        if (holder->IsCrouching()) draw.anim.posture = EntityAnimation::Posture::Crouching;
-                    }
-                    draw.anim.holdingMainhand = draw.mainhandItem != nullptr;
-                    draw.anim.holdingOffhand = draw.offhandItem != nullptr;
-
-                    RideInfo ride = RideInfoFor(state, *entity);
-                    draw.anim.riding = ride.riding;
-                    draw.anim.ridingBoat = ride.boat;
-                    draw.anim.swimAmount = walk.EaseSwim(swimming && !ride.riding, now);
-                    if (ride.riding) draw.anim.posture = EntityAnimation::Posture::Riding;
-                    else if (draw.anim.swimAmount > 0.0f) draw.anim.posture = EntityAnimation::Posture::Swimming;
-                    walk.posture = draw.anim.posture;
-                    walk.riding = draw.anim.riding;
-                    walk.ridingBoat = draw.anim.ridingBoat;
-
-                    // Head and body turn apart, as for the local player: the head shows the look direction and the
-                    // body trails it, following the way the entity walks.
-                    if (mob->second.pitchMode == 0 && !entity->dead)
-                    {
-                        float headYawDeg = glm::degrees(entity->InterpolatedHeadYaw(now));
-                        glm::vec3 step = draw.position - previousDrawPosition;
-                        if (hadPosition && step.x * step.x + step.z * step.z > 1e-6f)
-                        {
-                            walk.moveYaw = glm::degrees(std::atan2(step.x, step.z));
-                        }
-                        bool moving = walk.speed > 0.05f;
-                        bool swinging = draw.anim.attackTime > 0.0f;
-                        float deltaSeconds = std::min(std::chrono::duration<float>(now - walk.bodyTime).count(), 0.1f);
-                        walk.bodyTime = now;
-                        float bodyYawDeg = walk.body.Update(deltaSeconds, headYawDeg, moving, walk.moveYaw, swinging);
-                        if (ride.riding) bodyYawDeg = glm::degrees(draw.yaw); // Seated bodies face as the vehicle does.
-                        draw.yaw = glm::radians(bodyYawDeg);
-                        draw.anim.headYRot = -glm::radians(BodyRotation::Wrap(headYawDeg - bodyYawDeg));
-                        draw.anim.headXRot = entity->InterpolatedPitch(now);
-                        walk.headXRot = draw.anim.headXRot;
-                        walk.headYRot = draw.anim.headYRot;
-                        walk.bodyYaw = draw.yaw;
-                        walk.bodyDrawn = true;
-                    }
-                    humanoidVisible.push_back(draw);
-                    continue;
-                }
-            }
-            if (shape == EntityRegistry::ShapeKind::Humanoid) shape = EntityRegistry::ShapeKind::Cube;
-
-            if (shape == EntityRegistry::ShapeKind::Block && entity->blockStateId >= 0)
-            {
-                blockVisible.push_back(BlockDraw{
-                    entity->InterpolatedPosition(now), HurtColorFor(*entity), entity->blockStateId });
-                continue;
-            }
-
-            GPUEntityInstance gpu{};
-            gpu.positionYaw = glm::vec4(RenderPositionOf(state, *entity, now), entity->InterpolatedYaw(now));
-            gpu.halfExtents = glm::vec4(
-                entity->boundingBox.x * 0.5f, entity->boundingBox.y * 0.5f, entity->boundingBox.x * 0.5f, 0.0f);
-            gpu.color = glm::vec4(entity->color, 1.0f);
-            gpu.hurtColor = HurtColorFor(*entity);
-
-            switch (shape)
-            {
-                case EntityRegistry::ShapeKind::Quadruped: quadrupedInstances.push_back(gpu); break;
-                case EntityRegistry::ShapeKind::Golem: golemInstances.push_back(gpu); break;
-                case EntityRegistry::ShapeKind::Pig: pigInstances.push_back(gpu); break;
-                case EntityRegistry::ShapeKind::Cow: cowInstances.push_back(gpu); break;
-                default: cubeInstances.push_back(gpu); break;
-            }
-        }
-
-        // One flat buffer, partitioned cube/quadruped/golem/pig/cow back to
-        // back. Each shape's indirect command below points at its own slice
-        // via firstInstance, which Vulkan folds into gl_InstanceIndex for us
-        // - entity.vert doesn't need to know shapes were split up at all.
-        quadrupedFirstInstance = static_cast<uint32_t>(cubeInstances.size());
-        golemFirstInstance = quadrupedFirstInstance + static_cast<uint32_t>(quadrupedInstances.size());
-        pigFirstInstance = golemFirstInstance + static_cast<uint32_t>(golemInstances.size());
-        cowFirstInstance = pigFirstInstance + static_cast<uint32_t>(pigInstances.size());
-        uint32_t totalInstances = cowFirstInstance + static_cast<uint32_t>(cowInstances.size());
-
-        if (totalInstances > 0)
-        {
-            auto* dest = static_cast<GPUEntityInstance*>(g_instanceBuffersMapped[frameIndex]);
-            memcpy(dest, cubeInstances.data(), cubeInstances.size() * sizeof(GPUEntityInstance));
-            memcpy(dest + quadrupedFirstInstance, quadrupedInstances.data(),
-                quadrupedInstances.size() * sizeof(GPUEntityInstance));
-            memcpy(dest + golemFirstInstance, golemInstances.data(), golemInstances.size() * sizeof(GPUEntityInstance));
-            memcpy(dest + pigFirstInstance, pigInstances.data(), pigInstances.size() * sizeof(GPUEntityInstance));
-            memcpy(dest + cowFirstInstance, cowInstances.data(), cowInstances.size() * sizeof(GPUEntityInstance));
-        }
-
-        cubeInstanceCount = static_cast<uint32_t>(cubeInstances.size());
-        quadrupedInstanceCount = static_cast<uint32_t>(quadrupedInstances.size());
-        golemInstanceCount = static_cast<uint32_t>(golemInstances.size());
-        pigInstanceCount = static_cast<uint32_t>(pigInstances.size());
-        cowInstanceCount = static_cast<uint32_t>(cowInstances.size());
-    }
-
-    // The local player has no entity of their own; draw them as a plain
-    // "player" humanoid when the camera isn't in their head. The pose is
-    // advanced in first person too (body turn, walk cycle, swing), so the
-    // shadow they cast
-    g_localShadowValid = false;
-    if (state->worldReady.load() && state->localGameMode.load() != 3)
-    {
-        auto mob = g_mobModels.find("player");
-        if (mob != g_mobModels.end())
-        {
-            float headYaw = state->player->camera.GetYaw();
-            float deltaSeconds = std::min(std::chrono::duration<float>(now - g_localBodyTime).count(), 0.1f);
-            g_localBodyTime = now;
-
-            TickLoop::MovementSnapshot movement = state->tickLoop->GetMovementSnapshot();
-            glm::vec2 intended = movement.intendedDirection;
-            bool moving = glm::dot(intended, intended) > 1e-4f;
-            float moveYaw = glm::degrees(std::atan2(intended.x, intended.y));
-
-            float attackTime = state->GetLocalSwingProgress();
-            bool swinging = attackTime > 0.0f || state->miningTicksRequired.load(std::memory_order_relaxed) > 0;
-
-            float bodyYaw = g_localBody.Update(deltaSeconds, headYaw, moving, moveYaw, swinging);
-
-            HumanoidDraw draw{
-                state->tickLoop->GetRenderPosition(), glm::radians(bodyYaw),
-                glm::vec4(hurtColor.r, hurtColor.g, hurtColor.b, 0.0f), &mob->second };
-            ResolvePlayerLook(state, LOCAL_SKIN_KEY, draw.model, draw.skin);
-
-            EntityAnimation::WalkState& walk = g_walkStates[LOCAL_WALK_KEY];
-            walk.Update(draw.position, now);
-            walk.lastSeenFrame = g_walkFrame;
-            draw.anim.walkPosition = walk.position;
-            draw.anim.walkSpeed = walk.speed;
-            draw.anim.attackTime = attackTime;
-            draw.anim.ageTicks = ageTicks;
-            draw.anim.headXRot = -glm::radians(state->player->camera.GetPitch());
-            draw.anim.headYRot = -glm::radians(BodyRotation::Wrap(headYaw - bodyYaw));
-
-            {
-                std::lock_guard<std::mutex> lock(state->inventory.mutex);
-                draw.mainhandItem = HeldItemName(state->inventory.hotbar.Get(state->inventory.selectedHotbarSlot));
-                draw.offhandItem = HeldItemName(state->inventory.offhand.Get(0));
-                draw.mainhandGlint = state->inventory.hotbar.Get(state->inventory.selectedHotbarSlot).glint;
-                draw.offhandGlint = state->inventory.offhand.Get(0).glint;
-                if (mob->second.armorOuter != nullptr)
-                {
-                    for (size_t i = 0; i < 4; i++)
-                    {
-                        draw.armor[i] = HeldItemName(state->inventory.armor.Get(i));
-                        if (state->inventory.armor.Get(i).glint) draw.armorGlint |= static_cast<uint8_t>(1u << i);
-                    }
-                }
-            }
-            draw.anim.holdingMainhand = draw.mainhandItem != nullptr;
-            draw.anim.holdingOffhand = draw.offhandItem != nullptr;
-
-            // Posture comes from the local movement mode, not from the server.
-            RideInfo ride = LocalRideInfo(state);
-            draw.anim.riding = movement.mode == MoveMode::Ride || ride.riding;
-            draw.anim.ridingBoat = draw.anim.riding && ride.boat;
-            if (draw.anim.riding) draw.anim.posture = EntityAnimation::Posture::Riding;
-            else if (movement.mode == MoveMode::SwimSprint)
-            {
-                draw.anim.posture = EntityAnimation::Posture::Swimming;
-                draw.anim.swimAmount = movement.swimAmount;
-            }
-            else if (movement.mode == MoveMode::Swim) draw.anim.posture = EntityAnimation::Posture::Treading;
-            else if (state->tickLoop->IsSneaking()) draw.anim.posture = EntityAnimation::Posture::Crouching;
-            if (int64_t deathNs = state->localDeathNs.load(); deathNs != 0)
-            {
-                int64_t nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-                draw.deathRoll = DeathRoll(static_cast<float>(nowNs - deathNs) * 1e-9f * 20.0f);
-            }
-            walk.posture = draw.anim.posture;
-            walk.swimAmount = draw.anim.swimAmount;
-            walk.headXRot = draw.anim.headXRot;
-            walk.riding = draw.anim.riding;
-            walk.ridingBoat = draw.anim.ridingBoat;
-            g_localShadow = draw;
-            g_localShadowValid = true;
-            bool firstPerson = state->player->camera.IsFirstPerson();
-            if (!firstPerson || std::get<bool>(state->config->Get("Graphics.BodyView", false)))
-            {
-                draw.hideHead = firstPerson;
-                humanoidVisible.push_back(draw);
-            }
-        }
+        auto* dest = static_cast<GPUEntityInstance*>(g_instanceBuffersMapped[frameIndex]);
+        memcpy(dest, cubeInstances.data(), cubeInstances.size() * sizeof(GPUEntityInstance));
+        memcpy(dest + quadrupedFirstInstance, quadrupedInstances.data(),
+            quadrupedInstances.size() * sizeof(GPUEntityInstance));
+        memcpy(dest + golemFirstInstance, golemInstances.data(), golemInstances.size() * sizeof(GPUEntityInstance));
+        memcpy(dest + pigFirstInstance, pigInstances.data(), pigInstances.size() * sizeof(GPUEntityInstance));
+        memcpy(dest + cowFirstInstance, cowInstances.data(), cowInstances.size() * sizeof(GPUEntityInstance));
     }
 
     VkDrawIndexedIndirectCommand commands[SHAPE_COUNT]{};
@@ -2512,7 +2005,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_cubeIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_CUBE * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_cubeIndexCount / 3) * cubeInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_cubeIndexCount / 3) * cubeInstanceCount;
         }
         if (quadrupedInstanceCount > 0)
         {
@@ -2520,7 +2013,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_quadrupedIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_QUADRUPED * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_quadrupedIndexCount / 3) * quadrupedInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_quadrupedIndexCount / 3) * quadrupedInstanceCount;
         }
         if (golemInstanceCount > 0)
         {
@@ -2528,7 +2021,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_golemIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_GOLEM * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_golemIndexCount / 3) * golemInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_golemIndexCount / 3) * golemInstanceCount;
         }
         if (pigInstanceCount > 0)
         {
@@ -2536,7 +2029,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_pigIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_PIG * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_pigIndexCount / 3) * pigInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_pigIndexCount / 3) * pigInstanceCount;
         }
         if (cowInstanceCount > 0)
         {
@@ -2544,7 +2037,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             vkCmdBindIndexBuffer(cmd, g_cowIndexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexedIndirect(cmd, g_indirectBuffers[frameIndex].buffer,
                 SHAPE_COW * sizeof(VkDrawIndexedIndirectCommand), 1, sizeof(VkDrawIndexedIndirectCommand));
-            if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += (g_cowIndexCount / 3) * cowInstanceCount;
+            if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += (g_cowIndexCount / 3) * cowInstanceCount;
         }
     }
 
@@ -2558,7 +2051,7 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
     {
         // Block entities: the shared cube mesh with each block state's own
         // face-strip texture.
-        for (const BlockDraw& draw : blockVisible)
+        for (const BlockDraw& draw : scene.blocks)
         {
             const SkinTexture* texture = BlockTextureFor(draw.stateId);
             if (texture == nullptr) continue;
@@ -2570,119 +2063,34 @@ void EntityRenderer::RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Global
             AddTextured(BATCH_MOBS, g_blockMesh, texture->descriptorSet, g_blockMesh.indexCount, 0, instance);
         }
 
-        for (const HumanoidDraw& draw : humanoidVisible)
-        {
-            // Mesh and skin differ per layer: species differ in both.
-            TexturedInstance instance{};
-            instance.positionYaw = glm::vec4(draw.position, draw.yaw);
-            instance.hurtColor = draw.hurtColor;
-            instance.bodyPose = glm::vec4(draw.pitch, 0.0f, 0.0f, 0.0f);
-            const float light = EntityLight(state, draw.position);
-            for (const MobLayer& layer : draw.model->layers)
+        // Every humanoid's parts and worn armor, posed by the shared layer;
+        // each part lands in this backend's batch with its skin's descriptor set.
+        EntityScene::ExpandTextured(state, scene, assets,
+            [&](EntityScene::Batch batch, const EntityScene::MeshBase& mesh, const EntityScene::SkinBase& skin,
+                uint32_t indexCount, uint32_t firstIndex, const TexturedInstance& instance)
             {
-                const EntityModelMesh& mesh = *layer.mesh;
-                const VkDescriptorSet layerSet = (draw.skin != nullptr ? draw.skin : layer.skin)->descriptorSet;
-
-                // One draw per part, each turned about its own pivot.
-                EntityAnimation::Pose pose = EntityAnimation::ComputePose(mesh.roles, mesh.parts, draw.anim);
-                for (size_t part = 0; part < mesh.parts.size() && part < EntityAnimation::MAX_PARTS; part++)
-                {
-                    if (draw.hideHead && static_cast<int>(part) == mesh.roles.head) continue;
-                    const EntityJsonModel::PartInfo& info = mesh.parts[part];
-                    instance.partPivot = glm::vec4(info.pivot, 0.0f);
-                    instance.partOffset = glm::vec4(ToWorldOffset(pose[part].offset, mesh.scale), light);
-                    instance.partRotation = glm::vec4(ToWorldRotation(pose[part].rotation), draw.deathRoll);
-                    AddTextured(BATCH_MOBS, mesh, layerSet, info.indexCount, info.firstIndex, instance);
-                }
-                if (mesh.parts.empty())
-                {
-                    instance.partPivot = glm::vec4(0.0f);
-                    instance.partRotation = glm::vec4(0.0f, 0.0f, 0.0f, draw.deathRoll);
-                    instance.partOffset = glm::vec4(0.0f, 0.0f, 0.0f, light);
-                    AddTextured(BATCH_MOBS, mesh, layerSet, mesh.indexCount, 0, instance);
-                }
-            }
-
-            // Worn armor: bigger copies of the body parts, held in the body's own pose.
-            if (draw.model->armorOuter != nullptr)
-            {
-                const EntityModelMesh& body = *draw.model->layers.front().mesh;
-                EntityAnimation::Pose bodyPose = EntityAnimation::ComputePose(body.roles, body.parts, draw.anim);
-                const SkinTexture* glintSheet = draw.armorGlint != 0 ? GlintSkin(true) : nullptr;
-                const VkDescriptorSet armorGlintSet = glintSheet != nullptr ? glintSheet->descriptorSet : VK_NULL_HANDLE;
-                for (int slot = 0; slot < 4; slot++)
-                {
-                    const std::string* worn = draw.armor[static_cast<size_t>(slot)];
-                    ArmorLook look;
-                    if (worn == nullptr || (draw.hideHead && slot == 0) || !ArmorLookOf(*worn, slot, look)) continue;
-                    const EntityModelMesh& armorMesh = slot == 2 ? *draw.model->armorInner : *draw.model->armorOuter;
-                    if (armorMesh.parts.size() < 6 || body.parts.size() < 6) continue;
-
-                    for (int pass = 0; pass < (look.overlayTexture.empty() ? 1 : 2); pass++)
-                    {
-                        const SkinTexture* skin = ArmorSkin(pass == 0 ? look.texture : look.overlayTexture);
-                        if (skin == nullptr) continue;
-                        for (int part : ARMOR_PARTS[static_cast<size_t>(slot)])
-                        {
-                            if (part < 0) continue;
-                            if (draw.hideHead && slot == 1 && part >= 2) continue; // Shoulders fill the view.
-                            size_t index = static_cast<size_t>(part);
-                            const EntityJsonModel::PartInfo& info = armorMesh.parts[index];
-                            instance.partPivot = glm::vec4(info.pivot, pass == 0 ? static_cast<float>(look.tint) : 0.0f);
-                            instance.partOffset = glm::vec4(ToWorldOffset(bodyPose[index].offset, body.scale), light);
-                            instance.partRotation = glm::vec4(ToWorldRotation(bodyPose[index].rotation), draw.deathRoll);
-                            AddTextured(BATCH_MOBS, armorMesh, skin->descriptorSet, info.indexCount, info.firstIndex, instance);
-                            if (pass == 0 && armorGlintSet != VK_NULL_HANDLE && ((draw.armorGlint >> slot) & 1) != 0)
-                            {
-                                AddTextured(BATCH_GLINT, armorMesh, skin->descriptorSet, info.indexCount, info.firstIndex, instance);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+                AddTextured(batch == EntityScene::Batch::Glint ? BATCH_GLINT : BATCH_MOBS, AsVulkan(mesh),
+                    AsVulkan(skin).descriptorSet, indexCount, firstIndex, instance);
+            });
 
         // The flush needs the shadow map's availability from the engine.
         Engine::Vulkan::VulkanRenderEngine* vulkan = state->renderEngine != nullptr ? state->renderEngine->GetVulkan() : nullptr;
         uint64_t triangles = FlushTextured(BATCH_MOBS, cmd, frameIndex, vulkan, indirect);
         FlushTextured(BATCH_GLINT, cmd, frameIndex, vulkan, indirect);
-        if (state->debugHudVisible) state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY] += triangles;
+        if (state->debugHudVisible) state->trianglesDrawn[Application::TRIANGLES_ENTITY] += triangles;
     }
 
     // Held items ride on the arm parts, so they follow the walk and swing.
     if (state->itemRenderer != nullptr)
     {
         glm::mat4 viewProj = proj * view;
-        for (const HumanoidDraw& draw : humanoidVisible)
+        static std::vector<EntityScene::HeldItemDraw> held;
+        EntityScene::CollectHeldItems(scene, held);
+        for (const EntityScene::HeldItemDraw& hand : held)
         {
-            if (draw.mainhandItem == nullptr && draw.offhandItem == nullptr) continue;
-
-            const EntityModelMesh& mesh = *draw.model->layers.front().mesh;
-            if (mesh.parts.empty()) continue;
-            EntityAnimation::Pose pose = EntityAnimation::ComputePose(mesh.roles, mesh.parts, draw.anim);
-
-            // Entity placement, then vanilla's Y-down model frame (a half turn about X) in blocks.
-            glm::mat4 placement = glm::translate(glm::mat4(1.0f), draw.position);
-            placement = glm::rotate(placement, draw.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
-            placement = glm::translate(placement, glm::vec3(0.0f, mesh.feetHeight, 0.0f));
-            placement = glm::scale(placement, glm::vec3(mesh.scale, -mesh.scale, -mesh.scale));
-
-            auto drawHand = [&](int armPart, bool left, const std::string* item)
-            {
-                if (item == nullptr || armPart < 0 || !state->itemRenderer->HasModel(*item)) return;
-                size_t index = static_cast<size_t>(armPart);
-
-                // ItemInHandLayer: stand the item up in the hand.
-                glm::mat4 m = placement * EntityAnimation::PartMatrix(mesh.parts[index], pose[index]);
-                m = glm::rotate(m, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-                m = glm::rotate(m, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-                m = glm::translate(m, glm::vec3(left ? -1.0f / 16.0f : 1.0f / 16.0f, 0.125f, -0.625f));
-                state->itemRenderer->RecordItem(cmd, *item,
-                    left ? "thirdperson_lefthand" : "thirdperson_righthand", m, viewProj,
-                    glm::mat4(1.0f), 0.0f, left ? draw.offhandGlint : draw.mainhandGlint);
-            };
-            drawHand(mesh.roles.rightArm, false, draw.mainhandItem);
-            drawHand(mesh.roles.leftArm, true, draw.offhandItem);
+            if (!state->itemRenderer->HasModel(*hand.item)) continue;
+            state->itemRenderer->RecordItem(cmd, *hand.item, hand.context, hand.placement, viewProj,
+                glm::mat4(1.0f), 0.0f, hand.glint);
         }
     }
 }
@@ -2825,7 +2233,7 @@ void EntityRenderer::DestroyShadowPipelines(ShadowPipelines& pipelines)
 }
 
 void EntityRenderer::RecordShadowCasters(VkCommandBuffer cmd, VkPipelineLayout layout, const ShadowPipelines& pipelines,
-    GlobalState* state, const glm::mat4& lightViewProj, const glm::vec3& cameraPosition, float distance,
+    Application* state, const glm::mat4& lightViewProj, const glm::vec3& cameraPosition, float distance,
     uint32_t frameIndex, uint32_t cascade, bool indirect)
 {
     if (pipelines.textured == VK_NULL_HANDLE || pipelines.box == VK_NULL_HANDLE) return;
@@ -2923,14 +2331,14 @@ void EntityRenderer::RecordShadowCasters(VkCommandBuffer cmd, VkPipelineLayout l
 
         auto walked = g_walkStates.find(id);
         float yaw = walked != g_walkStates.end() && walked->second.bodyDrawn ? walked->second.bodyYaw : entity.InterpolatedYaw(now);
-        drawMob(*mob->second.layers.front().mesh, position, yaw, animationFor(id, &entity));
+        drawMob(AsVulkan(*mob->second.layers.front().mesh), position, yaw, animationFor(id, &entity));
     });
 
     // The local player is no entity of the world's: they cast in any perspective,
     // with the same pose the third-person draw uses (RecordDraw keeps it current).
     if (g_localShadowValid && inLightBox(g_localShadow.position + glm::vec3(0.0f, 0.9f, 0.0f), 1.8f))
     {
-        drawMob(*g_localShadow.model->layers.front().mesh, g_localShadow.position, g_localShadow.yaw, g_localShadow.anim);
+        drawMob(AsVulkan(*g_localShadow.model->layers.front().mesh), g_localShadow.position, g_localShadow.yaw, g_localShadow.anim);
     }
 
     // Pass 2: a box the size of the hitbox for entities with no model.

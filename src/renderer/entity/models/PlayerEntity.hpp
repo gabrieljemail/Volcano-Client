@@ -26,10 +26,10 @@ enum class GameMode : uint8_t {
 // identity from Spawn Entity + Player Info Update, gear from Set Equipment,
 // and health/pose flags from Set Entity Data.
 //
-// Stored in GlobalState::playerEntities rather than GlobalState::entities
+// Stored in Application::playerEntities rather than Application::entities
 // (which holds plain Entity values - a PlayerEntity inserted there would
 // be sliced down to its Entity part and lose all of this). Both maps share
-// entitiesMutex; GlobalState::FindEntity/ForEachEntity walk the two
+// entitiesMutex; Application::FindEntity/ForEachEntity walk the two
 // together for code that only needs the common Entity fields.
 struct PlayerEntity : public Entity {
     // Matches NetworkClient.cpp's UUID representation (raw 16 bytes, not a

@@ -11,11 +11,15 @@
 #include <memory>
 #include <optional>
 #include <mutex>
+#include <stdexcept>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <cfloat>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
+#ifdef _WIN32
+#include <imgui_impl_dx11.h>
+#endif
 #include <GLFW/glfw3.h>
 #include <cstring>
 #include <unordered_set>
@@ -48,6 +52,9 @@
 #include "renderer/misc/NonCubicMesher.hpp"
 #include "renderer/misc/ItemModel.hpp"
 #include "renderer/misc/ItemRenderer.hpp"
+#include "renderer/engine/d3d11/D3D11ItemRenderer.hpp"
+#include "renderer/engine/d3d11/D3D11RenderEngine.hpp"
+#undef CreateWindow // windows.h macro, via d3d11.h; GUIController has a CreateWindow of its own.
 
 namespace Volcano {
 
@@ -69,14 +76,14 @@ static void AddImageNearest(ImDrawList* drawList, ImTextureID texture, const ImV
 // whose CreateWindowA/CreateWindow macros collide with
 // GUIController::CreateWindow below. This one free function is all
 // GUIController actually needs from it.
-void SendChatMessage(GlobalState* state, const std::string& message);
-void SendChatCommand(GlobalState* state, const std::string& command);
-void SendRespawnRequest(GlobalState* state);
-void SendInventoryClick(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendChatMessage(Application* state, const std::string& message);
+void SendChatCommand(Application* state, const std::string& command);
+void SendRespawnRequest(Application* state);
+void SendInventoryClick(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                         uint8_t button, const ItemStack& slotItem, const ItemStack& carriedItem);
-void SendInventoryAction(GlobalState* state, int32_t windowId, int32_t stateId, int32_t slot,
+void SendInventoryAction(Application* state, int32_t windowId, int32_t stateId, int32_t slot,
                          uint8_t button, int32_t mode, const ItemStack& carriedItem);
-void SendInventoryClose(GlobalState* state, int32_t windowId);
+void SendInventoryClose(Application* state, int32_t windowId);
 }
 
 namespace Volcano {
@@ -130,7 +137,7 @@ namespace {
     }
 }
 
-GlobalState* GUIController::state = nullptr;
+Application* GUIController::state = nullptr;
 GLFWwindow* GUIController::windowHandle = nullptr;
 const TextureManager* GUIController::textureManager = nullptr;
 std::vector<GUI::GUIWindow*> GUIController::windows = {};
@@ -141,6 +148,7 @@ bool GUIController::hudDrawn = false;
 const GUI::Screen* GUIController::pincelScreen = nullptr;
 ImGuiVulkanContext GUIController::imguiContext;
 bool GUIController::initialized = false;
+bool GUIController::d3d11Backend = false;
 float GUIController::fps = 0.0f;
 float GUIController::frameTime = 0.0f;
 int GUIController::frameCount = 0;
@@ -156,6 +164,17 @@ char GUIController::chatInputBuffer[256] = {};
 std::unordered_map<uint16_t, GUIController::ItemIcon> GUIController::itemIconCache;
 std::unordered_map<uint16_t, GUIController::ModelIcon> GUIController::modelIconCache;
 std::unordered_map<uint16_t, GUI::Sprite> GUIController::itemSprites;
+
+namespace {
+// Direct3D 11: ImGui's backend draws a shader resource view as the texture id.
+// The views are owned by D3D11ItemRenderer; this just remembers each item's.
+std::unordered_map<uint16_t, ImTextureID> d3dModelIcons;
+
+ImTextureID D3DTextureId(ID3D11ShaderResourceView* view)
+{
+    return static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(view));
+}
+} // namespace
 GUIController::StandaloneIcon GUIController::crosshairIcon;
 GUIController::StandaloneIcon GUIController::crosshairEntityIcon;
 GUIController::StandaloneIcon GUIController::attackIndicatorBackgroundIcon;
@@ -182,19 +201,72 @@ GUIController::StandaloneIcon GUIController::armorFullIcon;
 GUIController::StandaloneIcon GUIController::armorHalfIcon;
 GUIController::StandaloneIcon GUIController::saturationOutlineIcon;
 
-void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState,
+void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, Application* application,
                           const TextureManager* textureMgr)
 {
-    state = globalState;
+    InitContext(window, application, textureMgr);
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+    ImGuiVulkan::Init(imguiContext, renderPass, imageCount);
+
+    controlRenderer = std::make_unique<GUI::ControlRenderer>(state);
+    if (state->renderEngine == nullptr || !controlRenderer->Init(*state->renderEngine))
+    {
+        Log::Error("GUIController: Pincel could not start, drawing screens with ImGui");
+        controlRenderer.reset();
+    }
+    hudRenderer = std::make_unique<GUI::HudRenderer>(state);
+    if (state->renderEngine == nullptr || !hudRenderer->Init(*state->renderEngine))
+    {
+        Log::Error("GUIController: Pincel could not start the HUD");
+        hudRenderer.reset();
+    }
+
+    FinishInit(true);
+}
+
+#ifdef _WIN32
+void GUIController::InitD3D11(GLFWwindow* window, ID3D11Device* device, ID3D11DeviceContext* context,
+    Application* application, const TextureManager* textureMgr)
+{
+    InitContext(window, application, textureMgr);
+    d3d11Backend = true;
+    if (!ImGui_ImplGlfw_InitForOther(window, true) || !ImGui_ImplDX11_Init(device, context))
+    {
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        state = nullptr;
+        windowHandle = nullptr;
+        textureManager = nullptr;
+        d3d11Backend = false;
+        throw std::runtime_error("[ERROR] Failed to initialize the Direct3D 11 ImGui backend.");
+    }
+
+    controlRenderer = std::make_unique<GUI::ControlRenderer>(state);
+    if (state->renderEngine == nullptr || !controlRenderer->Init(*state->renderEngine))
+    {
+        Log::Error("GUIController: Pincel could not start, drawing screens with ImGui");
+        controlRenderer.reset();
+    }
+    hudRenderer = std::make_unique<GUI::HudRenderer>(state);
+    if (state->renderEngine == nullptr || !hudRenderer->Init(*state->renderEngine))
+    {
+        Log::Error("GUIController: Pincel could not start the HUD");
+        hudRenderer.reset();
+    }
+    FinishInit(true); // Loads the crosshair icons; the rest of the HUD is Pincel.
+}
+#endif
+
+void GUIController::InitContext(GLFWwindow* window, Application* application, const TextureManager* textureMgr)
+{
+    state = application;
     windowHandle = window;
     textureManager = textureMgr;
 
-    // Initialize ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
     ImFontConfig fontConfig;
     fontConfig.OversampleH = 1; // This is a pixel font, so oversampling looks weird.
     fontConfig.OversampleV = 1;
@@ -220,27 +292,10 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     //   iconConfig.GlyphMinAdvanceX = 16.0f;
     //   static const ImWchar iconRanges[] = { ICON_MIN_FA, ICON_MAX_FA, 0 };
     //   io.Fonts->AddFontFromFileTTF("resources/fonts/FontAwesome.ttf", 16.0f, &iconConfig, iconRanges);
+}
 
-    // Initialize ImGui for GLFW
-    ImGui_ImplGlfw_InitForVulkan(window, true);
-
-    // Initialize ImGui for Vulkan
-    ImGuiVulkan::Init(imguiContext, renderPass, imageCount);
-
-    // Screens made of plain components are drawn by Pincel; if it can't start, ImGui draws them as before.
-    controlRenderer = std::make_unique<GUI::ControlRenderer>(state);
-    if (!controlRenderer->Init(renderPass))
-    {
-        Log::Error("GUIController: Pincel could not start, drawing screens with ImGui");
-        controlRenderer.reset();
-    }
-    hudRenderer = std::make_unique<GUI::HudRenderer>(state);
-    if (!hudRenderer->Init(renderPass))
-    {
-        Log::Error("GUIController: Pincel could not start the HUD");
-        hudRenderer.reset();
-    }
-
+void GUIController::FinishInit(bool loadVulkanIcons)
+{
     // Setup style
     ImGui::StyleColorsDark();
     ApplyVolcanoTheme();
@@ -263,7 +318,7 @@ void GUIController::Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t i
     inventoryScreen = GUI::CreateInventoryScreen(state);
     creativeScreen = GUI::CreateCreativeScreen(state);
 
-    LoadStandaloneIcons();
+    if (loadVulkanIcons) LoadStandaloneIcons();
 
     Log::Info("GUI Controller initialized with ImGui");
     initialized = true;
@@ -279,6 +334,8 @@ void GUIController::LoadStandaloneIcons()
     const std::string guiTextures = "assets/minecraft/textures/gui/"; // Logical pack path.
     attackIndicatorBackgroundIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/crosshair_attack_indicator_background.png");
     attackIndicatorProgressIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/crosshair_attack_indicator_progress.png");
+    // Direct3D 11 draws everything else here (hotbar, hearts, screens) with Pincel.
+    if (d3d11Backend) return;
     hotbarIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/hotbar.png");
     hotbarSelectionIcon = LoadStandaloneIcon(guiTextures + "sprites/hud/hotbar_selection.png");
     slotHighlightBackIcon = LoadStandaloneIcon(guiTextures + "sprites/container/slot_highlight_back.png");
@@ -323,6 +380,7 @@ void GUIController::FreeIcons(bool removeDescriptors)
         if (entry.icon.image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, entry.icon.image, entry.icon.allocation);
     }
     modelIconCache.clear();
+    d3dModelIcons.clear();
     itemSprites.clear();
     linearIconTextures.clear();
 
@@ -333,6 +391,7 @@ void GUIController::FreeIcons(bool removeDescriptors)
             &slotHighlightBackIcon, &slotHighlightFrontIcon, &inventoryBackground, &craftingBackground,
             &furnaceBackground, &genericBackground, &logoIcon, &heartContainerIcon, &heartFullIcon,
             &heartHalfIcon, &foodEmptyIcon, &foodFullIcon, &foodHalfIcon, &experienceBackgroundIcon, &experienceProgressIcon, &armorEmptyIcon, &armorFullIcon, &armorHalfIcon, &saturationOutlineIcon }) {
+        if (icon->d3dView != nullptr) static_cast<ID3D11ShaderResourceView*>(icon->d3dView)->Release();
         removeSet(icon->descriptorSet);
         if (icon->view != VK_NULL_HANDLE) vkDestroyImageView(GetDevice(), icon->view, nullptr);
         if (icon->image != VK_NULL_HANDLE) vmaDestroyImage(vmaAllocator, icon->image, icon->allocation);
@@ -366,7 +425,17 @@ void GUIController::Shutdown()
         controlRenderer->Shutdown();
         controlRenderer.reset();
     }
-    ImGuiVulkan::Shutdown(imguiContext);
+    if (d3d11Backend)
+    {
+#ifdef _WIN32
+        ImGui_ImplDX11_Shutdown();
+        d3d11Backend = false;
+#endif
+    }
+    else
+    {
+        ImGuiVulkan::Shutdown(imguiContext);
+    }
     FreeIcons(false);
 
     ImGui_ImplGlfw_Shutdown();
@@ -378,6 +447,7 @@ void GUIController::Shutdown()
 
 ImTextureID GUIController::TextureOf(const StandaloneIcon& icon)
 {
+    if (icon.d3dView != nullptr) return static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(icon.d3dView));
     if (icon.descriptorSet == VK_NULL_HANDLE) return 0;
     return static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(icon.descriptorSet));
 }
@@ -386,6 +456,12 @@ ImTextureID GUIController::TextureOf(const StandaloneIcon& icon)
 // Vulkan failure
 ImTextureID GUIController::GetItemIcon(uint16_t textureLayer)
 {
+    if (d3d11Backend)
+    {
+        return state != nullptr && state->d3dItemRenderer != nullptr
+            ? D3DTextureId(state->d3dItemRenderer->FlatIconView(textureLayer)) : 0;
+    }
+
     auto cached = itemIconCache.find(textureLayer);
     if (cached != itemIconCache.end()) {
         return static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(cached->second.descriptorSet));
@@ -442,7 +518,33 @@ const GUI::Sprite* GUIController::GetItemSprite(const ItemStack& item)
     {
         GUI::Sprite sprite;
         const ItemRegistry::ItemTypeInfo* info = ItemRegistry::Lookup(item.itemId);
-        if (info != nullptr)
+        if (d3d11Backend)
+        {
+            // The same choice as below, from CPU pixels: the 3D model's icon rendered
+            // and read back, else the flat sprite straight from the texture array.
+            if (info != nullptr && state != nullptr && state->d3dItemRenderer != nullptr && textureManager != nullptr)
+            {
+                const ItemModel* model = ItemModel::ForItem(info->name, *textureManager);
+                std::vector<uint8_t> pixels;
+                if (model != nullptr && (item.glint || model->GetType() != ItemModelType::ITEM)
+                    && state->d3dItemRenderer->GuiIconPixels(info->name, item.glint, pixels))
+                {
+                    sprite.width = sprite.height = static_cast<int>(Engine::D3D11::D3D11ItemRenderer::GUI_ICON_SIZE);
+                    sprite.rgba = std::move(pixels);
+                }
+                else if (info->hasTexture)
+                {
+                    const uint8_t* layer = textureManager->GetLayerPixels(info->textureLayer);
+                    const uint32_t size = textureManager->LayerSize();
+                    if (layer != nullptr && size != 0)
+                    {
+                        sprite.width = sprite.height = static_cast<int>(size);
+                        sprite.rgba.assign(layer, layer + static_cast<size_t>(size) * size * 4);
+                    }
+                }
+            }
+        }
+        else if (info != nullptr)
         {
             // The same choice IconForItem makes: the 3D model's icon if it has one, else the flat sprite.
             ModelIconForItem(item.itemId, info->name, item.glint);
@@ -464,6 +566,22 @@ const GUI::Sprite* GUIController::GetItemSprite(const ItemStack& item)
 
 ImTextureID GUIController::ModelIconForItem(uint16_t itemId, const std::string& itemName, bool glint)
 {
+    if (d3d11Backend)
+    {
+        if (state == nullptr || state->d3dItemRenderer == nullptr || textureManager == nullptr) return 0;
+        const uint16_t key = static_cast<uint16_t>(itemId | (glint ? 0x8000 : 0));
+        if (auto found = d3dModelIcons.find(key); found != d3dModelIcons.end()) return found->second;
+
+        ImTextureID icon = 0;
+        const ItemModel* model = ItemModel::ForItem(itemName, *textureManager);
+        if (model != nullptr && (glint || model->GetType() != ItemModelType::ITEM))
+        {
+            icon = D3DTextureId(state->d3dItemRenderer->GuiIconView(itemName, glint));
+        }
+        d3dModelIcons[key] = icon;
+        return icon;
+    }
+
     ModelIcon& entry = modelIconCache[static_cast<uint16_t>(itemId | (glint ? 0x8000 : 0))];
     if (!entry.resolved)
     {
@@ -511,6 +629,38 @@ GUIController::StandaloneIcon GUIController::LoadStandaloneIcon(const std::strin
             uint32_t value = outline ? outlineColor : 0u;
             std::memcpy(pixel, &value, 4);
         }
+    }
+
+    if (d3d11Backend)
+    {
+        // Direct3D 11: an immutable RGBA texture; ImGui's backend draws the view as the texture id.
+        Engine::D3D11::D3D11RenderEngine* d3d = state != nullptr && state->renderEngine != nullptr
+            ? state->renderEngine->GetD3D11() : nullptr;
+        ID3D11Device* device = d3d != nullptr ? d3d->GetD3D11Device() : nullptr;
+        if (device != nullptr)
+        {
+            D3D11_TEXTURE2D_DESC desc{};
+            desc.Width = static_cast<UINT>(width);
+            desc.Height = static_cast<UINT>(height);
+            desc.MipLevels = 1;
+            desc.ArraySize = 1;
+            desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            desc.SampleDesc.Count = 1;
+            desc.Usage = D3D11_USAGE_IMMUTABLE;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA data{ pixels, static_cast<UINT>(width) * 4, 0 };
+            ID3D11Texture2D* texture = nullptr;
+            ID3D11ShaderResourceView* view = nullptr;
+            if (SUCCEEDED(device->CreateTexture2D(&desc, &data, &texture)))
+            {
+                device->CreateShaderResourceView(texture, nullptr, &view);
+                texture->Release(); // The view keeps it alive.
+            }
+            icon.d3dView = view;
+        }
+        stbi_image_free(pixels);
+        if (icon.d3dView == nullptr) Log::Error("GUIController: failed to create a Direct3D 11 texture for " + path);
+        return icon;
     }
 
     // Single 2D image, one layer, no mip chain
@@ -588,9 +738,8 @@ void GUIController::RenderCrosshair()
     constexpr float CROSSHAIR_SIZE = 32.0f;
 
     const StandaloneIcon& active = state->lookingAtEntity.load() ? crosshairEntityIcon : crosshairIcon;
-    if (active.descriptorSet == VK_NULL_HANDLE) return; // Missing/failed-to-load asset
-
-    ImTextureID texture = static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(active.descriptorSet));
+    ImTextureID texture = TextureOf(active);
+    if (texture == 0) return; // Missing/failed-to-load asset
     ImVec2 display = ImGui::GetIO().DisplaySize;
     ImVec2 center(display.x * 0.5f, display.y * 0.5f);
     ImVec2 half(CROSSHAIR_SIZE * 0.5f, CROSSHAIR_SIZE * 0.5f);
@@ -634,7 +783,13 @@ void GUIController::NewFrame()
     if (!initialized) return;
 
     ImGui_ImplGlfw_NewFrame();
-    ImGuiVulkan::NewFrame(imguiContext);
+#ifdef _WIN32
+    if (d3d11Backend) ImGui_ImplDX11_NewFrame();
+    else
+#endif
+    {
+        ImGuiVulkan::NewFrame(imguiContext);
+    }
     ApplyGUIScale();
     ImGui::NewFrame();
 
@@ -763,11 +918,17 @@ void GUIController::Update(float deltaTime)
         CloseScreen();
     }
 
+    // The drawable size comes from the engine - VulkanInit's swapchainExtent
+    // global is only set by the Vulkan backend and stays zero on Direct3D 11.
+    const Engine::RenderExtent guiExtent =
+        state != nullptr && state->renderEngine != nullptr ? state->renderEngine->GetExtent()
+                                                           : Engine::RenderExtent{};
+
     // A screen of plain components is drawn by Pincel into a texture now, before the frame is recorded.
     pincelScreen = nullptr;
     if (activeScreen != nullptr && IsDrawnByPincel(*activeScreen))
     {
-        controlRenderer->Update(*activeScreen, guiScale);
+        controlRenderer->Update(*activeScreen, guiScale, guiExtent);
         pincelScreen = activeScreen;
     }
 
@@ -780,7 +941,7 @@ void GUIController::Update(float deltaTime)
         chat.justOpened = chatInputJustOpened;
         chat.initialText = chatInputBuffer;
         chatInputJustOpened = false;
-        if (std::optional<std::string> submitted = hudRenderer->Update(guiScale, chat)) SubmitChatInput(*submitted);
+        if (std::optional<std::string> submitted = hudRenderer->Update(guiScale, chat, guiExtent)) SubmitChatInput(*submitted);
         hudDrawn = true;
     }
 
@@ -1016,9 +1177,9 @@ void GUIController::RegisterBuiltinDebugDisplays()
         }
         char phases[96];
         std::snprintf(phases, sizeof(phases), "\n\tChunk cull / sort / draw: %.2f / %.2f / %.2f ms",
-            static_cast<double>(state->chunkPhaseMs[GlobalState::CHUNK_PHASE_CULL]),
-            static_cast<double>(state->chunkPhaseMs[GlobalState::CHUNK_PHASE_SORT]),
-            static_cast<double>(state->chunkPhaseMs[GlobalState::CHUNK_PHASE_DRAW]));
+            static_cast<double>(state->chunkPhaseMs[Application::CHUNK_PHASE_CULL]),
+            static_cast<double>(state->chunkPhaseMs[Application::CHUNK_PHASE_SORT]),
+            static_cast<double>(state->chunkPhaseMs[Application::CHUNK_PHASE_DRAW]));
         return text + phases;
     });
     AddBuiltin<std::string>("Performance", "Waiting on GPU", [] { return FormatMs(state->timings.gpuWaitMs.load()); });
@@ -1034,7 +1195,7 @@ void GUIController::RegisterBuiltinDebugDisplays()
     });
     AddBuiltin<std::string>("Performance", "Present Mode", []
     {
-        // GlobalState::presentMode is the swapchain's actual active
+        // Application::presentMode is the swapchain's actual active
         // VkPresentModeKHR
         switch (static_cast<VkPresentModeKHR>(state->presentMode))
         {
@@ -1052,10 +1213,10 @@ void GUIController::RegisterBuiltinDebugDisplays()
         for (uint64_t count : state->trianglesDrawn) total += count;
         return std::array<std::string, 5>{
             std::to_string(total),
-            "Terrain: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_TERRAIN]),
-            "Cutout: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_CUTOUT]),
-            "Water: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_TRANSLUCENT]),
-            "Entities: " + std::to_string(state->trianglesDrawn[GlobalState::TRIANGLES_ENTITY])
+            "Terrain: " + std::to_string(state->trianglesDrawn[Application::TRIANGLES_TERRAIN]),
+            "Cutout: " + std::to_string(state->trianglesDrawn[Application::TRIANGLES_CUTOUT]),
+            "Water: " + std::to_string(state->trianglesDrawn[Application::TRIANGLES_TRANSLUCENT]),
+            "Entities: " + std::to_string(state->trianglesDrawn[Application::TRIANGLES_ENTITY])
         };
     });
     AddBuiltin<std::string>("Rendering", "Sections", []
@@ -1091,7 +1252,7 @@ void GUIController::RegisterBuiltinDebugDisplays()
     AddBuiltin<std::string>("System", "GPU", [] { return state->systemInfo.gpuModel; });
     AddBuiltin<std::string>("System", "Display", []
     {
-        // Live framebuffer size, not GlobalState::resolution (the
+        // Live framebuffer size, not Application::resolution (the
         // startup-config value). Safe here: this runs on the GLFW window's thread.
         int width = 0, height = 0;
         glfwGetFramebufferSize(state->window, &width, &height);
@@ -1467,6 +1628,63 @@ void GUIController::RenderNametags(const Engine::SceneView& scene)
 
 void GUIController::Render(VkCommandBuffer commandBuffer, const Engine::SceneView* scene)
 {
+    if (d3d11Backend) return;
+    BuildDrawData(scene);
+    ImGuiVulkan::RenderDrawData(imguiContext, commandBuffer);
+    Engine::FrameContext frame{};
+    frame.engine = state->renderEngine;
+    frame.state = state;
+    frame.scene = scene;
+    frame.extent = frame.engine->GetExtent();
+    frame.commandBuffer = commandBuffer;
+
+    if (activeScreen != nullptr && activeScreen == pincelScreen && controlRenderer != nullptr)
+    {
+        controlRenderer->Record(frame);
+    }
+    if (activeScreen == nullptr && hudDrawn && hudRenderer != nullptr)
+    {
+        hudRenderer->Record(frame);
+    }
+}
+
+#ifdef _WIN32
+void GUIController::RenderD3D11(const Engine::SceneView* scene)
+{
+    if (!d3d11Backend) return;
+    BuildDrawData(scene);
+    ImDrawData* drawData = ImGui::GetDrawData();
+    static bool loggedOnce = false;
+    if (!loggedOnce)
+    {
+        loggedOnce = true;
+        Log::Info("[DX11GUI] drawData=" + std::to_string(drawData ? drawData->TotalVtxCount : 0)
+            + "v/" + std::to_string(drawData ? drawData->TotalIdxCount : 0)
+            + "i display=" + (drawData ? std::to_string(drawData->DisplaySize.x) + "x" + std::to_string(drawData->DisplaySize.y) : std::string("null"))
+            + " screen=" + (activeScreen ? activeScreen->title : std::string("none"))
+            + " pincel=" + (pincelScreen ? "yes" : "no")
+            + " ctrl=" + (controlRenderer ? "yes" : "no") + " hud=" + (hudRenderer ? "yes" : "no"));
+    }
+    ImGui_ImplDX11_RenderDrawData(drawData);
+    Engine::FrameContext frame{};
+    frame.engine = state->renderEngine;
+    frame.state = state;
+    frame.scene = scene;
+    frame.extent = frame.engine->GetExtent();
+
+    if (activeScreen != nullptr && activeScreen == pincelScreen && controlRenderer != nullptr)
+    {
+        controlRenderer->Record(frame);
+    }
+    if (activeScreen == nullptr && hudDrawn && hudRenderer != nullptr)
+    {
+        hudRenderer->Record(frame);
+    }
+}
+#endif
+
+void GUIController::BuildDrawData(const Engine::SceneView* scene)
+{
     if (!initialized) return;
 
     // A screen (e.g. the connect screen) takes over the whole frame - it
@@ -1521,13 +1739,6 @@ void GUIController::Render(VkCommandBuffer commandBuffer, const Engine::SceneVie
 
     ImGui::Render();
     AddTextShadows(ImGui::GetDrawData());
-    ImGuiVulkan::RenderDrawData(imguiContext, commandBuffer);
-
-    // Only a screen Update() has drawn: one opened since then waits a frame.
-    if (activeScreen != nullptr && activeScreen == pincelScreen) controlRenderer->Record(commandBuffer);
-
-    // The HUD (hotbar, status, chat) is Pincel's, over everything ImGui drew.
-    if (activeScreen == nullptr && hudDrawn) hudRenderer->Record(commandBuffer);
 }
 
 // Sends what was typed in the chat box (a command if it starts with "/") and closes it.
@@ -2254,7 +2465,7 @@ GUI::GUIWindow* GUIController::CreateWindow(const std::string& name, GUI::Screen
 {
     constexpr uint16_t width = 180, height = 80;
 
-    GUI::GUIWindow* window = new GUI::GUIWindow{name};
+    GUI::GUIWindow* window = new GUI::GUIWindow{name, {}};
     window->components = {};
     window->anchor = anchor;
     window->offsetX = offsetX;
@@ -2319,7 +2530,7 @@ ImVec2 GUIController::ResolveAnchor(GUI::ScreenAnchor anchor, ImVec2 size, ImVec
 // Create a fullscreen menu screen. Not shown until passed to OpenScreen.
 GUI::Screen* GUIController::CreateScreen(const std::string& title, bool closable)
 {
-    GUI::Screen* screen = new GUI::Screen{title};
+    GUI::Screen* screen = new GUI::Screen{title, {}};
     screen->components = {};
     screen->closable = closable;
     return screen;

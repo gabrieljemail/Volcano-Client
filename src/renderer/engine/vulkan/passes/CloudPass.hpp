@@ -4,10 +4,10 @@
 
 #include <array>
 #include <cstdint>
-#include <vector>
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
-#include "../RenderPass.hpp"
+#include "../../RenderPass.hpp"
+#include "../../../misc/CloudScene.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -33,37 +33,23 @@ public:
     void ReloadTextures(const ShaderLibrary& shaders) override;
 
 private:
-    static constexpr int TEXTURE_SIZE = 256;
-    static constexpr int RADIUS_CELLS = 28;
-    static constexpr float CELL_SIZE = 12.0f;
-    static constexpr float THICKNESS = 4.0f;
-    static constexpr float DRIFT_BLOCKS_PER_SECOND = 0.6f;
-    static constexpr uint32_t MAX_VERTICES = 6u * 6u * (2 * RADIUS_CELLS) * (2 * RADIUS_CELLS);
     static constexpr size_t FRAME_SLOTS = 4;
-
-    struct Vertex {
-        float x, y, z;
-        float shade;
-    };
 
     // One mesh per frame in flight, each remembering which grid it holds.
     struct Slot {
         VkBuffer buffer = VK_NULL_HANDLE;
         VmaAllocation allocation = VK_NULL_HANDLE;
-        Vertex* mapped = nullptr;
+        CloudScene::Vertex* mapped = nullptr;
         uint32_t vertexCount = 0;
         int centerX = 0, centerZ = 0;
         int mode = -1; // 1 fast, 2 fancy; -1 = never built
     };
 
-    std::vector<bool> cells; // TEXTURE_SIZE^2, true where a cloud is
+    CloudScene scene; // The cells, the grid mesh and the per-frame placement, shared with Direct3D 11.
     std::array<Slot, FRAME_SLOTS> slots;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
 
-    bool LoadCells();
-    bool CellAt(int x, int z) const;
-    void BuildMesh(Slot& slot, int centerX, int centerZ, int mode);
     void CreatePipeline(const ShaderLibrary& shaders);
     void DestroyPipeline();
 };

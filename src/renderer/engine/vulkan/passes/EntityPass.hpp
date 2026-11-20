@@ -2,12 +2,12 @@
 #ifndef VOLCANO_ENGINE_PASSES_ENTITY_PASS_H
 #define VOLCANO_ENGINE_PASSES_ENTITY_PASS_H
 
-#include "../RenderPass.hpp"
-#include "../../entity/EntityRenderer.hpp"
+#include "../../RenderPass.hpp"
+#include "../../../entity/EntityRenderer.hpp"
 
 namespace Volcano::Engine::Passes {
 
-// GlobalState::entities
+// Application::entities
 class EntityPass : public RenderPass {
 public:
     static constexpr const char* NAME = "Entities";

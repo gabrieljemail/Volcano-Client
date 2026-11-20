@@ -1,35 +1,8 @@
 #pragma once
-#include "models/GUIWindow.hpp"
-#ifndef GLOBAL_STATE_H
-#define GLOBAL_STATE_H
+#ifndef VOLCANO_APPLICATION_H
+#define VOLCANO_APPLICATION_H
 
-#include <cstdint>
-#include <deque>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <queue>
-#include <string>
-#include <unordered_map>
-#include <vector>
-#include <atomic>
-#include <GLFW/glfw3.h>
-#include <glm/gtc/matrix_transform.hpp>
-#include "renderer/models/Mesh.hpp"
-#include "renderer/entity/models/Entity.hpp"
-#include "renderer/entity/models/PlayerEntity.hpp"
-#include "renderer/gui/models/GUIWindow.hpp"
-#include "renderer/terrain/models/Chunk.hpp"
-#include "renderer/terrain/models/ChunkSection.hpp"
-#include "renderer/terrain/models/World.hpp"
-#include "InputHandler.hpp"
-#include "Player.hpp"
-#include "PlayerAttributes.hpp"
-#include "Config.hpp"
-#include "SystemInfo.hpp"
-#include "inventory/InventoryManager.hpp"
-#include "network/CommandTree.hpp"
-#include "network/TextComponent.hpp"
+#include "ApplicationDeps.hpp"
 
 namespace Volcano {
 
@@ -43,18 +16,18 @@ enum class WindowMode : uint8_t {
 };
 
 // Defined in TickLoop.hpp, which includes this header (not the other way
-// around) since it needs the full GlobalState - a forward declaration is
+// around) since it needs the full Application - a forward declaration is
 // enough here for a pointer member.
 class TickLoop;
 
 // Defined in network/Connection.hpp. Forward-declared here (rather than
-// including that header, which would pull asio into every GlobalState.hpp
-// includer) purely so GlobalState::activeConnection below can hold a
+// including that header, which would pull asio into every Application.hpp
+// includer) purely so Application::activeConnection below can hold a
 // pointer to it.
 class Connection;
 
 // Defined in interaction/InteractionManager.hpp, which includes this header
-// (not the other way around) since it needs the full GlobalState
+// (not the other way around) since it needs the full Application
 class InteractionManager;
 
 class AudioManager;
@@ -67,6 +40,7 @@ class CombatSounds;
 class RideController;
 class LightEngine;
 class ItemRenderer;
+namespace Engine::D3D11 { class D3D11ItemRenderer; }
 class ParticleSystem;
 class ResourceManager;
 class MSAccountManager;
@@ -170,11 +144,11 @@ struct LocalMotionInbox {
 };
 
 // Set by MeshingThread to ReleaseMeshSlabs, so ResetWorldState can hand
-// cleared meshes' slab regions back without GlobalState depending on the
+// cleared meshes' slab regions back without Application depending on the
 // meshers (NetDiag builds this header without them - null there).
 inline void (*releaseMeshSlabsHook)(const Mesh&) = nullptr;
 
-struct GlobalState {
+struct Application {
     // Owns the client's settings
     Config configStorage;
     Config* config{nullptr};
@@ -195,7 +169,8 @@ struct GlobalState {
     CombatSounds* combatSounds{nullptr}; // Hit, spear, mace and arrow sounds; called from the main and network threads.
     BlockSounds* blockSounds{nullptr}; // Step, break, place and mining-hit sounds; called from the tick and main threads.
     ResourceManager* resourceManager{nullptr}; // Layered resource packs; created in main() after LoadSettings().
-    ItemRenderer* itemRenderer{nullptr}; // 3D item models (GUI icons now; hand and dropped items later).
+    ItemRenderer* itemRenderer{nullptr}; // 3D item models on Vulkan: GUI icons, the hand, dropped and held items.
+    Engine::D3D11::D3D11ItemRenderer* d3dItemRenderer{nullptr}; // The same on Direct3D 11 (exactly one of the two is set).
 
     // The client's particles. Spawn() may be called from any thread (the network thread does, for the Level Particles
     // packet); everything else is the render thread's. See ParticlePass.
@@ -620,6 +595,50 @@ struct GlobalState {
     // client's own dev server never has so far) still renders full-bright
     // like before this existed, rather than snapping to some arbitrary time.
     std::atomic<int64_t> dayTimeTicks{6000};
+
+    // Vanilla predicts time on the client (ClientLevel.tickTime +
+    // ClientClockManager.tick): every client tick advances each clock by its
+    // rate, and the server's UpdateTime packet only corrects it - Paper sends
+    // none unless an admin changes the time. The day clock is tracked here;
+    // dayTimeTicks above is derived from it.
+    void SetDayClock(int64_t totalTicks, float partialTick, float rate)
+    {
+        std::lock_guard<std::mutex> lock(dayClockMutex);
+        dayClockTotal = totalTicks;
+        dayClockPartial = partialTick;
+        dayClockRate = rate;
+        PublishDayTime();
+    }
+
+    // Once per client tick (TickLoop::FixedStep). Does nothing while the
+    // server has frozen ticking (/tick freeze), as vanilla's runsNormally().
+    void TickDayClock()
+    {
+        if (tickingFrozen.load(std::memory_order_relaxed)) return;
+        std::lock_guard<std::mutex> lock(dayClockMutex);
+        double partial = dayClockPartial + static_cast<double>(dayClockRate);
+        double whole = std::floor(partial);
+        dayClockPartial = partial - whole;
+        dayClockTotal += static_cast<int64_t>(whole);
+        PublishDayTime();
+    }
+
+    std::atomic<bool> tickingFrozen{false}; // SetTickingState is_frozen
+
+private:
+    void PublishDayTime() // Caller holds dayClockMutex.
+    {
+        int64_t dayTime = dayClockTotal % 24000;
+        if (dayTime < 0) dayTime += 24000;
+        dayTimeTicks.store(dayTime);
+    }
+
+    std::mutex dayClockMutex;
+    int64_t dayClockTotal = 6000;
+    double dayClockPartial = 0.0;
+    float dayClockRate = 1.0f;
+
+public:
 
     glm::vec3 cameraPosition{0.0f, 0.0f, 5.0f};
 

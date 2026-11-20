@@ -5,7 +5,8 @@
 #include <cmath>
 #include <optional>
 #include <imgui.h>
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+import Volcano;
 #include "network/microsoft/MSAccountManager.hpp"
 #include "Logger.hpp"
 #include "audio/SoundRegistry.hpp"
@@ -126,10 +127,15 @@ int ControlRenderer::Units(float units) const
     return std::max(0, static_cast<int>(std::lround(units * static_cast<float>(scale))));
 }
 
-bool ControlRenderer::Init(VkRenderPass renderPass)
+bool ControlRenderer::Init(Engine::RenderEngine& engine)
 {
     Pincel::Init();
-    if (!surface.Create(renderPass)) return false;
+    rasterizer = CreatePincelRasterizer(engine);
+    if (!rasterizer || !rasterizer->Create(engine))
+    {
+        rasterizer.reset();
+        return false;
+    }
 
     canvas = std::make_unique<Pincel::Canvas>();
     canvas->SetBackground(Color{ 0, 0, 0, 0.0f });
@@ -153,7 +159,11 @@ void ControlRenderer::Shutdown()
     controls.clear();
     popupRows.clear();
     canvas.reset();
-    surface.Destroy();
+    if (rasterizer != nullptr)
+    {
+        rasterizer->Destroy();
+        rasterizer.reset();
+    }
     builtScreen = nullptr;
     builtComponents.clear();
 }
@@ -489,12 +499,12 @@ void ControlRenderer::Refresh(Screen& screen)
     }
 }
 
-void ControlRenderer::Update(Screen& screen, float guiScale)
+void ControlRenderer::Update(Screen& screen, float guiScale, const Engine::RenderExtent& extent)
 {
-    if (!ready || swapchainExtent.width == 0 || swapchainExtent.height == 0) return;
+    if (!ready || extent.width == 0 || extent.height == 0) return;
 
-    width = swapchainExtent.width;
-    height = swapchainExtent.height;
+    width = extent.width;
+    height = extent.height;
     canvas->SetSize(width, height);
 
     int newScale = std::max(1, static_cast<int>(std::lround(guiScale)));
@@ -508,15 +518,16 @@ void ControlRenderer::Update(Screen& screen, float guiScale)
     Refresh(screen);
     FeedInput();
 
-    // Where the UI's time goes, logged once a second while the debug menu is open: Pincel's layout and rasterizing
-    // (Draw), then the upload, which waits for the GPU to go idle (PincelSurface::Upload).
+    // Where the UI's time goes, logged once a second while the debug menu is open: Pincel's layout and draw-data
+    // generation, then the GPU resource upload.
     using Clock = std::chrono::steady_clock;
     auto drawStart = Clock::now();
-    Pincel::Texture* texture = canvas->Draw();
+    Pincel::DrawData drawData = canvas->BuildDrawData();
     auto drawEnd = Clock::now();
     React(screen);
-    uint64_t versionBefore = surface.UploadedVersion();
-    surface.Upload(*texture);
+    if (rasterizer == nullptr) return;
+    uint64_t versionBefore = rasterizer->UploadedVersion();
+    rasterizer->Upload(drawData);
     auto uploadEnd = Clock::now();
 
     if (state != nullptr && state->debugHudVisible)
@@ -525,7 +536,7 @@ void ControlRenderer::Update(Screen& screen, float guiScale)
         static uint32_t frames = 0, uploads = 0;
         static Clock::time_point windowStart = Clock::now();
         drawMs += std::chrono::duration<float, std::milli>(drawEnd - drawStart).count();
-        if (surface.UploadedVersion() != versionBefore)
+        if (rasterizer->UploadedVersion() != versionBefore)
         {
             uploads++;
             uploadMs += std::chrono::duration<float, std::milli>(uploadEnd - drawEnd).count();
@@ -536,7 +547,7 @@ void ControlRenderer::Update(Screen& screen, float guiScale)
             Log::Info("[UI] " + std::to_string(frames) + " frames, " + std::to_string(uploads) + " uploads; Pincel draw "
                 + std::to_string(drawMs / static_cast<float>(frames)) + " ms/frame, upload "
                 + std::to_string(uploads > 0 ? uploadMs / static_cast<float>(uploads) : 0.0f) + " ms each ("
-                + std::to_string(texture->width) + "x" + std::to_string(texture->height) + ")");
+                + std::to_string(drawData.width) + "x" + std::to_string(drawData.height) + ")");
             drawMs = uploadMs = 0.0f;
             frames = uploads = 0;
             windowStart = uploadEnd;
@@ -544,9 +555,9 @@ void ControlRenderer::Update(Screen& screen, float guiScale)
     }
 }
 
-void ControlRenderer::Record(VkCommandBuffer commandBuffer)
+void ControlRenderer::Record(Engine::FrameContext& frame)
 {
-    if (ready) surface.Record(commandBuffer);
+    if (ready && rasterizer != nullptr) rasterizer->Record(frame);
 }
 
 // ---- Reacting to the mouse ----

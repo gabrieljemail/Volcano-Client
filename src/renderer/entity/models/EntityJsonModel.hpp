@@ -119,7 +119,8 @@ inline glm::vec4 FaceUVRect(const char* faceName, glm::vec2 uv, glm::vec3 size)
     if (name == "west")  return { uv.x,              uv.y + d, uv.x + d,             uv.y + d + h };
     if (name == "north") return { uv.x + d,          uv.y + d, uv.x + d + w,         uv.y + d + h };
     if (name == "east")  return { uv.x + d + w,       uv.y + d, uv.x + d + w + d,     uv.y + d + h };
-    /* south */          return { uv.x + d + w + d,   uv.y + d, uv.x + d + w + d + w, uv.y + d + h };
+    /* south */
+    return { uv.x + d + w + d,   uv.y + d, uv.x + d + w + d + w, uv.y + d + h };
 }
 
 inline std::array<glm::vec2, 4> FaceUVCorners(const char* faceName, float u0, float v0, float u1, float v1)

@@ -8,7 +8,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <vulkan/vulkan.h>
 #include <Pincel/Pincel.hpp>
 #include "Animation.hpp"
 #include "CommandHelp.hpp"
@@ -16,10 +15,10 @@
 #include "CommandWalker.hpp"
 #include "ImGuiInput.hpp"
 #include "ItemSlotView.hpp"
-#include "PincelSurface.hpp"
+#include "PincelRasterizer.hpp"
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 }
 
 namespace Volcano::GUI {
@@ -32,9 +31,9 @@ namespace Volcano::GUI {
 // Render thread only.
 class HudRenderer {
 public:
-    explicit HudRenderer(GlobalState* globalState) : state(globalState) {}
+    explicit HudRenderer(Application* application) : state(application) {}
 
-    bool Init(VkRenderPass renderPass);
+    bool Init(Engine::RenderEngine& engine);
     void Shutdown();
 
     struct ChatBox {
@@ -45,10 +44,11 @@ public:
 
     // Brings the HUD up to date and draws it to the GPU texture. Returns what was typed
     // if Enter was pressed in the chat box. After GUIController::NewFrame, outside the render pass.
-    std::optional<std::string> Update(float guiScale, const ChatBox& chat);
+    std::optional<std::string> Update(float guiScale, const ChatBox& chat,
+        const Engine::RenderExtent& extent);
 
     // Lays the HUD over the frame, inside the main render pass.
-    void Record(VkCommandBuffer commandBuffer);
+    void Record(Engine::FrameContext& frame);
 
     // Rebuilds from the art again (after a resource reload).
     void ReloadResources();
@@ -88,8 +88,8 @@ private:
         int left, int top, int art, int cropWidth = 0);
     Pincel::Element Corner(Pincel::Element element, int left, int top);
 
-    GlobalState* state;
-    PincelSurface surface;
+    Application* state;
+    std::unique_ptr<PincelRasterizer> rasterizer;
     std::unique_ptr<Pincel::Canvas> canvas;
     ImGuiInput input;
     bool ready = false;

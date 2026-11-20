@@ -1,6 +1,8 @@
 lib/
+third_party/
 build/
 build-release/
+build-core/
 CMakeFiles/
 node_modules/
 *.log
@@ -34,6 +36,7 @@ build.ninja
 .cache
 resources/shaders/*.spv
 CMakeFiles/
+build-release/
 CMakeCache.txt
 
 # Volcano's run files.
@@ -57,3 +60,8 @@ crash-report.txt
 /*.tmp.*
 /*.zip
 /*.cmake
+
+client.err
+compile_commands.json
+imgui.ini
+*.claude-bak

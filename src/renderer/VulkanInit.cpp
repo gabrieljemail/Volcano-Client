@@ -7,7 +7,8 @@
 #include <GLFW/glfw3.h>
 #include <stb_image.h>
 #define VMA_IMPLEMENTATION
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+import Volcano;
 #include "Logger.hpp"
 #include "VulkanInit.hpp"
 #include "RenderThread.hpp"
@@ -20,13 +21,14 @@
 #include "misc/MiscVertex.hpp"
 #include "misc/NonCubicMesher.hpp"
 #include "FullscreenExclusive.hpp"
+#include "../platform/OS.hpp"
 
 using namespace std;
 
 // Set once in Init(). Kept as a plain module-local pointer rather than the
 // GLFW window user pointer, since InputHandler already claims that slot for
 // its own key/cursor callbacks.
-static GlobalState* g_globalState = nullptr;
+static Application* g_application = nullptr;
 
 // Current window mode and the windowed geometry to restore when leaving
 // fullscreen (captured right before switching away from Windowed).
@@ -39,13 +41,13 @@ static int g_windowedWidth = 0, g_windowedHeight = 0;
 // Graphics.VSync/BufferCount from settings.json
 static VkPresentModeKHR DesiredPresentMode()
 {
-    bool vsync = std::get<bool>(g_globalState->config->Get("Graphics.VSync", true));
+    bool vsync = std::get<bool>(g_application->config->Get("Graphics.VSync", true));
     return vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
 }
 
 static uint32_t DesiredBufferCount()
 {
-    return std::get<uint32_t>(g_globalState->config->Get("Graphics.BufferCount", uint32_t{2}));
+    return std::get<uint32_t>(g_application->config->Get("Graphics.BufferCount", uint32_t{2}));
 }
 
 // Settings every swapchain build shares. UNORM, not sRGB: textures are UNORM
@@ -62,10 +64,10 @@ static void ConfigureSwapchainBuilder(vkb::SwapchainBuilder& builder, uint32_t w
 
 static void FramebufferSizeCallback(GLFWwindow* /*win*/, int width, int height)
 {
-    if (!g_globalState) return;
-    g_globalState->pendingFramebufferWidth = width;
-    g_globalState->pendingFramebufferHeight = height;
-    g_globalState->framebufferResized = true;
+    if (!g_application) return;
+    g_application->pendingFramebufferWidth = width;
+    g_application->pendingFramebufferHeight = height;
+    g_application->framebufferResized = true;
 }
 
 #ifdef _WIN32
@@ -76,7 +78,7 @@ static void WindowFocusCallback(GLFWwindow* win, int focused)
 {
     // Only fires inside glfwPollEvents(), which only the main thread calls
     // (VolcanoClient.cpp's message loop)
-    if (g_globalState) g_globalState->windowFocused.store(focused != 0);
+    if (g_application) g_application->windowFocused.store(focused != 0);
 
     if (focused)
     {
@@ -104,9 +106,9 @@ void NotifyFramePresented()
     // The window may already have (real) focus by the time this first
     // frame lands, in which case no further WindowFocusCallback will ever
     // fire to lock the cursor
-    if (g_globalState && g_globalState->windowFocused.load() && !GUIController::IsScreenOpen())
+    if (g_application && g_application->windowFocused.load() && !GUIController::IsScreenOpen())
     {
-        g_globalState->pendingCursorMode.store(GLFW_CURSOR_DISABLED);
+        g_application->pendingCursorMode.store(GLFW_CURSOR_DISABLED);
     }
 #endif
 }
@@ -1250,7 +1252,7 @@ static void CreateFramebuffers()
 }
 
 // Main function.
-void Init(GlobalState* state)
+void Init(Application* state)
 {
     // On Linux, try to use Wayland instead of X11.
     #ifdef __linux__
@@ -1262,10 +1264,8 @@ void Init(GlobalState* state)
     // Initialize GLFW.
     if (!glfwInit())
     {
-        cerr << "[ERROR] Failed to initialize GLFW." << endl;
         Cleanup();
-        exit(5);
-        return;
+        throw std::runtime_error("[ERROR] Failed to initialize GLFW.");
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // Prevent GLFW from creating an OpenGL context.
@@ -1273,7 +1273,7 @@ void Init(GlobalState* state)
     glfwWindowHint(GLFW_DECORATED, GLFW_TRUE); // Show system window decorations.
 
     // config must be ready before the window is created
-    g_globalState = state;
+    g_application = state;
 
     uint32_t windowWidth = std::get<uint32_t>(state->config->Get("Window.Width", uint32_t{854}));
     uint32_t windowHeight = std::get<uint32_t>(state->config->Get("Window.Height", uint32_t{480}));
@@ -1283,11 +1283,8 @@ void Init(GlobalState* state)
 
     if (!window)
     {
-        cerr << "[ERROR] Failed to create window." << endl;
-        glfwTerminate();
         Cleanup();
-        exit(6);
-        return;
+        throw std::runtime_error("[ERROR] Failed to create window.");
     }
     state->window = window;
 
@@ -1345,10 +1342,9 @@ void Init(GlobalState* state)
 
     if (!instanceReturn)
     {
-        cerr << "[ERROR] Failed to create Vulkan instance: " << instanceReturn.error().message() << endl;
+        std::string message = "[ERROR] Failed to create Vulkan instance: " + instanceReturn.error().message();
         Cleanup();
-        exit(2);
-        return;
+        throw std::runtime_error(message);
     }
     instance = instanceReturn.value();
 
@@ -1356,11 +1352,8 @@ void Init(GlobalState* state)
     VkResult error = glfwCreateWindowSurface(instance.instance, window, nullptr, &surface);
     if (error != VK_SUCCESS)
     {
-        cerr << "[ERROR] Failed to create window surface." << endl;
-        glfwTerminate();
         Cleanup();
-        exit(7);
-        return;
+        throw std::runtime_error("[ERROR] Failed to create window surface.");
     }
 
     // Get a device.
@@ -1382,7 +1375,7 @@ void Init(GlobalState* state)
     // enough for "NVIDIA GeForce RTX 4070") instead of whatever
     // vk-bootstrap's own ranking puts first
     std::string preferredDevice = std::get<std::string>(
-        g_globalState->config->Get("Graphics.PreferredDevice", std::string{}));
+        g_application->config->Get("Graphics.PreferredDevice", std::string{}));
     if (!preferredDevice.empty())
     {
         auto lowered = [](std::string s) {
@@ -1429,16 +1422,15 @@ void Init(GlobalState* state)
 
     if (!physDeviceSelectorReturn)
     {
-        cerr << "[ERROR] No suitable Vulkan devices: " << physDeviceSelectorReturn.error().message() << endl;
+        std::string message = "[ERROR] No suitable Vulkan devices: " + physDeviceSelectorReturn.error().message();
         Cleanup();
-        exit(3);
-        return;
+        throw std::runtime_error(message);
     }
     physicalDevice = physDeviceSelectorReturn.value();
     FullscreenExclusive::ConfigureDevice(physicalDevice);
     cout << "Found Vulkan GPU: " << physicalDevice.name << endl;
     cout << "Vulkan API version: " << physicalDevice.properties.apiVersion << endl;
-    g_globalState->systemInfo.DetectGPU(physicalDevice.properties.deviceName,
+    g_application->systemInfo.DetectGPU(physicalDevice.properties.deviceName,
         physicalDevice.properties.vendorID, physicalDevice.properties.apiVersion);
 
     // Get the logical device.
@@ -1456,10 +1448,9 @@ void Init(GlobalState* state)
 
     if (!deviceBuilderReturn)
     {
-        cerr << "[ERROR] Device creation failed: " << deviceBuilderReturn.error().message() << endl;
+        std::string message = "[ERROR] Device creation failed: " + deviceBuilderReturn.error().message();
         Cleanup();
-        exit(4);
-        return;
+        throw std::runtime_error(message);
     }
     device = deviceBuilderReturn.value();
     cout << "Vulkan device initialized." << endl;
@@ -1479,17 +1470,15 @@ void Init(GlobalState* state)
 
     if (!swapchainBuilderReturn)
     {
-        cerr << "[ERROR] Failed to create swapchain: " << swapchainBuilderReturn.error().message() << endl;
-        glfwTerminate();
+        std::string message = "[ERROR] Failed to create swapchain: " + swapchainBuilderReturn.error().message();
         Cleanup();
-        exit(8);
-        return;
+        throw std::runtime_error(message);
     }
     swapchain = swapchainBuilderReturn.value();
     FullscreenExclusive::Acquire(device.device, swapchain.swapchain);
     // Records what vk-bootstrap actually granted, not just what
     // DesiredPresentMode() asked for
-    g_globalState->presentMode = static_cast<uint8_t>(swapchain.present_mode);
+    g_application->presentMode = static_cast<uint8_t>(swapchain.present_mode);
     Log::Info(std::string("[GFX] Present mode " + std::to_string(static_cast<int>(swapchain.present_mode)) + " (requested " + std::to_string(static_cast<int>(DesiredPresentMode())) + "; 0 = immediate, 1 = mailbox, 2 = FIFO)"));
 
     // Get the queues from vkb::Device.
@@ -1807,7 +1796,7 @@ void RecreateSwapchain(int width, int height)
     FullscreenExclusive::Acquire(device.device, swapchain.swapchain);
     swapchainExtent = swapchain.extent;
     // See the Init() call site's own comment on this same line.
-    g_globalState->presentMode = static_cast<uint8_t>(swapchain.present_mode);
+    g_application->presentMode = static_cast<uint8_t>(swapchain.present_mode);
     Log::Info(std::string("[GFX] Present mode " + std::to_string(static_cast<int>(swapchain.present_mode)) + " (requested " + std::to_string(static_cast<int>(DesiredPresentMode())) + "; 0 = immediate, 1 = mailbox, 2 = FIFO)"));
 
     CreateDepthResources();
@@ -1857,11 +1846,17 @@ static void SetWindowMode(WindowMode target, uint32_t fsWidth, uint32_t fsHeight
         case WindowMode::BorderlessFullscreen:
         {
             // A plain undecorated window covering the monitor at its current
-            // mode - no display-mode change, so alt-tab is instant.
+            // mode - no display-mode change, so alt-tab is instant. Windows
+            // presents a window like that directly (flip model) and capture
+            // tools see it as fullscreen, but only if it covers the whole
+            // monitor: see PlaceBorderlessWindow for why GLFW's calls alone
+            // gave a work-area-sized window under the taskbar.
+            if (Volcano::Platform::OS::PlaceBorderlessWindow(window, monitor)) break;
+
             int monitorX, monitorY;
             glfwGetMonitorPos(monitor, &monitorX, &monitorY);
-            glfwSetWindowMonitor(window, nullptr, monitorX, monitorY, current->width, current->height, 0);
             glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_FALSE);
+            glfwSetWindowMonitor(window, nullptr, monitorX, monitorY, current->width, current->height, 0);
             break;
         }
 
@@ -1920,7 +1915,7 @@ static void SetWindowMode(WindowMode target, uint32_t fsWidth, uint32_t fsHeight
 // Settings screen change any of these live. Main thread only (GLFW).
 void ApplyWindowSettings()
 {
-    Config* config = g_globalState ? g_globalState->config : nullptr;
+    Config* config = g_application ? g_application->config : nullptr;
     if (!config || !window) return;
     uint64_t configVersion = config->GetVersion();
     if (configVersion == g_appliedConfigVersion) return;
@@ -1978,7 +1973,7 @@ void ApplyWindowSettings()
 // always agree with what's on screen; ApplyWindowSettings does the switch.
 void ToggleWindowMode()
 {
-    Config* config = g_globalState ? g_globalState->config : nullptr;
+    Config* config = g_application ? g_application->config : nullptr;
     if (!config) return;
     uint32_t next = g_windowMode == WindowMode::Windowed ? 1u : 0u;
     config->Set("Window.Mode", next);
@@ -1987,81 +1982,104 @@ void ToggleWindowMode()
 
 void Cleanup()
 {
-    if (device.device != VK_NULL_HANDLE) {
-        vkDeviceWaitIdle(device.device);
-    }
-
-    // 1. Destroy manually created objects.
-    for (int i = 0; i < 3; i++) {
-        vkDestroySemaphore(device.device, imageAvailableSemaphores[i], nullptr);
-        vkDestroySemaphore(device.device, renderFinishedSemaphores[i], nullptr);
-        vkDestroyFence(device.device, inFlightFences[i], nullptr);
-    }
-
-    for (auto framebuffer : framebuffers) {
-        vkDestroyFramebuffer(device.device, framebuffer, nullptr);
-    }
-
-    for (auto view : imageViews) {
-        vkDestroyImageView(device.device, view, nullptr);
-    }
-
-    // Pass-owned pipelines are normally gone already (RenderEngine::
-    // StopRendering destroys every pass) - these are idempotent, and only
-    // matter if startup failed before the passes could be torn down.
-    DestroyNonCubicPipeline();
-    DestroyTranslucentPipeline();
-    DestroyGraphicsPipeline();
-    vkDestroyCommandPool(device.device, commandPool, nullptr);
-    vkDestroyRenderPass(device.device, overlayRenderPass, nullptr);
-    vkDestroyRenderPass(device.device, renderPass, nullptr);
-
-    if (depthImageView != VK_NULL_HANDLE) {
-        vkDestroyImageView(device.device, depthImageView, nullptr);
-    }
-    if (depthImage != VK_NULL_HANDLE) {
-        vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
-    }
-
-    // HiZBuildPass::Destroy() normally already ran this (RenderEngine's
-    // shutdown path), same "idempotent, only matters if startup failed
-    // early" reasoning as the other pass-owned pipeline destroys above.
-    DestroyHiZPipelines();
-    DestroyHiZResources();
-
-    // Camera UBOs stay mapped from Init(); unmap before destroying.
-    for (int i = 0; i < 3; i++)
+    if (device.device != VK_NULL_HANDLE)
     {
-        if (cameraUBOsMapped[i] != nullptr)
+        vkDeviceWaitIdle(device.device);
+        for (int i = 0; i < 3; i++)
         {
-            vmaUnmapMemory(vmaAllocator, cameraUBOs[i].allocation);
-            cameraUBOsMapped[i] = nullptr;
+            if (imageAvailableSemaphores[i] != VK_NULL_HANDLE) vkDestroySemaphore(device.device, imageAvailableSemaphores[i], nullptr);
+            if (renderFinishedSemaphores[i] != VK_NULL_HANDLE) vkDestroySemaphore(device.device, renderFinishedSemaphores[i], nullptr);
+            if (inFlightFences[i] != VK_NULL_HANDLE) vkDestroyFence(device.device, inFlightFences[i], nullptr);
+            imageAvailableSemaphores[i] = VK_NULL_HANDLE;
+            renderFinishedSemaphores[i] = VK_NULL_HANDLE;
+            inFlightFences[i] = VK_NULL_HANDLE;
+
+            if (vmaAllocator != VK_NULL_HANDLE && cameraUBOsMapped[i] != nullptr)
+            {
+                vmaUnmapMemory(vmaAllocator, cameraUBOs[i].allocation);
+                cameraUBOsMapped[i] = nullptr;
+            }
+            if (vmaAllocator != VK_NULL_HANDLE && cameraUBOs[i].buffer != VK_NULL_HANDLE)
+            {
+                vmaDestroyBuffer(vmaAllocator, cameraUBOs[i].buffer, cameraUBOs[i].allocation);
+                cameraUBOs[i] = AllocatedBuffer{};
+            }
         }
-        if (cameraUBOs[i].buffer != VK_NULL_HANDLE)
+
+        for (VkFramebuffer framebuffer : framebuffers)
         {
-            vmaDestroyBuffer(vmaAllocator, cameraUBOs[i].buffer, cameraUBOs[i].allocation);
-            cameraUBOs[i] = AllocatedBuffer{};
+            if (framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device.device, framebuffer, nullptr);
         }
+        framebuffers.clear();
+        for (VkImageView view : imageViews)
+        {
+            if (view != VK_NULL_HANDLE) vkDestroyImageView(device.device, view, nullptr);
+        }
+        imageViews.clear();
+
+        DestroyNonCubicPipeline();
+        DestroyTranslucentPipeline();
+        DestroyGraphicsPipeline();
+        if (commandPool != VK_NULL_HANDLE) vkDestroyCommandPool(device.device, commandPool, nullptr);
+        commandPool = VK_NULL_HANDLE;
+        if (overlayRenderPass != VK_NULL_HANDLE) vkDestroyRenderPass(device.device, overlayRenderPass, nullptr);
+        overlayRenderPass = VK_NULL_HANDLE;
+        if (renderPass != VK_NULL_HANDLE) vkDestroyRenderPass(device.device, renderPass, nullptr);
+        renderPass = VK_NULL_HANDLE;
+
+        if (depthImageView != VK_NULL_HANDLE) vkDestroyImageView(device.device, depthImageView, nullptr);
+        depthImageView = VK_NULL_HANDLE;
+        if (vmaAllocator != VK_NULL_HANDLE && depthImage != VK_NULL_HANDLE)
+        {
+            vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
+        }
+        depthImage = VK_NULL_HANDLE;
+
+        DestroyHiZPipelines();
+        if (vmaAllocator != VK_NULL_HANDLE)
+        {
+            DestroyHiZResources();
+            if (descriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device.device, descriptorPool, nullptr);
+            descriptorPool = VK_NULL_HANDLE;
+            if (cameraSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device.device, cameraSetLayout, nullptr);
+            cameraSetLayout = VK_NULL_HANDLE;
+            if (textureSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device.device, textureSetLayout, nullptr);
+            textureSetLayout = VK_NULL_HANDLE;
+            if (shadowSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device.device, shadowSetLayout, nullptr);
+            shadowSetLayout = VK_NULL_HANDLE;
+
+            // These managers are initialized by Vulkan render passes and must
+            // be safe to shut down when pass creation failed partway through.
+            ChunkMesher::Shutdown();
+            NonCubicMesher::Shutdown();
+            vmaDestroyAllocator(vmaAllocator);
+            vmaAllocator = VK_NULL_HANDLE;
+        }
+
+        if (swapchain.swapchain != VK_NULL_HANDLE) vkb::destroy_swapchain(swapchain);
+        swapchain = {};
+        vkb::destroy_device(device);
+        device = {};
     }
 
-    // EntityRenderer/SelectionRenderer are shut down by their passes
-    // (EntityPass/SelectionPass::Destroy), not here.
-    ChunkMesher::Shutdown();
-    NonCubicMesher::Shutdown();
-
-    if (vmaAllocator != VK_NULL_HANDLE) {
-        vmaDestroyAllocator(vmaAllocator);
-        vmaAllocator = VK_NULL_HANDLE;
+    if (surface != VK_NULL_HANDLE && instance.instance != VK_NULL_HANDLE)
+    {
+        vkb::destroy_surface(instance, surface);
     }
-
-    // Destroy the bootstrap wrappers.
-    if (swapchain.swapchain != VK_NULL_HANDLE) vkb::destroy_swapchain(swapchain);
-    if (device.device != VK_NULL_HANDLE) vkb::destroy_device(device);
-    if (surface != VK_NULL_HANDLE) vkb::destroy_surface(instance, surface);
+    surface = VK_NULL_HANDLE;
     if (instance.instance != VK_NULL_HANDLE) vkb::destroy_instance(instance);
+    instance = {};
+    physicalDevice = {};
 
-    if (window != nullptr) glfwDestroyWindow(window);
+    GLFWwindow* oldWindow = window;
+    if (window != nullptr)
+    {
+        glfwDestroyWindow(window);
+        window = nullptr;
+    }
+    if (g_application != nullptr && g_application->window == oldWindow) g_application->window = nullptr;
     glfwTerminate();
+    g_application = nullptr;
 }
 
 // Texture helper functions:

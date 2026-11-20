@@ -66,7 +66,7 @@ void ImGuiVulkan::RenderDrawData(ImGuiVulkanContext& context, VkCommandBuffer co
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
 }
 
-void ImGuiVulkan::UpdateBuffers(ImGuiVulkanContext& context, VkCommandBuffer commandBuffer) {
+void ImGuiVulkan::UpdateBuffers(ImGuiVulkanContext& /*context*/, VkCommandBuffer /*commandBuffer*/) {
     // This is handled automatically by ImGui_ImplVulkan_RenderDrawData
 }
 
@@ -98,7 +98,7 @@ void ImGuiVulkan::CreateDescriptorPool(ImGuiVulkanContext& context) {
     }
 }
 
-void ImGuiVulkan::CreateCommandPool(ImGuiVulkanContext& context) {
+void ImGuiVulkan::CreateCommandPool(ImGuiVulkanContext& /*context*/) {
     // We use the existing command pool from VulkanInit
 }
 

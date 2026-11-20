@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 #include "../engine/FrameContext.hpp"
 #include "../engine/ShaderLibrary.hpp"
+#include "HandScene.hpp"
 
 namespace Volcano {
 
@@ -20,7 +21,7 @@ namespace Volcano {
 //   Graphics.LeftHanded  (bool) swaps which side the main hand is on.
 //
 // Render thread only. Needs EntityRenderer initialized first (it borrows its
-// default skin) and GlobalState::itemRenderer with its world pipeline.
+// default skin) and Application::itemRenderer with its world pipeline.
 class HandModel {
 public:
     void Create(const Engine::ShaderLibrary& shaders);
@@ -40,13 +41,7 @@ private:
     };
 
     bool ready = false;
-    float mainHandHeight = 1.0f; // 1 = raised; drops after a swing.
-    // Where the current swing stands: not swinging, playing in full at the raised height until the attack
-    // indicator reaches SWING_CUT_STRENGTH, cut off by it, or a swing that isn't an attack (placing, mining).
-    enum class SwingMode { Idle, Playing, Cut, Plain };
-    SwingMode swingMode = SwingMode::Idle;
-    int64_t lastRecordNs = 0;
-    float handLight = 1.0f; // Brightness at the player, eased between frames.
+    HandScene scene; // Animation state and placement, shared with the Direct3D 11 hand.
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     ArmMesh rightArmMesh;

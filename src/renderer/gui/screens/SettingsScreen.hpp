@@ -5,7 +5,7 @@
 #include "../models/Screen.hpp"
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 }
 
 namespace Volcano::GUI {
@@ -14,7 +14,7 @@ namespace Volcano::GUI {
 // Every control writes straight to settings.json through Config::Set, and
 // the systems that own each setting pick the change up live. Back returns
 // to whichever screen opened it, hence OpenSettingsScreen.
-Screen* CreateSettingsScreen(GlobalState* state);
+Screen* CreateSettingsScreen(Application* state);
 void OpenSettingsScreen(Screen* settingsScreen, Screen* returnTo);
 
 } // namespace Volcano::GUI

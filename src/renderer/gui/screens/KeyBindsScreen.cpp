@@ -6,7 +6,8 @@
 #include "KeyBindsScreen.hpp"
 #include "../GUIController.hpp"
 #include "../../../Config.hpp"
-#include "../../../GlobalState.hpp"
+#include "../../../ApplicationDeps.hpp"
+import Volcano;
 #include "../../../InputHandler.hpp"
 #include "../../../KeyBindings.hpp"
 
@@ -26,7 +27,7 @@ struct ScreenState {
 };
 
 // While a binding listens, takes the next key or mouse button for it.
-void CaptureKey(GlobalState* state, ScreenState& screen)
+void CaptureKey(Application* state, ScreenState& screen)
 {
     if (screen.listening.empty()) return;
     if (screen.skipFrames > 0)
@@ -56,7 +57,7 @@ void CaptureKey(GlobalState* state, ScreenState& screen)
     }
 }
 
-void DrawKeyBinds(GlobalState* state, ScreenState& screen, const std::function<void()>& onDone)
+void DrawKeyBinds(Application* state, ScreenState& screen, const std::function<void()>& onDone)
 {
     Config& config = *state->config;
     const float windowWidth = ImGui::GetWindowWidth();
@@ -134,7 +135,7 @@ void DrawKeyBinds(GlobalState* state, ScreenState& screen, const std::function<v
 
 } // namespace
 
-Screen* CreateKeyBindsScreen(GlobalState* state, std::function<void()> onDone)
+Screen* CreateKeyBindsScreen(Application* state, std::function<void()> onDone)
 {
     Screen* screen = GUIController::CreateScreen("Key Binds", /* closable */ false);
 

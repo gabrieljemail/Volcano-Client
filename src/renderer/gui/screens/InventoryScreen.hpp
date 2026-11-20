@@ -3,7 +3,12 @@
 #define VOLCANO_GUI_SCREENS_INVENTORY_SCREEN_H
 
 #include "../models/Screen.hpp"
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "Application.hpp"
+#endif
 
 namespace Volcano::GUI {
 
@@ -12,7 +17,7 @@ namespace Volcano::GUI {
 // Image in each slot. Pincel reports which slot got which mouse button's click,
 // and this decides what that means (picking up, quick moving, dropping...).
 // The screen's title is the open container's name; the caller sets it.
-Screen* CreateInventoryScreen(GlobalState* state);
+Screen* CreateInventoryScreen(Application* state);
 
 } // namespace Volcano::GUI
 

@@ -3,7 +3,12 @@
 #define VOLCANO_GUI_SCREENS_CREATIVE_INVENTORY_SCREEN_H
 
 #include "../models/Screen.hpp"
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "Application.hpp"
+#endif
 
 namespace Volcano::GUI {
 
@@ -13,7 +18,7 @@ namespace Volcano::GUI {
 // client-side cursor stack, and every player-inventory edit is reported with
 // PlayC2S::SetCreativeSlot (slot -1 drops into the world), the same model
 // vanilla's CreativeInventoryListener uses.
-Screen* CreateCreativeScreen(GlobalState* state);
+Screen* CreateCreativeScreen(Application* state);
 
 } // namespace Volcano::GUI
 

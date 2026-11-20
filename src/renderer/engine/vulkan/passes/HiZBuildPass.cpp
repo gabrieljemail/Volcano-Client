@@ -1,7 +1,7 @@
 #include "HiZBuildPass.hpp"
-#include "../../VulkanInit.hpp"
-#include "../../../Logger.hpp"
-#include "../../terrain/OcclusionSnapshot.hpp"
+#include "../../../VulkanInit.hpp"
+#include "../../../../Logger.hpp"
+#include "../../../terrain/OcclusionSnapshot.hpp"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>

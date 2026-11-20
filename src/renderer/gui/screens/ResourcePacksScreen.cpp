@@ -9,7 +9,8 @@
 #include "ResourcePacksScreen.hpp"
 #include "../GUIController.hpp"
 #include "../../../Config.hpp"
-#include "../../../GlobalState.hpp"
+#include "../../../ApplicationDeps.hpp"
+import Volcano;
 #include "../../../resources/ResourceReloader.hpp"
 #include "../../../resources/ZipArchive.hpp"
 
@@ -84,7 +85,7 @@ void Scan(Config& config, std::vector<PackInfo>& out)
     std::sort(out.begin(), out.end(), [](const PackInfo& a, const PackInfo& b) { return a.name < b.name; });
 }
 
-void DrawPacks(GlobalState* state, ScreenState& screen, const std::function<void()>& onDone)
+void DrawPacks(Application* state, ScreenState& screen, const std::function<void()>& onDone)
 {
     Config& config = *state->config;
     const double now = ImGui::GetTime();
@@ -209,7 +210,7 @@ void DrawPacks(GlobalState* state, ScreenState& screen, const std::function<void
 
 } // namespace
 
-Screen* CreateResourcePacksScreen(GlobalState* state, std::function<void()> onDone)
+Screen* CreateResourcePacksScreen(Application* state, std::function<void()> onDone)
 {
     Screen* screen = GUIController::CreateScreen("Resource Packs", /* closable */ false);
 

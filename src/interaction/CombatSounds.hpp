@@ -4,7 +4,12 @@
 
 #include <cstdint>
 #include <string>
-#include "../GlobalState.hpp"
+#include "../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../Application.hpp"
+#endif
 
 namespace Volcano {
 
@@ -14,7 +19,7 @@ enum class AttackType : uint8_t;
 // (everything funnels into SoundRegistry::Play).
 class CombatSounds {
 public:
-    explicit CombatSounds(GlobalState* state) : state(state) {}
+    explicit CombatSounds(Application* state) : state(state) {}
 
     // The sound for a landed hit of `type`; a Normal hit is "strong" at full
     // attack strength, "weak" below it. Misses make no sound.
@@ -31,7 +36,7 @@ public:
     void PlayArrowShot(float distance);
 
 private:
-    GlobalState* state;
+    Application* state;
 
     void PlayVariant(const std::string& base, float volume, float pitchSpread);
 };

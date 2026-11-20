@@ -53,6 +53,13 @@ endif()
 # (e.g. a render pass under src/renderer/engine/passes/) is picked up by a
 # plain `ninja` run instead of needing a manual CMake re-configure first.
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp")
+
+# The DX11 backend is Windows-only (d3d11.h doesn't exist elsewhere) - keep
+# its sources out of non-Windows builds even though the glob picks them up.
+if(NOT WIN32)
+    list(FILTER SOURCES EXCLUDE REGEX "src/renderer/engine/d3d11/")
+endif()
+
 list(APPEND SOURCES
     "${THIRD_PARTY}/vk-bootstrap/src/VkBootstrap.cpp"
     "${THIRD_PARTY}/imgui/imgui.cpp"
@@ -64,7 +71,35 @@ list(APPEND SOURCES
     "${THIRD_PARTY}/imgui/backends/imgui_impl_vulkan.cpp"
 )
 
+if(WIN32)
+    # ImGui's DX11 backend for the D3D11 render engine (AttachGUI TODO).
+    list(APPEND SOURCES "${THIRD_PARTY}/imgui/backends/imgui_impl_dx11.cpp")
+endif()
+
+# Module scanning: the policy and variable must be set before the target exists
+# (cmake_minimum_required is older than the policy's 3.28 default).
+if(POLICY CMP0155)
+    cmake_policy(SET CMP0155 NEW)
+endif()
+set(CMAKE_CXX_SCAN_FOR_MODULES ON)
+# Use FLTO.
+set(INTERPROCEDURAL_OPTIMIZATION ON)
 add_executable(${PROJECT_NAME} ${SOURCES})
+
+# C++20 modules (src/modules/): the Volcano module, which today wraps
+# Application.hpp. CMake 3.28+ scans sources for imports; the scan setting is
+# read when the target is created (above), and the target property is repeated
+# here so nothing depends on the policy default.
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_SCAN_FOR_MODULES ON)
+target_sources(${PROJECT_NAME} PRIVATE
+    FILE_SET volcano_modules TYPE CXX_MODULES
+    BASE_DIRS "${CMAKE_SOURCE_DIR}/src/modules"
+    FILES
+        "${CMAKE_SOURCE_DIR}/src/modules/Volcano.cppm"
+        "${CMAKE_SOURCE_DIR}/src/modules/Volcano.Application.cppm")
+# Headers that mods also include (GUIController.hpp, VulkanInit.hpp) import the
+# module only in this build; the SDK build gets the plain header.
+target_compile_definitions(${PROJECT_NAME} PRIVATE VOLCANO_MODULES)
 
 # Mods resolve VC_EventHandler and the client's own classes from the exe:
 # on Windows this emits an import library, on Linux it adds -rdynamic.
@@ -118,6 +153,7 @@ set_source_files_properties(
     "${THIRD_PARTY}/imgui/imgui_widgets.cpp"
     "${THIRD_PARTY}/imgui/backends/imgui_impl_glfw.cpp"
     "${THIRD_PARTY}/imgui/backends/imgui_impl_vulkan.cpp"
+    "${THIRD_PARTY}/imgui/backends/imgui_impl_dx11.cpp"
     PROPERTIES COMPILE_OPTIONS "-w"
 )
 
@@ -251,7 +287,9 @@ set_source_files_properties(
     src/TickLoop.cpp
     src/interaction/InteractionManager.cpp
     # The PCH is built with -ffast-math, and clang rejects mixing FP modes.
-    PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off" SKIP_PRECOMPILE_HEADERS ON
+    # Likewise the Volcano module is built with -ffast-math, so these two cannot import it:
+    # -UVOLCANO_MODULES makes the headers that would `import Volcano;` include Application.hpp instead.
+    PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off;-UVOLCANO_MODULES" SKIP_PRECOMPILE_HEADERS ON
 )
 
 # Only meaningful for an out-of-source build. The root tree configures
@@ -308,7 +346,32 @@ if(GLSLANG_VALIDATOR)
     add_shader_variant(entity_textured.vert entity_textured_shadow.vert SHADOWS)
     add_shader_variant(entity_textured.frag entity_textured_shadow.frag SHADOWS)
 
-    add_custom_target(Shaders DEPENDS ${SHADER_BINARIES})
+    # HLSL twins for the D3D11 backend: every .spv above also cross-compiles to
+    # <name>.<stage>.hlsl next to it via SPIRV-Cross. Runs at build time (not
+    # configure) so .spv changes retrigger it; DEPENDS on the .spv output lets
+    # ninja chain glslang -> spirv-cross in one pass. Windows only: HLSL is
+    # useless elsewhere. SM 4.0 is the floor every D3D_FEATURE_LEVEL_11_0 part
+    # supports; 5.0 would also work but buys nothing yet.
+    set(SHADER_HLSL "")
+    if(WIN32)
+        find_program(SPIRV_CROSS spirv-cross HINTS "C:/Apps/VulkanSDK/Bin" ENV VULKAN_SDK PATH_SUFFIXES Bin)
+        if(SPIRV_CROSS)
+            foreach(spv ${SHADER_BINARIES})
+                string(REGEX REPLACE "\\.spv$" ".hlsl" hlsl "${spv}")
+                add_custom_command(
+                    OUTPUT ${hlsl}
+                    COMMAND ${SPIRV_CROSS} ${spv} --hlsl --shader-model 40 --output ${hlsl}
+                    DEPENDS ${spv}
+                    COMMENT "Cross-compiling shader ${spv} to HLSL"
+                    VERBATIM)
+                list(APPEND SHADER_HLSL ${hlsl})
+            endforeach()
+        else()
+            message(WARNING "spirv-cross not found; .hlsl shader twins will not be generated.")
+        endif()
+    endif()
+
+    add_custom_target(Shaders DEPENDS ${SHADER_BINARIES} ${SHADER_HLSL})
     add_dependencies(${PROJECT_NAME} Shaders)
 else()
     message(WARNING "glslangValidator not found; shaders will not be recompiled.")
@@ -327,6 +390,120 @@ if(VOLCANO_RUNTIME_DLLS)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VOLCANO_RUNTIME_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
     )
+endif()
+
+# =============================================================================
+# 4b. volcano_core - the engine as a library, for programs other than the client (VC Editor)
+# =============================================================================
+# Two parts of the client are what other programs want:
+#   Magma    the render engine (src/renderer/engine and the passes under it)
+#   Conduit  the network client (src/network): the channel the server's world travels up through
+# They are not yet separable from the rest of the client, so this library is every source except main(). A program
+# that links it only pulls in the objects it actually references, so it gets Magma, Conduit and what they need, not
+# the whole client. volcano_magma and volcano_conduit are the names to link: both are volcano_core today, and will
+# become real libraries without changing who uses them.
+#
+# Opt-in, and the client above is not touched by it: the same sources are compiled a second time, with the same flags,
+# into a target that is not part of `all`. Use a build directory of its own (the client builds in-source):
+#   cmake -S . -B build-core -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DVOLCANO_BUILD_CORE=ON
+#   cmake --build build-core --target volcano_core
+# That also writes build-core/volcano_core.cmake, which VC Editor includes to get the library with its include paths,
+# definitions and link libraries.
+option(VOLCANO_BUILD_CORE "Define the volcano_core static library, and export it for VC Editor" OFF)
+if(VOLCANO_BUILD_CORE)
+    set(CORE_SOURCES ${SOURCES})
+    list(FILTER CORE_SOURCES EXCLUDE REGEX "/src/VolcanoClient\\.cpp$")
+
+    add_library(volcano_core STATIC EXCLUDE_FROM_ALL ${CORE_SOURCES})
+
+    # The client and this library each provide the `Volcano` module (the sources `import Volcano;`). That is fine as
+    # long as no target links both.
+    set_target_properties(volcano_core PROPERTIES CXX_SCAN_FOR_MODULES ON)
+    target_sources(volcano_core PRIVATE
+        FILE_SET volcano_core_modules TYPE CXX_MODULES
+        BASE_DIRS "${CMAKE_SOURCE_DIR}/src/modules"
+        FILES
+            "${CMAKE_SOURCE_DIR}/src/modules/Volcano.cppm"
+            "${CMAKE_SOURCE_DIR}/src/modules/Volcano.Application.cppm")
+    # Only this library's own sources import the module. A program that links it includes Application.hpp instead.
+    target_compile_definitions(volcano_core PRIVATE VOLCANO_MODULES)
+
+    # What a program that includes Volcano's headers needs too, so these are PUBLIC.
+    # VOLCANO_CLIENT_BUILD makes VC_API mean "export" instead of "import": without it, linking this library
+    # statically into another program looks for __imp_ symbols that don't exist.
+    target_compile_definitions(volcano_core PUBLIC VOLCANO_CLIENT_BUILD "ImDrawIdx=unsigned int")
+    if(WIN32)
+        target_compile_definitions(volcano_core PUBLIC
+            _ALLOW_COMPILER_AND_STL_VERSION_MISMATCH _HAS_VERBOSE_TRAP=0 _ENABLE_EXTENDED_ALIGNED_STORAGE)
+    endif()
+
+    target_include_directories(volcano_core PUBLIC src src/network src/renderer src/renderer/terrain
+        src/renderer/entity src/renderer/gui)
+    target_include_directories(volcano_core SYSTEM PUBLIC
+        ${VOLCANO_DEP_INCLUDES}
+        "${THIRD_PARTY}" "${THIRD_PARTY}/imgui" "${THIRD_PARTY}/imgui/backends"
+        "${THIRD_PARTY}/vk-bootstrap/src" "${THIRD_PARTY}/vma" "${THIRD_PARTY}/stb"
+        "${PINCEL_DIR}/src/pincel/cpp/include")
+    target_link_libraries(volcano_core PUBLIC Vulkan::Vulkan ${VOLCANO_DEP_LIBS})
+    if(WIN32)
+        target_link_libraries(volcano_core PUBLIC Dbghelp Winmm Winhttp)
+    elseif(UNIX)
+        target_link_libraries(volcano_core PUBLIC ${CMAKE_DL_LIBS})
+    endif()
+
+    # Pincel, the same way as the client above.
+    set(CORE_RUNTIME_DLLS ${VOLCANO_RUNTIME_DLLS})
+    if(WIN32 AND EXISTS "${PINCEL_BUILD_DIR}/pincel.dll")
+        target_compile_definitions(volcano_core PUBLIC PINCEL_SHARED)
+        target_link_libraries(volcano_core PUBLIC "${PINCEL_BUILD_DIR}/pincel.lib")
+        list(APPEND CORE_RUNTIME_DLLS "${PINCEL_BUILD_DIR}/pincel.dll")
+    else()
+        target_link_libraries(volcano_core PUBLIC
+            "${PINCEL_BUILD_DIR}/${PINCEL_LIB_NAME}"
+            "${PINCEL_DIR}/cargo/${PINCEL_RUST_PROFILE}/${PINCEL_CORE_LIB_NAME}"
+            ${PINCEL_SYSTEM_LIBS})
+    endif()
+
+    # The client's own flags, for this library's own sources only (PRIVATE).
+    if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(volcano_core PRIVATE
+            -Wall -Wextra -ffast-math -fms-compatibility -fms-extensions -O3 -g -gcodeview)
+        if(NOT VOLCANO_DEBUG_CHECKS)
+            target_compile_definitions(volcano_core PRIVATE NDEBUG)
+        endif()
+    else()
+        target_compile_options(volcano_core PRIVATE
+            -Wall -Wextra -pthread -ffast-math
+            $<$<CONFIG:Release>:-O3> $<$<CONFIG:Release>:-DNDEBUG>
+            $<$<NOT:$<CONFIG:Release>>:-g> $<$<NOT:$<CONFIG:Release>>:-Og> $<$<NOT:$<CONFIG:Release>>:-march=native>)
+    endif()
+    target_precompile_headers(volcano_core PRIVATE <vulkan/vulkan.h> <glm/glm.hpp>)
+    # Per-file settings (-fno-fast-math for TickLoop and InteractionManager, -w for third-party sources) are source
+    # file properties above, so they already apply here.
+
+    # The names other projects link.
+    add_library(volcano_magma INTERFACE)
+    target_link_libraries(volcano_magma INTERFACE volcano_core)
+    add_library(volcano_conduit INTERFACE)
+    target_link_libraries(volcano_conduit INTERFACE volcano_core)
+
+    # Export for VC Editor. Only with prebuilt libraries (VOLCANO_LIBS_DIR): libraries fetched at configure time
+    # are targets of this project that cannot be exported.
+    if(VOLCANO_LIBS_DIR)
+        export(TARGETS volcano_core volcano_magma volcano_conduit NAMESPACE volcano::
+            FILE "${CMAKE_BINARY_DIR}/volcano_core-targets.cmake")
+        file(WRITE "${CMAKE_BINARY_DIR}/volcano_core.cmake"
+            "# Written by Volcano Client's CMake (-DVOLCANO_BUILD_CORE=ON). Include it from another project.\n"
+            "# That project must find Vulkan first (find_package(Vulkan REQUIRED)): the library links Vulkan::Vulkan.\n"
+            "include(\"\${CMAKE_CURRENT_LIST_DIR}/volcano_core-targets.cmake\")\n"
+            "set(VOLCANO_CORE_SOURCE_DIR \"${CMAKE_SOURCE_DIR}\")\n"
+            "# Volcano loads resources/ relative to its working directory.\n"
+            "set(VOLCANO_CORE_RESOURCES_DIR \"${CMAKE_SOURCE_DIR}/resources\")\n"
+            "# Copy these next to any executable that links volcano::volcano_core.\n"
+            "set(VOLCANO_CORE_RUNTIME_DLLS \"${CORE_RUNTIME_DLLS}\")\n")
+    else()
+        message(WARNING "volcano_core is not exported: VOLCANO_LIBS_DIR is empty, so some dependencies are built by this project.")
+    endif()
 endif()
 
 # =============================================================================

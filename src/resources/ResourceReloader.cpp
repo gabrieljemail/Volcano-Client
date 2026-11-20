@@ -1,6 +1,7 @@
 #include "ResourceReloader.hpp"
 #include "ResourceManager.hpp"
-#include "../GlobalState.hpp"
+#include "../ApplicationDeps.hpp"
+import Volcano;
 #include "../Logger.hpp"
 #include "../ModLoader.hpp"
 #include "../audio/SoundRegistry.hpp"
@@ -13,6 +14,7 @@
 #include "../renderer/gui/GUIController.hpp"
 #include "../renderer/misc/ItemModel.hpp"
 #include "../renderer/misc/ItemRenderer.hpp"
+#include "../renderer/engine/d3d11/D3D11ItemRenderer.hpp"
 #include "../renderer/misc/ModelLoader.hpp"
 #include "../renderer/terrain/MeshingThread.hpp"
 #include "../renderer/terrain/models/BlockRegistry.hpp"
@@ -48,7 +50,7 @@ void Step(const char* what, Fn&& fn)
 
 // Marks every loaded section dirty so MeshingThread remeshes it against the
 // new layer indices and visual ids.
-size_t RemeshWorld(GlobalState* state)
+size_t RemeshWorld(Application* state)
 {
     if (state->world == nullptr) return 0;
 
@@ -66,7 +68,7 @@ void Attach(TextureManager* textureManager, MeshingThread* meshingThread)
     attachedMeshing = meshingThread;
 }
 
-void Reload(GlobalState* state)
+void Reload(Application* state)
 {
     if (running || attachedTextures == nullptr || state == nullptr || state->renderEngine == nullptr) return;
     running = true;
@@ -78,7 +80,7 @@ void Reload(GlobalState* state)
     // Nothing may be in flight on the GPU before images start being destroyed.
     engine->WaitIdle();
 
-    SplashScreen::Show();
+    if (engine->GetVulkan() != nullptr) SplashScreen::Show();
     SplashScreen::SetProgress(0.02f);
 
     // The mesher reads layer indices and block visuals, so park it first.
@@ -109,17 +111,21 @@ void Reload(GlobalState* state)
     Step("ItemRegistry", [&] { ItemRegistry::Init(textures); });
 
     // Point everything at the new atlas.
-    if (textures.array.view != VK_NULL_HANDLE) engine->AttachTextures(textures);
+    if (textures.array.layerCount > 0) engine->AttachTextures(textures);
     Step("Passes", [&] { engine->ReloadPassTextures(); });
     SplashScreen::SetProgress(0.80f);
 
     Step("ItemRenderer", [&] {
         if (state->itemRenderer != nullptr) state->itemRenderer->ReloadTextures();
+        if (state->d3dItemRenderer != nullptr) state->d3dItemRenderer->ReloadTextures();
     });
     Step("GUI", [&] { GUIController::ReloadTextures(&textures); });
     SplashScreen::SetProgress(0.88f);
 
-    Step("EntityRenderer", [&] { EntityRenderer::ReloadTextures(); });
+    if (engine->GetVulkan() != nullptr)
+    {
+        Step("EntityRenderer", [&] { EntityRenderer::ReloadTextures(); });
+    }
     SplashScreen::SetProgress(0.92f);
 
     Step("Lang", [&] { ReloadLang(); });

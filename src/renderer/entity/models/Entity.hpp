@@ -121,7 +121,7 @@ struct Entity {
     // Riding links from Set Passengers, guarded by entitiesMutex. vehicleId is
     // the entity this one sits on (-1 for none). passengers lists this
     // entity's riders in seat order; it can hold the local player's id, who
-    // has no Entity of their own (see GlobalState::ridingEntityId).
+    // has no Entity of their own (see Application::ridingEntityId).
     int32_t vehicleId = -1;
     std::vector<uint32_t> passengers;
 

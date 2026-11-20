@@ -4,10 +4,7 @@
 
 #include <cstdint>
 #include <chrono>
-#include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
-
-#include <array>
 
 namespace Volcano {
 
@@ -15,51 +12,30 @@ struct Vertex {
     glm::vec3 position;
     glm::vec3 color;
     glm::vec2 uv;
-
-    static VkVertexInputBindingDescription getBindingDescription() {
-        VkVertexInputBindingDescription bindingDescription{};
-        bindingDescription.binding = 0;
-        bindingDescription.stride = sizeof(Vertex);
-        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        return bindingDescription;
-    }
-
-    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions() {
-        std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
-
-        attributeDescriptions[0].binding = 0;
-        attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[0].offset = offsetof(Vertex, position);
-
-        attributeDescriptions[1].binding = 0;
-        attributeDescriptions[1].location = 1;
-        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributeDescriptions[1].offset = offsetof(Vertex, color);
-
-        attributeDescriptions[2].binding = 0;
-        attributeDescriptions[2].location = 2;
-        attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescriptions[2].offset = offsetof(Vertex, uv);
-
-        return attributeDescriptions;
-    }
 };
 
+// One drawable chunk-section mesh. Deliberately backend-neutral: the buffer
+// fields are OPAQUE GPU HANDLES, not a Vulkan or D3D11 type - the active
+// backend's SlabBuffer hands out its own buffer pointer (VkBuffer or
+// ID3D11Buffer*) and each backend casts back to its own type at draw time.
+// vertexOffset /
+// indexOffset are BYTE offsets into those shared slab buffers (see
+// SlabBuffer), so a mesh never owns its memory; the mesher gives the region
+// back through SlabBuffer::Free when the mesh is replaced or removed.
 struct Mesh {
-    VkBuffer vertexBuffer = VK_NULL_HANDLE;
-    VkDeviceSize vertexOffset = 0;
+    void* vertexBuffer = nullptr;
+    uint64_t vertexOffset = 0;
     uint32_t vertexCount = 0;
 
-    VkBuffer indexBuffer = VK_NULL_HANDLE;
-    VkDeviceSize indexOffset = 0;
+    void* indexBuffer = nullptr;
+    uint64_t indexOffset = 0;
     uint32_t indexCount = 0;
 
     // Exact byte sizes of the slab regions above (0 if not slab-allocated),
     // so the region can be handed back via SlabBuffer::Free when this mesh
     // is replaced or removed
-    VkDeviceSize vertexBytes = 0;
-    VkDeviceSize indexBytes = 0;
+    uint64_t vertexBytes = 0;
+    uint64_t indexBytes = 0;
 
     glm::mat4 modelMatrix = glm::mat4(1.0f);
     std::chrono::steady_clock::time_point fadeStart{};

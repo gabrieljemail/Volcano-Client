@@ -11,6 +11,11 @@ namespace Log {
 // Replaces plain std::cout usage
 void Info(const std::string& message);
 
+// Wide-string variant for Windows APIs that hand back WCHAR buffers
+// (e.g. DXGI_ADAPTER_DESC::Description). Converts to UTF-8 and forwards to
+// Info(const std::string&); const wchar_t*/L"..." convert implicitly.
+void Info(const std::wstring& message);
+
 // Replaces plain std::cerr usage
 void Error(const std::string& message);
 

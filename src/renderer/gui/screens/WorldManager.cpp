@@ -52,7 +52,7 @@ struct Download {
 struct WorldScreen {
     enum class Mode { LIST, CREATE, EDIT };
 
-    GlobalState* state = nullptr;
+    Application* state = nullptr;
     Mode mode = Mode::LIST;
     std::string error;
 
@@ -438,7 +438,7 @@ bool DownloadServerJar(const World& world, std::string& error, const std::functi
     return true;
 }
 
-void ConfigureWorldScreen(Screen* screen, GlobalState* state, WorldListActions actions)
+void ConfigureWorldScreen(Screen* screen, Application* state, WorldListActions actions)
 {
     LoadWorlds(state);
 

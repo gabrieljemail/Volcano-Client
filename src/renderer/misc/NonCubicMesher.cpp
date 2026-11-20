@@ -3,7 +3,6 @@
 #include "../terrain/models/BlockRegistry.hpp"
 #include "../terrain/models/ChunkSection.hpp"
 #include "../models/SlabBuffer.hpp"
-#include "../VulkanInit.hpp"
 #include "../BiomeColors.hpp"
 #include "../../Logger.hpp"
 #include "../../Config.hpp"
@@ -17,14 +16,14 @@ namespace Volcano {
 
 // Same "one slab pair, bump-allocated per chunk mesh" scheme ChunkMesher
 // uses - see its own comment for why (streamed-in chunks, avoiding a
-// VkBuffer/VmaAllocation per chunk). Kept entirely separate from
+// GPU buffer/allocation per chunk). Kept entirely separate from
 // ChunkMesher's slabs since this mesh is bound by different pipelines
 // (nonCubicPipeline/translucentPipeline) with a different vertex format
 // (MiscVertex). Two pairs
-static SlabBuffer vertexSlab;
-static SlabBuffer indexSlab;
-static SlabBuffer translucentVertexSlab;
-static SlabBuffer translucentIndexSlab;
+static std::unique_ptr<SlabBuffer> vertexSlab;
+static std::unique_ptr<SlabBuffer> indexSlab;
+static std::unique_ptr<SlabBuffer> translucentVertexSlab;
+static std::unique_ptr<SlabBuffer> translucentIndexSlab;
 static bool slabsInitialized = false;
 
 // Scales this mesher's base slab size by how many chunk columns
@@ -57,33 +56,41 @@ static void EnsureSlabsInitialized() {
 
     uint64_t slabSize = SlabSizeForRenderDistance("Graphics.SlabSize.NonCubicMB",
         static_cast<uint32_t>(NonCubicMesher::DEFAULT_SLAB_SIZE / (1024ull * 1024ull)));
-    vertexSlab.Init(slabSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    indexSlab.Init(slabSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    translucentVertexSlab.Init(slabSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    translucentIndexSlab.Init(slabSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    vertexSlab = CreateSlabBuffer();
+    vertexSlab->Init(slabSize, SlabUsageVertex);
+    indexSlab = CreateSlabBuffer();
+    indexSlab->Init(slabSize, SlabUsageIndex);
+    translucentVertexSlab = CreateSlabBuffer();
+    translucentVertexSlab->Init(slabSize, SlabUsageVertex);
+    translucentIndexSlab = CreateSlabBuffer();
+    translucentIndexSlab->Init(slabSize, SlabUsageIndex);
     slabsInitialized = true;
 }
 
 void NonCubicMesher::Shutdown() {
     if (!slabsInitialized) return;
 
-    vertexSlab.Destroy();
-    indexSlab.Destroy();
-    translucentVertexSlab.Destroy();
-    translucentIndexSlab.Destroy();
+    vertexSlab->Destroy();
+    vertexSlab.reset();
+    indexSlab->Destroy();
+    indexSlab.reset();
+    translucentVertexSlab->Destroy();
+    translucentVertexSlab.reset();
+    translucentIndexSlab->Destroy();
+    translucentIndexSlab.reset();
     slabsInitialized = false;
 }
 
 bool NonCubicMesher::ReleaseMesh(const Mesh& mesh) {
     if (!slabsInitialized) return false;
     bool owned = false;
-    for (SlabBuffer* slab : { &vertexSlab, &translucentVertexSlab }) {
+    for (SlabBuffer* slab : { vertexSlab.get(), translucentVertexSlab.get() }) {
         if (mesh.vertexBytes > 0 && slab->Owns(mesh.vertexBuffer)) {
             slab->Free(mesh.vertexBuffer, mesh.vertexOffset, mesh.vertexBytes);
             owned = true;
         }
     }
-    for (SlabBuffer* slab : { &indexSlab, &translucentIndexSlab }) {
+    for (SlabBuffer* slab : { indexSlab.get(), translucentIndexSlab.get() }) {
         if (mesh.indexBytes > 0 && slab->Owns(mesh.indexBuffer)) {
             slab->Free(mesh.indexBuffer, mesh.indexOffset, mesh.indexBytes);
             owned = true;
@@ -93,15 +100,16 @@ bool NonCubicMesher::ReleaseMesh(const Mesh& mesh) {
 }
 
 SlabStats NonCubicMesher::GetSlabStats() {
+    if (!vertexSlab || !indexSlab || !translucentVertexSlab || !translucentIndexSlab) return {};
     return SlabStats{
-        vertexSlab.GetUsed() + indexSlab.GetUsed()
-            + translucentVertexSlab.GetUsed() + translucentIndexSlab.GetUsed(),
-        vertexSlab.GetCapacity() + indexSlab.GetCapacity()
-            + translucentVertexSlab.GetCapacity() + translucentIndexSlab.GetCapacity(),
-        vertexSlab.GetLimit() + indexSlab.GetLimit()
-            + translucentVertexSlab.GetLimit() + translucentIndexSlab.GetLimit(),
-        vertexSlab.GetBlockCount() + indexSlab.GetBlockCount()
-            + translucentVertexSlab.GetBlockCount() + translucentIndexSlab.GetBlockCount()
+        vertexSlab->GetUsed() + indexSlab->GetUsed()
+            + translucentVertexSlab->GetUsed() + translucentIndexSlab->GetUsed(),
+        vertexSlab->GetCapacity() + indexSlab->GetCapacity()
+            + translucentVertexSlab->GetCapacity() + translucentIndexSlab->GetCapacity(),
+        vertexSlab->GetLimit() + indexSlab->GetLimit()
+            + translucentVertexSlab->GetLimit() + translucentIndexSlab->GetLimit(),
+        vertexSlab->GetBlockCount() + indexSlab->GetBlockCount()
+            + translucentVertexSlab->GetBlockCount() + translucentIndexSlab->GetBlockCount()
     };
 }
 
@@ -401,7 +409,7 @@ static void MeshCross(const BlockRegistry::NonCubeVisual& visual, const Chunk& c
 // shared by MeshChunk's two outputs (cutout and translucent) below so the
 // allocate-or-fall-back-to-empty logic only exists once.
 static Mesh BuildMesh(const std::vector<MiscVertex>& vertices, const std::vector<uint32_t>& indices,
-        const glm::mat4& modelMatrix, SlabBuffer& targetVertexSlab, SlabBuffer& targetIndexSlab) {
+        const glm::mat4& modelMatrix, SlabBuffer* targetVertexSlab, SlabBuffer* targetIndexSlab) {
     Mesh mesh{};
     mesh.vertexCount = static_cast<uint32_t>(vertices.size());
     mesh.indexCount = static_cast<uint32_t>(indices.size());
@@ -410,17 +418,17 @@ static Mesh BuildMesh(const std::vector<MiscVertex>& vertices, const std::vector
     if (mesh.vertexCount > 0) {
         EnsureSlabsInitialized();
 
-        VkDeviceSize vertexBufferSize = sizeof(MiscVertex) * vertices.size();
-        VkDeviceSize vertexOffset = 0;
-        bool vertexOk = targetVertexSlab.Allocate(vertices.data(), vertexBufferSize, sizeof(MiscVertex), mesh.vertexBuffer, vertexOffset);
+        uint64_t vertexBufferSize = sizeof(MiscVertex) * vertices.size();
+        uint64_t vertexOffset = 0;
+        bool vertexOk = targetVertexSlab->Allocate(vertices.data(), vertexBufferSize, sizeof(MiscVertex), mesh.vertexBuffer, vertexOffset);
         if (vertexOk) {
             mesh.vertexOffset = vertexOffset;
             mesh.vertexBytes = vertexBufferSize;
         }
 
-        VkDeviceSize indexBufferSize = sizeof(uint32_t) * indices.size();
-        VkDeviceSize indexOffset = 0;
-        bool indexOk = targetIndexSlab.Allocate(indices.data(), indexBufferSize, sizeof(uint32_t), mesh.indexBuffer, indexOffset);
+        uint64_t indexBufferSize = sizeof(uint32_t) * indices.size();
+        uint64_t indexOffset = 0;
+        bool indexOk = targetIndexSlab->Allocate(indices.data(), indexBufferSize, sizeof(uint32_t), mesh.indexBuffer, indexOffset);
         if (indexOk) {
             mesh.indexOffset = indexOffset;
             mesh.indexBytes = indexBufferSize;
@@ -486,10 +494,14 @@ NonCubicMesher::ChunkMeshes NonCubicMesher::MeshChunkSection(const Chunk& chunk,
     glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f),
         glm::vec3(chunk.getX() * CHUNK_SIZE_X, WORLD_MIN_Y + yMin, chunk.getZ() * CHUNK_SIZE_Z));
 
+    // The slabs are unique_ptrs, null until created: initialize before taking
+    // .get() below (BuildMesh's own call runs too late for these arguments).
+    EnsureSlabsInitialized();
+
     ChunkMeshes result;
-    result.cutout = BuildMesh(cutoutVertices, cutoutIndices, modelMatrix, vertexSlab, indexSlab);
+    result.cutout = BuildMesh(cutoutVertices, cutoutIndices, modelMatrix, vertexSlab.get(), indexSlab.get());
     result.translucent = BuildMesh(translucentVertices, translucentIndices, modelMatrix,
-        translucentVertexSlab, translucentIndexSlab);
+        translucentVertexSlab.get(), translucentIndexSlab.get());
     return result;
 }
 

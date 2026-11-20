@@ -2,7 +2,7 @@
 
 A mod is a DLL (`.so` on Linux) in `mods/`. The client loads each one at start-up, in file-name order, and calls its `VC_InitMod`. There are two ways to talk to the client, and a mod can use either or both:
 
-1. **C++ against the client's own classes.** Every `Volcano::` function is exported from the exe, so a mod can call `GlobalState`, `Config`, `World`, `GUIController`, `RenderEngine`... directly, and can detour any of them with MinHook.
+1. **C++ against the client's own classes.** Every `Volcano::` function is exported from the exe, so a mod can call `Application`, `Config`, `World`, `GUIController`, `RenderEngine`... directly, and can detour any of them with MinHook.
 2. **Plain C events.** `VC_EventHandler` / `VC_EventHandlerEx` need nothing from C++. Integrations in other languages can use only these.
 
 The API lives next to the code it belongs to, not in a separate layer. The sections below say where.
@@ -11,11 +11,11 @@ The API lives next to the code it belongs to, not in a separate layer. The secti
 
 ```cpp
 VC_MOD_EXPORT const VC_ModInfo* VC_GetModInfo();            // optional: id, name, version, API version
-VC_MOD_EXPORT void VC_InitMod(Volcano::GlobalState* game);   // required: register handlers here
-VC_MOD_EXPORT void VC_ShutdownMod(Volcano::GlobalState*);    // optional: undo everything before unload
+VC_MOD_EXPORT void VC_InitMod(Volcano::Application* game);   // required: register handlers here
+VC_MOD_EXPORT void VC_ShutdownMod(Volcano::Application*);    // optional: undo everything before unload
 ```
 
-`VC_GetModInfo` lets the client refuse a mod built for another API generation (`VC_API_VERSION_MAJOR` differs, or the mod wants a newer minor). Changing `GlobalState`'s layout is a breaking change, so the major is bumped when it happens.
+`VC_GetModInfo` lets the client refuse a mod built for another API generation (`VC_API_VERSION_MAJOR` differs, or the mod wants a newer minor). Changing `Application`'s layout is a breaking change, so the major is bumped when it happens.
 
 Anything a mod hands to the client (event handlers, HUD elements, listeners, render passes) points into the DLL, so remove it in `VC_ShutdownMod`.
 
@@ -44,7 +44,7 @@ Handlers run on the thread in the table. Do not call ImGui or Vulkan from a non-
 - `CreateWindow(...)` and `GUIWindow::customContent`: a window of components plus free-form ImGui.
 - Standard controls, all the main menu's height and look, with no layout math at the call site: `DrawButton(label, width)`, `DrawMenuButton(label)` (centered, menu width), `DrawInput(id, text, width, hint)` (returns true on Enter) and `DrawDropdown(id, options, selected, width)`. `GetControlHeight()`, `CenterNextControl()` and `AlignTextToControl()` (for a caption beside a control) cover the rest. Use these instead of raw `ImGui::Button`/`InputText`, which are shorter and look different.
 - `SetDebugDisplay(...)`: lines in the F3 overlay.
-- `InventoryManager::TakeSnapshot()` (`GlobalState::inventory`): a lock-free copy of the hotbar, main inventory, armor, offhand and carried item. Read this instead of locking `inventory.mutex` yourself.
+- `InventoryManager::TakeSnapshot()` (`Application::inventory`): a lock-free copy of the hotbar, main inventory, armor, offhand and carried item. Read this instead of locking `inventory.mutex` yourself.
 
 ## Packets (`src/network/models/PacketEvent.hpp`)
 
@@ -69,6 +69,6 @@ Every non-inline `Volcano::` function is exported, so MinHook can detour it by a
 
 ## Data a mod reads
 
-`GlobalState` is the access point; its fields are public. Cross-thread fields come with a mutex named `<field>Mutex` (see `CODESTYLE.md`). Prefer the snapshot-style helpers where they exist. `World` locks itself. `Config` is not thread-safe: read it from the render thread or at init.
+`Application` is the access point; its fields are public. Cross-thread fields come with a mutex named `<field>Mutex` (see `CODESTYLE.md`). Prefer the snapshot-style helpers where they exist. `World` locks itself. `Config` is not thread-safe: read it from the render thread or at init.
 
 If a polymorphic class (one with virtual functions) is meant to be derived from in a mod, mark it `VC_API` in its header (as `RenderPass` is): the exe's exports cannot carry its vtable otherwise.

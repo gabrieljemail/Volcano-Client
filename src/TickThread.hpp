@@ -4,7 +4,12 @@
 
 #include <stop_token>
 #include <thread>
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "Application.hpp"
+#endif
 
 namespace Volcano {
 
@@ -13,13 +18,13 @@ namespace Volcano {
 // socket reads. Read-only w.r.t. player state
 class TickThread {
 public:
-    explicit TickThread(GlobalState* state) : state(state) {}
+    explicit TickThread(Application* state) : state(state) {}
     ~TickThread();
 
     void Start();
 
 private:
-    GlobalState* state;
+    Application* state;
     std::jthread worker;
 
     void ThreadEntry(std::stop_token stopToken);

@@ -18,9 +18,19 @@
 #include "ControlRenderer.hpp"
 #include "HudRenderer.hpp"
 #include "PincelSprite.hpp"
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "Application.hpp" // Mods (sdk/) include this header and cannot import.
+#endif
 #include "models/GUIWindow.hpp"
 #include "models/Screen.hpp"
+
+#ifdef _WIN32
+struct ID3D11Device;
+struct ID3D11DeviceContext;
+#endif
 
 namespace Volcano {
 
@@ -81,8 +91,12 @@ std::string Format(const T& value)
 
 class GUIController {
 public:
-    static void Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, GlobalState* globalState,
+    static void Init(GLFWwindow* window, VkRenderPass renderPass, uint32_t imageCount, Application* application,
                       const TextureManager* textureManager);
+#ifdef _WIN32
+    static void InitD3D11(GLFWwindow* window, ID3D11Device* device, ID3D11DeviceContext* context,
+        Application* application, const TextureManager* textureManager);
+#endif
     static void Shutdown();
     // Rebuilds every texture-derived icon (standalone HUD art, item icons, 3D
     // model icons) after a resource reload, keeping the ImGui backend alive.
@@ -93,6 +107,9 @@ public:
     // `scene` (the frame's camera) is what world-space HUD elements such as
     // nametags project through; null skips them.
     static void Render(VkCommandBuffer commandBuffer, const Engine::SceneView* scene = nullptr);
+#ifdef _WIN32
+    static void RenderD3D11(const Engine::SceneView* scene = nullptr);
+#endif
     // Ends the current ImGui frame without drawing (for a skipped frame).
     static void DiscardFrame();
 
@@ -209,8 +226,12 @@ public:
     static ImVec2 GetHotbarOrigin();
 
 private:
+    static void InitContext(GLFWwindow* window, Application* application, const TextureManager* textureManager);
+    static void FinishInit(bool loadVulkanIcons);
+    static void BuildDrawData(const Engine::SceneView* scene);
+    static bool d3d11Backend;
     static void RenderHudElements();
-    static GlobalState* state;
+    static Application* state;
     static GLFWwindow* windowHandle;
     static const TextureManager* textureManager;
     static std::vector<GUI::GUIWindow*> windows;
@@ -269,6 +290,7 @@ private:
         VmaAllocation allocation = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
         VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+        void* d3dView = nullptr; // Direct3D 11: an owned ID3D11ShaderResourceView* (the other fields stay null).
     };
     // Loaded once in Init(); null (every field VK_NULL_HANDLE) if the PNG is
     // missing or fails to load

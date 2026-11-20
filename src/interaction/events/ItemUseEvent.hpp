@@ -3,7 +3,12 @@
 #define VOLCANO_ITEM_USE_EVENT_H
 
 #include <glm/glm.hpp>
-#include "../../GlobalState.hpp"
+#include "../../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../../Application.hpp"
+#endif
 #include "../../inventory/ItemStack.hpp"
 #include "../InteractionTypes.hpp"
 
@@ -31,7 +36,7 @@ struct ItemUseEvent {
     bool hasEntityTarget = false;
     Hand hand = Hand::Main;
 
-    void Dispatch(GlobalState* /*state*/) const
+    void Dispatch(Application* /*state*/) const
     {
         // TODO: once ItemRegistry carries per-item behavior data, resolve it
         // here instead of in InteractionManager

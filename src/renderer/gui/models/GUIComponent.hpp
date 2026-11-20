@@ -42,7 +42,7 @@ public:
     GUIComponent* GetParent() { return parent; }
 
     // Polymorphic virtuals.
-    virtual void AddClickHandler(std::function<void()>* callback) {}
+    virtual void AddClickHandler(std::function<void()>* /*callback*/) {}
     virtual void RemoveClickHandler([[maybe_unused]] std::function<void()>* callback) {}
     // virtual void SetHoverState(ButtonHoverState newHoverState) {}
     virtual void Click() {}

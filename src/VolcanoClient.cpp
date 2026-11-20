@@ -6,7 +6,8 @@
 #include <stop_token>
 #include <GLFW/glfw3.h>
 #include "CrashReporter.hpp"
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+import Volcano;
 #include "RideController.hpp"
 #include "ModLoader.hpp"
 #include "InputHandler.hpp"
@@ -23,13 +24,14 @@
 #include "renderer/misc/ItemRenderer.hpp"
 #include "renderer/particle/ParticleSystem.hpp"
 #include "renderer/RenderThread.hpp"
-#include "renderer/engine/vulkan/VulkanRenderEngine.hpp"
+#include "renderer/engine/RenderEngine.hpp"
 #include "renderer/SplashScreen.hpp"
 #include "renderer/TextureManager.hpp"
 #include "renderer/terrain/models/Chunk.hpp"
 #include "renderer/terrain/models/World.hpp"
 #include "renderer/terrain/models/BlockRegistry.hpp"
 #include "renderer/entity/models/EntityRegistry.hpp"
+#include "renderer/entity/EntityRenderer.hpp"
 #include "inventory/ItemRegistry.hpp"
 #include "renderer/terrain/ChunkMesher.hpp"
 #include "renderer/terrain/MeshingThread.hpp"
@@ -56,6 +58,7 @@
 #include "audio/AudioManager.hpp"
 #include <filesystem>
 #include <vector>
+#include "renderer/engine/d3d11/D3D11ItemRendererFactory.hpp"
 using namespace std;
 
 // Defaults for the connect screen's fields are read from Network.DevServerHost/
@@ -86,6 +89,15 @@ static void ParseServerAddress(const std::string& address, std::string& outHost,
 int main(int argc, char** argv)
 {
     Volcano::Platform::OS::AttachParentConsole();
+
+    // Everything below addresses resources/ relative to the working
+    // directory, and shortcuts/file associations don't guarantee it is the
+    // exe's folder - anchor it once, up front.
+    {
+        std::filesystem::path exeDir = std::filesystem::path(Volcano::Platform::OS::GetExecutablePath()).parent_path();
+        if (!exeDir.empty()) std::filesystem::current_path(exeDir);
+    }
+
     Volcano::CrashReporter::Install();
     if (Volcano::CrashReporter::HandleReportMode(argc, argv)) return 0;
 
@@ -94,10 +106,10 @@ int main(int argc, char** argv)
 
     // Cool terminal effects.
     std::cout << "\x1b[2J\x1b[H"; // Clear the screen and reset the cursor.
-    std::cout << "\x1b]0;Volcano Client Log\x07"; // Title.
+    std::cout << "\x1b]0;Volcano Client\x07"; // Title.
 
     // Initialize global state.
-    Volcano::GlobalState state{};
+    Volcano::Application state{};
     state.LoadSettings();
 
     // Resource packs must exist before any asset read.
@@ -141,12 +153,28 @@ int main(int argc, char** argv)
     // wants it available from the start.
     state.systemInfo.DetectCPU();
 
-    Volcano::Engine::Vulkan::VulkanRenderEngine renderEngine(&state);
-    state.renderEngine = &renderEngine;
-    renderEngine.Init();
+    // Prefer the configured backend, then use the other available backend
+    // if its device/window initialization fails.
+    std::string preferredRenderer = std::get<std::string>(state.config->Get("Graphics.PreferredRenderer", "Vulkan"));
+    std::unique_ptr<Volcano::Engine::RenderEngine> renderEngine;
+    try
+    {
+        renderEngine = Volcano::Engine::CreateAvailableRenderEngine(&state, preferredRenderer);
+    }
+    catch (const std::exception& e)
+    {
+        Volcano::Platform::OS::ShowErrorDialog("Renderer initialization failed", e.what());
+        return 1;
+    }
 
     Volcano::RenderThread renderer(&state);
-    Volcano::SplashScreen::Show();
+    // The splash screen is a Vulkan renderer of its own (SplashScreen.cpp
+    // drives VulkanInit's globals directly) - skip it on other backends
+    // until it's ported. SetProgress/Hide are already safe no-ops without it.
+    if (state.renderEngine->GetVulkan() != nullptr)
+    {
+        Volcano::SplashScreen::Show();
+    }
     modLoader.Fire(Volcano::EventType::SPLASH_SCREEN);
 
     // First run: the game's own assets aren't shipped, so ask, then fetch them from Mojang before anything reads them.
@@ -168,6 +196,20 @@ int main(int argc, char** argv)
             return 1;
         }
         resourceManager.Reload();
+
+        // The entity pass built everything except the pack-sourced content at
+        // engine init (EntityRenderer::Init skips it while the base pack is
+        // missing); now that it has downloaded, load the skins and mob models.
+        try
+        {
+            if (state.renderEngine->GetVulkan() != nullptr) Volcano::EntityRenderer::LoadContent();
+        }
+        catch (const std::exception& e)
+        {
+            Volcano::Platform::OS::ShowErrorDialog("Downloaded assets unusable", e.what());
+            Volcano::SplashScreen::Hide();
+            return 1;
+        }
     }
 
     // Each init step below reports progress, which also pumps the window's
@@ -256,17 +298,24 @@ int main(int argc, char** argv)
 
     // Point the world passes at the texture array, and start the ImGui
     // backend against the engine's render pass.
-    renderEngine.AttachTextures(textureManager);
+    renderEngine->AttachTextures(textureManager);
     Volcano::SplashScreen::SetProgress(0.92f);
-    renderEngine.AttachGUI(&textureManager);
+    renderEngine->AttachGUI(&textureManager);
     Volcano::SplashScreen::SetProgress(0.95f);
 
     // Draws 3D item models (inventory icons for blocks and custom models).
     // Needs the texture array attached above.
-    Volcano::ItemRenderer itemRenderer(&textureManager);
-    Volcano::Engine::ShaderLibrary itemShaders;
-    itemRenderer.Init(itemShaders);
-    state.itemRenderer = &itemRenderer;
+    std::unique_ptr<Volcano::ItemRenderer> itemRenderer;
+    if (state.renderEngine->GetVulkan() != nullptr)
+    {
+        itemRenderer = std::make_unique<Volcano::ItemRenderer>(&textureManager);
+        Volcano::Engine::ShaderLibrary itemShaders;
+        itemRenderer->Init(itemShaders);
+        state.itemRenderer = itemRenderer.get();
+    }
+    // Held items, dropped items and inventory icons on Direct3D 11. Not
+    // essential: without it items fall back to their flat sprites/cubes.
+    state.d3dItemRenderer = Volcano::Engine::D3D11::CreateItemRenderer(state.renderEngine, &textureManager);
     Volcano::SplashScreen::SetProgress(0.97f);
 
     // World (placeholder - see the tick-loop plan) and attributes must exist
@@ -309,8 +358,8 @@ int main(int argc, char** argv)
 
     // Shown from the moment a connection attempt starts (singleplayer or
     // multiplayer) until the world is ready - the main loop below closes it
-    // once GlobalState::worldReady flips. See LoadingScreen.hpp; what it
-    // says follows GlobalState::connectionPhase. Cancel (only offered while
+    // once Application::worldReady flips. See LoadingScreen.hpp; what it
+    // says follows Application::connectionPhase. Cancel (only offered while
     // a local server is starting) doesn't block on the server shutting down
     // - see RequestStop's own comment. The old NetworkThread (and its
     // still-shutting-down LocalServer) gets joined for real whenever
@@ -463,7 +512,7 @@ int main(int argc, char** argv)
         }
 
         // NetworkThread flags this when a session ends unexpectedly (kicked,
-        // dropped, login failure) - see GlobalState::ReportDisconnect. Reset
+        // dropped, login failure) - see Application::ReportDisconnect. Reset
         // world/session state so the next connection starts clean instead of
         // layering onto the previous one's leftovers, then show the connect
         // screen again with the reason.
@@ -477,7 +526,7 @@ int main(int argc, char** argv)
             Volcano::Log::Info("Returned to connect screen: " + reason);
             modLoader.Fire(Volcano::EventType::LEAVE_PLAY_STATE);
 
-            // See GlobalState::ResetWorldState's own comment
+            // See Application::ResetWorldState's own comment
             state.SetConnectionPhase(Volcano::ConnectionPhase::Idle);
             state.ResetWorldState();
 
@@ -545,9 +594,12 @@ int main(int argc, char** argv)
     // buffers MeshingThread writes into.
     meshingThread.Stop();
 
-    itemRenderer.Shutdown();
+    if (itemRenderer) itemRenderer->Shutdown();
+    Volcano::Engine::D3D11::ShutdownItemRenderer(state.d3dItemRenderer);
     textureManager.Destroy();
-    renderEngine.Shutdown();
+    renderEngine->Shutdown();
+    Volcano::Engine::D3D11::DestroyItemRenderer(state.d3dItemRenderer);
+    state.d3dItemRenderer = nullptr;
 
     return 0;
 }

@@ -9,7 +9,7 @@ namespace Volcano::Engine::Passes {
 
 // Transparent full cubes (glass, slime, ice, ...), partial-volume shapes
 // (slabs, carpets, ...) and cross-shaped plants (grass, flowers, ...) from
-// GlobalState::nonCubicRenderList
+// Application::nonCubicRenderList
 class NonCubicPass : public ChunkMeshPass {
 public:
     static constexpr const char* NAME = "NonCubic";

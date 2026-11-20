@@ -4,7 +4,12 @@
 
 #include <chrono>
 #include <glm/glm.hpp>
-#include "../GlobalState.hpp"
+#include "../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../Application.hpp"
+#endif
 #include "engine/RenderEngine.hpp"
 #include "engine/SceneView.hpp"
 
@@ -15,7 +20,7 @@ namespace Volcano {
 // Runs on the main (GLFW-owning) thread now
 class RenderThread {
 public:
-    explicit RenderThread(Volcano::GlobalState* globalState);
+    explicit RenderThread(Volcano::Application* application);
     ~RenderThread();
 
     // One iteration of the frame loop
@@ -28,7 +33,7 @@ public:
     void Shutdown();
 
 private:
-    Volcano::GlobalState* state;
+    Volcano::Application* state;
 
     // Timing variables:
     chrono::steady_clock::time_point frameStartTime;
@@ -52,7 +57,7 @@ private:
     // apart from "geometry exists but lost the depth/winding test," which
     // fill-mode alone can't distinguish. RenderThread-owned since it's only
     // ever read/written from this thread's own frame loop, unlike
-    // GlobalState's cross-thread fields.
+    // Application's cross-thread fields.
     bool wireframeMode = false;
 
     // Set when a key was pressed while F3 was held, so releasing F3 doesn't

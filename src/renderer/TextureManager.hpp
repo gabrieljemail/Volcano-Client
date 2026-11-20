@@ -7,6 +7,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <vulkan/vulkan.h>
 #include "VulkanInit.hpp"
 
@@ -22,6 +23,7 @@ struct TextureArray {
     VkImageView view = VK_NULL_HANDLE;
     VkSampler sampler = VK_NULL_HANDLE;
     uint32_t layerCount = 0;
+    std::vector<uint8_t> rgbaPixels;
 };
 
 class TextureManager {
@@ -30,21 +32,24 @@ public:
     ~TextureManager();
 
     // Loads every PNG under assets/minecraft/textures/{block,item} as resolved
-    // by ResourceManager and uploads into a single 2D array image. Layer size
+    // by ResourceManager into a backend-neutral CPU texture array. Layer size
     // is the largest texture (power of two, min 16); smaller textures are
     // upscaled nearest-neighbour. Animation strips use frame 0.
     // Safe to call again: any previous array is destroyed first (see Reload).
     // onProgress, if given, is called with 0..1 as textures are uploaded.
     void LoadResourcePack(const std::function<void(float)>& onProgress = nullptr);
 
-    // Rebuilds the atlas in place. The caller must have stopped rendering and
-    // called vkDeviceWaitIdle, then re-attach array.view/sampler to its
-    // descriptor sets and refresh every cached layer index afterwards.
+    // Rebuilds the CPU atlas in place. The caller must stop rendering and
+    // re-attach it to the active renderer afterwards.
     void Reload(const std::function<void(float)>& onProgress = nullptr);
 
-    // Frees the texture array. Safe to call repeatedly or before a load. Must
-    // run after rendering stops and before the VMA allocator is destroyed.
+    // Frees CPU data and any Vulkan allocation. Safe to call repeatedly or
+    // before a load; call after rendering stops.
     void Destroy();
+
+    // Uploads this atlas for the Vulkan backend. Other backends upload
+    // rgbaPixels through their own device API.
+    void UploadVulkan();
 
     // Edge length in pixels of every layer, and mip count (0 before a load).
     uint32_t LayerSize() const { return layerSize; }
@@ -54,6 +59,7 @@ public:
 
     // Same lookup as GetLayerIndex, without its "not found" log line
     bool HasLayer(const std::string& textureName) const;
+    const uint8_t* GetLayerPixels(uint32_t layer) const;
 
     TextureArray array;
 private:

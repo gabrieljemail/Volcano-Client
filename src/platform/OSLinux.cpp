@@ -210,6 +210,14 @@ void OS::ShowErrorDialog(const std::string& title, const std::string& message)
     std::fprintf(stderr, "%s\n\n%s\n", title.c_str(), message.c_str());
 }
 
+bool OS::PlaceBorderlessWindow(GLFWwindow*, GLFWmonitor*)
+{
+    // Not done yet: callers fall back to an undecorated window. The compositor-visible way is a fullscreen request
+    // (glfwSetWindowMonitor with the monitor at its current mode, which is _NET_WM_STATE_FULLSCREEN on X11 and
+    // xdg_toplevel.set_fullscreen on Wayland), which needs testing on Linux before it goes here.
+    return false;
+}
+
 bool OS::EnableBufferedRawMouse(GLFWwindow*)
 {
     return false; // No batched equivalent; GLFW's XInput2 raw motion is used instead.

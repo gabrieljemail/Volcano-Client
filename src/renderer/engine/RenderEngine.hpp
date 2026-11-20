@@ -13,13 +13,14 @@
 #include "ShaderLibrary.hpp"
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 class TextureManager;
 }
 
 namespace Volcano::Engine {
 
 namespace Vulkan { class VulkanRenderEngine; }
+namespace D3D11  { class D3D11RenderEngine; }
 
 // The boundary between the rendering engine and the rest of the client.
 // Everything outside src/renderer/engine/ (RenderThread's frame loop,
@@ -27,7 +28,7 @@ namespace Vulkan { class VulkanRenderEngine; }
 // this interface
 class RenderEngine {
 public:
-    explicit RenderEngine(GlobalState* globalState) : state(globalState) {}
+    explicit RenderEngine(Application* application) : state(application) {}
     virtual ~RenderEngine() = default;
 
     RenderEngine(const RenderEngine&) = delete;
@@ -43,7 +44,7 @@ public:
     // Points the world/non-cubic passes' texture binding at the loaded
     // block/item texture array. Call once TextureManager::LoadResourcePack()
     // has finished.
-    virtual void AttachTextures(const TextureManager& textures) = 0;
+    virtual void AttachTextures(TextureManager& textures) = 0;
 
     // Starts the ImGui backend against this engine's render pass
     virtual void AttachGUI(const TextureManager* textures) = 0;
@@ -62,6 +63,11 @@ public:
     // or nullptr on any other backend. Passes and mods that need Vulkan
     // objects go through this instead of reaching for VulkanInit's globals.
     virtual Vulkan::VulkanRenderEngine* GetVulkan() { return nullptr; }
+
+    // Same role for the DX11 backend (D3D11RenderEngine.hpp): raw
+    // ID3D11Device/Context/swapchain access for passes and mods, nullptr
+    // everywhere else.
+    virtual D3D11::D3D11RenderEngine* GetD3D11() { return nullptr; }
 
     // ---- Frames ----
 
@@ -115,7 +121,7 @@ public:
     std::vector<std::string> GetPassNames() const;
 
     // {name, smoothed Record() CPU ms} per pass, in draw order. Values only
-    // update while GlobalState::debugHudVisible.
+    // update while Application::debugHudVisible.
     std::vector<std::pair<std::string, float>> GetPassRecordTimes() const;
 
     // ---- Shaders ----
@@ -135,7 +141,7 @@ public:
     void RequestShaderReload() { shaderReloadRequested.store(true); }
 
 protected:
-    GlobalState* state;
+    Application* state;
     ShaderLibrary shaders;
     std::vector<std::unique_ptr<RenderPass>> passes;
     bool passesCreated = false;
@@ -162,6 +168,12 @@ private:
     RenderPass* InsertAt(size_t index, std::unique_ptr<RenderPass> pass);
     size_t IndexOf(const std::string& passName) const;
 };
+
+// Creates and initializes the preferred backend, trying the other available
+// backend if initialization fails. state->renderEngine points to the
+// candidate during initialization and is cleared after failure.
+std::unique_ptr<RenderEngine> CreateAvailableRenderEngine(Application* state,
+    const std::string& preferredBackend);
 
 } // namespace Volcano::Engine
 

@@ -6,14 +6,19 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
-#include "../../GlobalState.hpp"
+#include "../../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../../Application.hpp"
+#endif
 #include "../engine/ShaderLibrary.hpp"
 
 namespace Volcano {
 
 namespace Engine::Vulkan { class VulkanRenderEngine; }
 
-// Renders GlobalState::entities as a second, batched draw pass alongside the
+// Renders Application::entities as a second, batched draw pass alongside the
 // chunk pass: one static cube mesh, one SSBO of per-instance data (position,
 // yaw, bounding box, color/hurt tint) rebuilt every frame from the culled
 // entity list, and a single vkCmdDrawIndexedIndirect() to draw them all -
@@ -36,6 +41,13 @@ public:
     // Rebuilds every pack-sourced texture (mob/chest skins, block-entity
     // textures) after a resource reload. GPU must be idle.
     static void ReloadTextures();
+
+    // Loads just the pack-sourced content (chest skins, mob models and their
+    // skins) without touching pipelines or buffers - the part of Init() that
+    // needs resources/minecraft on disk. Init() calls it when the base pack
+    // is installed; VolcanoClient.cpp calls it after a first-run download.
+    // Call only when BaseAssets::Installed() is true.
+    static void LoadContent();
 
     // Destroys everything Init() created. Must run before the VMA allocator
     // is destroyed
@@ -100,7 +112,7 @@ public:
     // and supported. `cascade` (0-2) picks which of this frame's caster buffers
     // to use, so each cascade needs its own index.
     static void RecordShadowCasters(VkCommandBuffer cmd, VkPipelineLayout layout, const ShadowPipelines& pipelines,
-        GlobalState* state, const glm::mat4& lightViewProj, const glm::vec3& cameraPosition, float distance,
+        Application* state, const glm::mat4& lightViewProj, const glm::vec3& cameraPosition, float distance,
         uint32_t frameIndex, uint32_t cascade, bool indirect);
 
     // Culls state->entities (frustum + distance limit), uploads the
@@ -109,7 +121,7 @@ public:
     // block entities are grouped by mesh and skin and drawn instanced, through
     // indirect draws when `indirect` is set and the device supports it. Must be
     // called inside an active render pass with viewport/scissor already set
-    static void RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state,
+    static void RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Application* state,
         const glm::mat4& view, const glm::mat4& proj, const glm::vec3& cameraPosition, bool indirect = true);
 };
 

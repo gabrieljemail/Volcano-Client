@@ -76,7 +76,7 @@ void BuildLoading(ControlRenderer& ui, LoadingState& loading)
     loading.cancel.SetVisible(false);
 }
 
-void UpdateLoading(ControlRenderer& ui, GlobalState* state, LoadingState& loading, const std::function<void()>& onCancel)
+void UpdateLoading(ControlRenderer& ui, Application* state, LoadingState& loading, const std::function<void()>& onCancel)
 {
     ConnectionPhase phase = state->connectionPhase.load();
     if (phase != loading.phase)
@@ -120,7 +120,7 @@ void UpdateLoading(ControlRenderer& ui, GlobalState* state, LoadingState& loadin
 
 } // namespace
 
-Screen* CreateLoadingScreen(GlobalState* state, std::function<void()> onCancel)
+Screen* CreateLoadingScreen(Application* state, std::function<void()> onCancel)
 {
     Screen* screen = GUIController::CreateScreen("Joining World", /* closable */ false);
     screen->showTitle = false;

@@ -3,7 +3,12 @@
 #define VOLCANO_SELECTION_RENDERER_H
 
 #include <vulkan/vulkan.h>
-#include "../../GlobalState.hpp"
+#include "../../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../../Application.hpp"
+#endif
 #include "../engine/ShaderLibrary.hpp"
 
 namespace Volcano {
@@ -33,7 +38,7 @@ public:
     // No-op if nothing is targeted. Must be called inside an active render
     // pass with viewport/scissor already set, same contract as
     // EntityRenderer::RecordDraw
-    static void RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, GlobalState* state);
+    static void RecordDraw(VkCommandBuffer cmd, uint32_t frameIndex, Application* state);
 };
 
 } // namespace Volcano

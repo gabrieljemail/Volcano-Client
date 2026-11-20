@@ -4,10 +4,10 @@
 
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
-#include "../RenderPass.hpp"
-#include "../vulkan/VulkanRenderEngine.hpp"
-#include "../../entity/EntityRenderer.hpp"
-#include "ShadowSettings.hpp"
+#include "../../RenderPass.hpp"
+#include "../VulkanRenderEngine.hpp"
+#include "../../../entity/EntityRenderer.hpp"
+#include "../../shared/ShadowSettings.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -70,7 +70,6 @@ private:
     VkPipelineLayout cutoutLayout = VK_NULL_HANDLE; // Texture array (set 0) + the light matrix.
     VkPipeline cutoutPipeline = VK_NULL_HANDLE;
     Vulkan::ShadowCascades cascades; // The last fitted cascades, resent on frames that reuse the map.
-    float strength = 0.0f;        // How dark shadow makes sky light, 0-1.
     bool active = false;
     bool hasMap = false;          // The target holds a finished map from an earlier frame.
     uint64_t lastTickStamp = 0;   // The tick counter value the map was last drawn at.

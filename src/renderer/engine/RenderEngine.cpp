@@ -1,8 +1,16 @@
 #include <chrono>
 #include <exception>
+#include <memory>
+#include <sstream>
+#include <stdexcept>
 #include "RenderEngine.hpp"
-#include "../../GlobalState.hpp"
+#include "../../ApplicationDeps.hpp"
+import Volcano;
 #include "../../Logger.hpp"
+#include "vulkan/VulkanRenderEngine.hpp"
+#ifdef _WIN32
+#include "d3d11/D3D11RenderEngine.hpp"
+#endif
 
 namespace Volcano::Engine {
 
@@ -11,6 +19,72 @@ namespace {
 constexpr size_t NOT_FOUND = static_cast<size_t>(-1);
 
 } // namespace
+
+std::unique_ptr<RenderEngine> CreateAvailableRenderEngine(Application* state,
+    const std::string& preferredBackend)
+{
+    std::vector<std::unique_ptr<RenderEngine>> candidates;
+    auto addVulkan = [&]() {
+        candidates.push_back(std::make_unique<Vulkan::VulkanRenderEngine>(state));
+    };
+#ifdef _WIN32
+    auto addD3D11 = [&]() {
+        candidates.push_back(std::make_unique<D3D11::D3D11RenderEngine>(state));
+    };
+    if (preferredBackend == "Direct3D 11" || preferredBackend == "DirectX11")
+    {
+        addD3D11();
+        addVulkan();
+    }
+    else
+    {
+        if (preferredBackend != "Vulkan")
+        {
+            Log::Error("[WARN] Unknown Graphics.PreferredRenderer \"" + preferredBackend
+                + "\"; trying Vulkan first.");
+        }
+        addVulkan();
+        addD3D11();
+    }
+#else
+    if (preferredBackend != "Vulkan")
+    {
+        Log::Error("[WARN] Direct3D 11 is only available on Windows; trying Vulkan.");
+    }
+    addVulkan();
+#endif
+
+    std::ostringstream failures;
+    bool firstFailure = true;
+    for (auto& candidate : candidates)
+    {
+        state->renderEngine = candidate.get();
+        try
+        {
+            candidate->Init();
+            return std::move(candidate);
+        }
+        catch (const std::exception& error)
+        {
+            std::string message = std::string(candidate->GetBackendName()) + " initialization failed: " + error.what();
+            Log::Error("[WARN] " + message);
+            if (!firstFailure) failures << '\n';
+            failures << message;
+            firstFailure = false;
+            try
+            {
+                candidate->Shutdown();
+            }
+            catch (const std::exception& cleanupError)
+            {
+                Log::Error("[ERROR] Renderer cleanup failed: " + std::string(cleanupError.what()));
+            }
+            state->renderEngine = nullptr;
+        }
+    }
+
+    throw std::runtime_error("[ERROR] No rendering backend could be initialized.\n" + failures.str());
+}
 
 RenderPass* RenderEngine::AddPass(std::unique_ptr<RenderPass> pass)
 {
@@ -165,7 +239,7 @@ bool RenderEngine::HasEnabledPass(PassStage stage) const
 
 void RenderEngine::RecordPasses(FrameContext& frame, PassStage stage)
 {
-    // See GlobalState::trianglesDrawn's own comment
+    // See Application::trianglesDrawn's own comment
     if (stage == PassStage::PRE_MAIN && frame.state && frame.state->debugHudVisible)
     {
         for (uint64_t& count : frame.state->trianglesDrawn) count = 0;
@@ -191,8 +265,8 @@ void RenderEngine::RecordPasses(FrameContext& frame, PassStage stage)
 
     if (profile && stage == PassStage::OVERLAY)
     {
-        GlobalState* s = frame.state;
-        for (int i = 0; i < GlobalState::CHUNK_PHASE_COUNT; i++)
+        Application* s = frame.state;
+        for (int i = 0; i < Application::CHUNK_PHASE_COUNT; i++)
         {
             s->chunkPhaseMs[i] += (s->chunkPhaseFrameMs[i] - s->chunkPhaseMs[i]) * 0.05f;
         }

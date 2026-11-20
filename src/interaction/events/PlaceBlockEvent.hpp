@@ -5,7 +5,12 @@
 #include <mutex>
 #include <vector>
 #include <glm/glm.hpp>
-#include "../../GlobalState.hpp"
+#include "../../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../../Application.hpp"
+#endif
 #include "../../audio/BlockSounds.hpp"
 #include "../../renderer/terrain/LightEngine.hpp"
 #include "../../network/NetworkClient.hpp"
@@ -22,7 +27,7 @@ struct PlaceBlockEvent {
     Hand hand;
     int32_t predictedStateId = -1;
 
-    void Dispatch(GlobalState* state) const
+    void Dispatch(Application* state) const
     {
         // Cursor: where within `face` the click landed, 0..1 on each axis.
         // RaycastBlocks doesn't track the exact 3D hit point (only the
@@ -40,7 +45,7 @@ struct PlaceBlockEvent {
     }
 
 private:
-    void PredictLocally(GlobalState* state) const
+    void PredictLocally(Application* state) const
     {
         glm::ivec3 target = position + face;
         if (!state->world->GetBlock(target.x, target.y, target.z).isAir()) return;

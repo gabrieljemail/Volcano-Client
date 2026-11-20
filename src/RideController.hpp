@@ -6,14 +6,19 @@
 #include <mutex>
 #include <optional>
 #include <glm/glm.hpp>
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "Application.hpp"
+#endif
 #include "renderer/entity/models/EntitySeat.hpp"
 
 namespace Volcano {
 
 class Connection;
 
-// Steers the vehicle or mount we are riding (GlobalState::ridingEntityId).
+// Steers the vehicle or mount we are riding (Application::ridingEntityId).
 // Vehicles are client-authoritative in vanilla: we simulate the boat or horse
 // here, write its pose onto the vehicle Entity, and report it to the server
 // every tick with vehicle_move. Boats and horses/pigs are simulated; anything
@@ -25,7 +30,7 @@ class Connection;
 // two locks at once.
 class RideController {
 public:
-    explicit RideController(GlobalState* state) : state(state) {}
+    explicit RideController(Application* state) : state(state) {}
 
     struct Input
     {
@@ -57,7 +62,7 @@ public:
     void ApplyServerMove(glm::vec3 position, float yawDegrees, float pitchDegrees);
 
 private:
-    GlobalState* state;
+    Application* state;
 
     // RenderThread-only simulation state. yawDeg is Minecraft's yaw (the
     // camera's, negated); Entity::yaw radians equals -radians(yawDeg).

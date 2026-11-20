@@ -8,7 +8,7 @@
 // are two ways in, and a mod can use either or both:
 //
 //  - C++ mods link against the client's own classes (every Volcano:: function
-//    is exported; see CMakeLists.txt) and receive the GlobalState in
+//    is exported; see CMakeLists.txt) and receive the Application in
 //    VC_InitMod. They can also detour any exported function with MinHook.
 //  - Anything else (other languages, integrations) uses only the C functions
 //    below: VC_EventHandler / VC_EventHandlerEx.
@@ -32,13 +32,13 @@
 #endif
 
 // Bumped on a breaking change (the major) or an addition (the minor).
-// Changing GlobalState's layout is breaking: C++ mods read its fields directly.
-#define VC_API_VERSION_MAJOR 2
+// Changing Application's layout is breaking: C++ mods read its fields directly.
+#define VC_API_VERSION_MAJOR 3
 #define VC_API_VERSION_MINOR 0
 
 namespace Volcano {
 
-struct GlobalState;
+struct Application;
 
 // Values are the eventID passed to VC_EventHandler. New events are only ever
 // appended. Threads: everything fires on the main thread except
@@ -78,10 +78,10 @@ struct VC_EventData {
     int32_t d;
 };
 
-typedef void (*VC_EventCallback_T)(Volcano::GlobalState* game);
-typedef void (*VC_EventCallbackEx_T)(Volcano::GlobalState* game, const VC_EventData* data, void* userData);
-typedef void (*VC_InitMod_T)(Volcano::GlobalState* game);
-typedef void (*VC_ShutdownMod_T)(Volcano::GlobalState* game);
+typedef void (*VC_EventCallback_T)(Volcano::Application* game);
+typedef void (*VC_EventCallbackEx_T)(Volcano::Application* game, const VC_EventData* data, void* userData);
+typedef void (*VC_InitMod_T)(Volcano::Application* game);
+typedef void (*VC_ShutdownMod_T)(Volcano::Application* game);
 
 // What a mod says about itself. Return a pointer to a static instance from
 // VC_GetModInfo; the strings must stay valid until VC_ShutdownMod.
@@ -110,8 +110,8 @@ VC_HOST_API uint32_t VC_EventHandlerEx(uint8_t eventID, VC_EventCallbackEx_T cal
 VC_HOST_API bool VC_UnregisterEventHandler(uint32_t handle);
 
 // Mod-provided, e.g.:
-//   VC_MOD_EXPORT void VC_InitMod(Volcano::GlobalState* game) { ... }
+//   VC_MOD_EXPORT void VC_InitMod(Volcano::Application* game) { ... }
 //   VC_MOD_EXPORT const VC_ModInfo* VC_GetModInfo() { static VC_ModInfo info{...}; return &info; }
-//   VC_MOD_EXPORT void VC_ShutdownMod(Volcano::GlobalState* game) { ... }
+//   VC_MOD_EXPORT void VC_ShutdownMod(Volcano::Application* game) { ... }
 
 #endif

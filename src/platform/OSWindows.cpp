@@ -244,6 +244,41 @@ void OS::ShowErrorDialog(const std::string& title, const std::string& message)
     MessageBoxA(nullptr, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
 }
 
+bool OS::PlaceBorderlessWindow(GLFWwindow* window, GLFWmonitor* monitor)
+{
+    HWND hwnd = glfwGetWin32Window(window);
+    if (!hwnd || !monitor) return false;
+
+    // The monitor's full rectangle. GLFW's monitor position plus video mode would do on most setups, but this is
+    // what the shell itself compares a window against to decide it is fullscreen.
+    int monitorX = 0, monitorY = 0;
+    glfwGetMonitorPos(monitor, &monitorX, &monitorY);
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    POINT origin{ monitorX, monitorY };
+    if (!GetMonitorInfoW(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY), &info)) return false;
+    const RECT& full = info.rcMonitor;
+    const int width = full.right - full.left;
+    const int height = full.bottom - full.top;
+
+    // A maximized window keeps its maximized bounds (the work area) through every later resize.
+    if (glfwGetWindowAttrib(window, GLFW_MAXIMIZED)) glfwRestoreWindow(window);
+
+    // Undecorate before sizing. A decorated window is clamped to the maximum tracking size (about the work area),
+    // and removing the frame afterwards keeps that clamped client area: the window came out the size of a maximized
+    // one, under a taskbar on the top or left. A WS_POPUP window has no such limit. If the window is in exclusive
+    // fullscreen, GLFW applies the style once it returns to a plain window below.
+    glfwSetWindowAttrib(window, GLFW_DECORATED, GLFW_FALSE);
+    glfwSetWindowMonitor(window, nullptr, full.left, full.top, width, height, GLFW_DONT_CARE);
+
+    // GLFW's own sizing goes through the style it last computed; say it once more straight to the window so the
+    // result doesn't depend on that.
+    SetWindowPos(hwnd, HWND_TOP, full.left, full.top, width, height,
+        SWP_FRAMECHANGED | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+    glfwFocusWindow(window); // The shell only hides the taskbar for the foreground window.
+    return true;
+}
+
 bool OS::EnableBufferedRawMouse(GLFWwindow* window)
 {
     HWND hwnd = glfwGetWin32Window(window);

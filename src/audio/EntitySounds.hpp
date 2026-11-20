@@ -3,7 +3,12 @@
 #define VOLCANO_ENTITY_SOUNDS_H
 
 #include <string>
-#include "../GlobalState.hpp"
+#include "../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../Application.hpp"
+#endif
 
 namespace Volcano {
 
@@ -11,14 +16,14 @@ namespace Volcano {
 // hurt sound is found by folder: damage/hit for players, mob/<name>/hurt for mobs.
 class EntitySounds {
 public:
-    explicit EntitySounds(GlobalState* state) : state(state) {}
+    explicit EntitySounds(Application* state) : state(state) {}
 
     // `entityName` is the EntityRegistry name ("player", "zombie", ...).
     // `distance` is from the listener in blocks; sounds fade out by 16.
     void PlayHurt(const std::string& entityName, float distance);
 
 private:
-    GlobalState* state;
+    Application* state;
 };
 
 } // namespace Volcano

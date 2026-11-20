@@ -3,7 +3,6 @@
 #include "models/BlockRegistry.hpp"
 #include "models/ChunkSection.hpp"
 #include "../models/SlabBuffer.hpp"
-#include "../VulkanInit.hpp"
 #include "../BiomeColors.hpp"
 #include "../../Logger.hpp"
 #include "../../Config.hpp"
@@ -16,11 +15,12 @@
 namespace Volcano {
 
 // Chunk meshes are streamed in continuously as the world loads, so rather than
-// creating one tiny VkBuffer/VmaAllocation per chunk (which is slow and puts a
+// creating one tiny GPU buffer/allocation per chunk (which is slow and puts a
 // lot of pressure on the allocator/driver), vertex and index data is bump-
-// allocated out of a pair of large, persistently-mapped slab buffers.
-static SlabBuffer vertexSlab;
-static SlabBuffer indexSlab;
+// allocated out of a pair of large slab buffers on whichever backend is active
+// (see SlabBuffer::CreateSlabBuffer).
+static std::unique_ptr<SlabBuffer> vertexSlab;
+static std::unique_ptr<SlabBuffer> indexSlab;
 static bool slabsInitialized = false;
 
 // Scales this mesher's base slab size by how many chunk columns
@@ -53,39 +53,44 @@ static void EnsureSlabsInitialized() {
 
     uint64_t slabSize = SlabSizeForRenderDistance("Graphics.SlabSize.CubicMB",
         static_cast<uint32_t>(ChunkMesher::DEFAULT_SLAB_SIZE / (1024ull * 1024ull)));
-    vertexSlab.Init(slabSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    indexSlab.Init(slabSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    vertexSlab = CreateSlabBuffer();
+    vertexSlab->Init(slabSize, SlabUsageVertex);
+    indexSlab = CreateSlabBuffer();
+    indexSlab->Init(slabSize, SlabUsageIndex);
     slabsInitialized = true;
 }
 
 void ChunkMesher::Shutdown() {
     if (!slabsInitialized) return;
 
-    vertexSlab.Destroy();
-    indexSlab.Destroy();
+    vertexSlab->Destroy();
+    vertexSlab.reset();
+    indexSlab->Destroy();
+    indexSlab.reset();
     slabsInitialized = false;
 }
 
 bool ChunkMesher::ReleaseMesh(const Mesh& mesh) {
     if (!slabsInitialized) return false;
     bool owned = false;
-    if (mesh.vertexBytes > 0 && vertexSlab.Owns(mesh.vertexBuffer)) {
-        vertexSlab.Free(mesh.vertexBuffer, mesh.vertexOffset, mesh.vertexBytes);
+    if (mesh.vertexBytes > 0 && vertexSlab->Owns(mesh.vertexBuffer)) {
+        vertexSlab->Free(mesh.vertexBuffer, mesh.vertexOffset, mesh.vertexBytes);
         owned = true;
     }
-    if (mesh.indexBytes > 0 && indexSlab.Owns(mesh.indexBuffer)) {
-        indexSlab.Free(mesh.indexBuffer, mesh.indexOffset, mesh.indexBytes);
+    if (mesh.indexBytes > 0 && indexSlab->Owns(mesh.indexBuffer)) {
+        indexSlab->Free(mesh.indexBuffer, mesh.indexOffset, mesh.indexBytes);
         owned = true;
     }
     return owned;
 }
 
 SlabStats ChunkMesher::GetSlabStats() {
+    if (!vertexSlab || !indexSlab) return {};
     return SlabStats{
-        vertexSlab.GetUsed() + indexSlab.GetUsed(),
-        vertexSlab.GetCapacity() + indexSlab.GetCapacity(),
-        vertexSlab.GetLimit() + indexSlab.GetLimit(),
-        vertexSlab.GetBlockCount() + indexSlab.GetBlockCount()
+        vertexSlab->GetUsed() + indexSlab->GetUsed(),
+        vertexSlab->GetCapacity() + indexSlab->GetCapacity(),
+        vertexSlab->GetLimit() + indexSlab->GetLimit(),
+        vertexSlab->GetBlockCount() + indexSlab->GetBlockCount()
     };
 }
 
@@ -418,22 +423,22 @@ Mesh ChunkMesher::MeshChunkSection(const Chunk& chunk, const World& world, const
     if (mesh.vertexCount > 0) {
         EnsureSlabsInitialized();
 
-        VkDeviceSize vertexBufferSize = sizeof(PackedVertex) * vertices.size();
-        VkDeviceSize vertexOffset = 0;
+        uint64_t vertexBufferSize = sizeof(PackedVertex) * vertices.size();
+        uint64_t vertexOffset = 0;
         // Align to the full vertex stride (8 bytes), not alignof(PackedVertex)
         // (which is only 4, the alignment of its largest uint32_t member). Using
         // the smaller alignment let vertex sub-buffers start at offsets that were
         // a multiple of 4 but not 8, shifting every subsequent vertex fetch by
         // 4 bytes and corrupting the word0/word1 pairing read by the GPU.
-        bool vertexOk = vertexSlab.Allocate(vertices.data(), vertexBufferSize, sizeof(PackedVertex), mesh.vertexBuffer, vertexOffset);
+        bool vertexOk = vertexSlab->Allocate(vertices.data(), vertexBufferSize, sizeof(PackedVertex), mesh.vertexBuffer, vertexOffset);
         if (vertexOk) {
             mesh.vertexOffset = vertexOffset;
             mesh.vertexBytes = vertexBufferSize;
         }
 
-        VkDeviceSize indexBufferSize = sizeof(uint32_t) * indices.size();
-        VkDeviceSize indexOffset = 0;
-        bool indexOk = indexSlab.Allocate(indices.data(), indexBufferSize, sizeof(uint32_t), mesh.indexBuffer, indexOffset);
+        uint64_t indexBufferSize = sizeof(uint32_t) * indices.size();
+        uint64_t indexOffset = 0;
+        bool indexOk = indexSlab->Allocate(indices.data(), indexBufferSize, sizeof(uint32_t), mesh.indexBuffer, indexOffset);
         if (indexOk) {
             mesh.indexOffset = indexOffset;
             mesh.indexBytes = indexBufferSize;

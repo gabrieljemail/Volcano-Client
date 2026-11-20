@@ -10,7 +10,12 @@
 #include <variant>
 #include <vector>
 #include "Config.hpp"
-#include "GlobalState.hpp"
+#include "ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "Application.hpp"
+#endif
 #include "KeyBindings.hpp"
 #include "renderer/gui/GUIController.hpp"
 #include "renderer/gui/models/Button.hpp"
@@ -41,8 +46,8 @@ namespace Volcano {
  */
 class Onboarding {
 public:
-    Onboarding(GlobalState* globalState, GUI::Screen* mainMenu)
-        : state(globalState), titleScreen(mainMenu)
+    Onboarding(Application* application, GUI::Screen* mainMenu)
+        : state(application), titleScreen(mainMenu)
     {
         bool firstLaunch = std::get<bool>(state->config->Get("UserState.FirstLaunch", true));
         if (!firstLaunch)
@@ -72,7 +77,7 @@ private:
         { true, 2, 256 },       // High
     };
 
-    GlobalState* state;
+    Application* state;
     GUI::Screen* titleScreen;
     std::vector<GUI::Screen*> pages;
     size_t page = 0;

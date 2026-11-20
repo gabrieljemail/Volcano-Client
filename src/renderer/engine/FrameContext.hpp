@@ -10,7 +10,7 @@
 typedef struct VkCommandBuffer_T* VkCommandBuffer;
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 }
 
 namespace Volcano::Engine {
@@ -35,7 +35,7 @@ struct RenderExtent {
 // across frames.
 struct FrameContext {
     RenderEngine* engine = nullptr;
-    GlobalState* state = nullptr;
+    Application* state = nullptr;
     const SceneView* scene = nullptr;
 
     // Which per-frame-in-flight slot is being recorded (0..framesInFlight-1)
@@ -51,6 +51,11 @@ struct FrameContext {
     // For MAIN and OVERLAY passes it is inside a render pass with the
     // viewport/scissor set, so a pass only binds its own pipeline/descriptors
     // and draws; PRE_MAIN passes are outside any render pass.
+    //
+    // VULKAN ONLY: this is the VkCommandBuffer being recorded. Backends
+    // without command buffers (Direct3D 11's immediate context) leave it
+    // null and issue their draws through engine->GetD3D11() instead - a
+    // pass should never assume this field is meaningful on another backend.
     VkCommandBuffer commandBuffer = nullptr;
 
     // proj * view, precomputed once per frame for frustum culling.

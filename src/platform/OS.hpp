@@ -8,6 +8,7 @@
 #include <vector>
 
 struct GLFWwindow;
+struct GLFWmonitor;
 
 namespace Volcano::Platform {
 
@@ -91,6 +92,12 @@ public:
     // Adds all raw motion since the last call to dx/dy. Call right before
     // glfwPollEvents, on the window's thread.
     static void ReadBufferedRawMouse(double& dx, double& dy);
+
+    // Makes `window` a borderless window covering all of `monitor` (its full rectangle, not the work area, so it
+    // goes over a taskbar on any edge). That is what lets the compositor treat it as fullscreen and present it
+    // directly, and what capture tools such as OBS expect. Leaves exclusive fullscreen or a maximized state first.
+    // Returns false where the platform has nothing better than GLFW's generic calls; callers then use those.
+    static bool PlaceBorderlessWindow(GLFWwindow* window, GLFWmonitor* monitor);
 
     // Mod library extension for this platform, with the dot (".dll" / ".so").
     static const char* GetObjectExtension();

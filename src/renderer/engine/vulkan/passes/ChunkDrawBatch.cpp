@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <glm/glm.hpp>
 #include "ChunkDrawBatch.hpp"
-#include "../../VulkanInit.hpp"
+#include "../../../VulkanInit.hpp"
 
 namespace Volcano::Engine::Passes {
 
@@ -53,10 +53,14 @@ uint64_t ChunkDrawBatch::Draw(VkCommandBuffer cmd, uint32_t frameIndex, const st
     if (groupByBuffer)
     {
         grouped = givenMeshes;
+        // Mesh buffer fields are opaque handles (void*); order them by address
+        // so meshes sharing a slab block sort adjacently.
         std::stable_sort(grouped.begin(), grouped.end(), [](const Mesh* a, const Mesh* b)
         {
-            if (a->vertexBuffer != b->vertexBuffer) return a->vertexBuffer < b->vertexBuffer;
-            return a->indexBuffer < b->indexBuffer;
+            const uintptr_t va = reinterpret_cast<uintptr_t>(a->vertexBuffer);
+            const uintptr_t vb = reinterpret_cast<uintptr_t>(b->vertexBuffer);
+            if (va != vb) return va < vb;
+            return reinterpret_cast<uintptr_t>(a->indexBuffer) < reinterpret_cast<uintptr_t>(b->indexBuffer);
         });
         source = &grouped;
     }
@@ -73,6 +77,7 @@ uint64_t ChunkDrawBatch::Draw(VkCommandBuffer cmd, uint32_t frameIndex, const st
     uint32_t count = 0;
     uint32_t runStart = 0;
     VkBuffer runVertexBuffer = VK_NULL_HANDLE, runIndexBuffer = VK_NULL_HANDLE;
+    const void* runVertexHandle = nullptr, * runIndexHandle = nullptr;
     uint64_t triangles = 0;
 
     // Meshes normally all share one vertex/index buffer pair, so this is one
@@ -94,11 +99,13 @@ uint64_t ChunkDrawBatch::Draw(VkCommandBuffer cmd, uint32_t frameIndex, const st
         if (count >= CAPACITY) break;
         if (mesh->indexCount == 0 || mesh->vertexOffset % vertexStride != 0) continue;
 
-        if (count > runStart && (mesh->vertexBuffer != runVertexBuffer || mesh->indexBuffer != runIndexBuffer)) flush();
+        if (count > runStart && (mesh->vertexBuffer != runVertexHandle || mesh->indexBuffer != runIndexHandle)) flush();
         if (count == runStart)
         {
-            runVertexBuffer = mesh->vertexBuffer;
-            runIndexBuffer = mesh->indexBuffer;
+            runVertexHandle = mesh->vertexBuffer;
+            runIndexHandle = mesh->indexBuffer;
+            runVertexBuffer = static_cast<VkBuffer>(mesh->vertexBuffer);
+            runIndexBuffer = static_cast<VkBuffer>(mesh->indexBuffer);
         }
 
         float fade = 1.0f;

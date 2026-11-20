@@ -6,7 +6,7 @@
 #include "../models/Screen.hpp"
 
 namespace Volcano {
-struct GlobalState;
+struct Application;
 }
 
 namespace Volcano::GUI {
@@ -15,7 +15,7 @@ namespace Volcano::GUI {
 // key or mouse button (Esc cancels, Backspace/Delete unbinds); a key shared
 // with another control is shown in red. Changes apply at once and are saved
 // to settings.json (Controls.Keys.*). `onDone` runs for the Done button.
-Screen* CreateKeyBindsScreen(GlobalState* state, std::function<void()> onDone);
+Screen* CreateKeyBindsScreen(Application* state, std::function<void()> onDone);
 
 } // namespace Volcano::GUI
 

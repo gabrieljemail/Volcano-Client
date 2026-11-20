@@ -9,7 +9,7 @@
 #include <vk_mem_alloc.h>
 #include "../RenderEngine.hpp"
 #include "../../models/AllocatedBuffer.hpp"
-#include "../passes/HiZBuildPass.hpp"
+#include "passes/HiZBuildPass.hpp"
 
 namespace Volcano::Engine::Vulkan {
 
@@ -53,10 +53,10 @@ struct ShadowCascades {
 // every RenderPass in the engine's list records into it, in order.
 class VulkanRenderEngine : public RenderEngine {
 public:
-    explicit VulkanRenderEngine(GlobalState* globalState) : RenderEngine(globalState) {}
+    explicit VulkanRenderEngine(Application* application) : RenderEngine(application) {}
 
     void Init() override;
-    void AttachTextures(const TextureManager& textures) override;
+    void AttachTextures(TextureManager& textures) override;
     void AttachGUI(const TextureManager* textures) override;
     void StopRendering() override;
     void Shutdown() override;
@@ -127,6 +127,7 @@ public:
     void RequestScreenshot() override { screenshotRequested = true; }
 
 private:
+    void ApplyFramesInFlight();
     // GPU frame time: two timestamps per frame slot (start/end of its
     // command buffer), read back once that slot's fence has signaled.
     VkQueryPool timestampPool = VK_NULL_HANDLE;

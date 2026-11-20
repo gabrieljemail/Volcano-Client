@@ -3,7 +3,12 @@
 #define VOLCANO_ATTACK_EVENT_H
 
 #include <cstdint>
-#include "../../GlobalState.hpp"
+#include "../../ApplicationDeps.hpp"
+#ifdef VOLCANO_MODULES
+import Volcano;
+#else
+#include "../../Application.hpp"
+#endif
 #include "../../network/NetworkClient.hpp"
 
 namespace Volcano {
@@ -15,7 +20,7 @@ namespace Volcano {
 struct AttackEvent {
     uint32_t entityId;
 
-    void Dispatch(GlobalState* state) const
+    void Dispatch(Application* state) const
     {
         SendAttack(state, entityId);
         SendArmAnimation(state, Hand::Main);

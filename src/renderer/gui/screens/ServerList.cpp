@@ -395,7 +395,7 @@ void BuildList(ControlRenderer& ui, ListState& list)
     // The command bar, over the bottom edge. Only shown with two or more servers selected.
     list.bar = ui.Overlay().AddStack(Orientation::Horizontal);
     list.bar.SetPosition(Pincel::Position::Fixed)
-        .SetInsets(Pincel::Insets{ .left = 0, .right = 0, .bottom = 0 })
+        .SetInsets(Pincel::Insets{ .left = 0, .top = std::nullopt, .right = 0, .bottom = 0 })
         .SetSize(0, units(BAR_HEIGHT))
         .SetAlign(Align::Center, Align::Center)
         .SetGap(units(FIELD_GAP))
@@ -566,7 +566,7 @@ void UpdateList(ControlRenderer& ui, ListState& list, const ServerListActions& a
             }
             list.tipShown = joined;
         }
-        list.tip.SetInsets(Pincel::Insets{ .left = static_cast<int>(ui.Mouse().x) + ui.Units(14.0f), .top = static_cast<int>(ui.Mouse().y) + ui.Units(14.0f) });
+        list.tip.SetInsets(Pincel::Insets{ .left = static_cast<int>(ui.Mouse().x) + ui.Units(14.0f), .top = static_cast<int>(ui.Mouse().y) + ui.Units(14.0f), .right = std::nullopt });
         list.tip.SetVisible(true);
     }
     else

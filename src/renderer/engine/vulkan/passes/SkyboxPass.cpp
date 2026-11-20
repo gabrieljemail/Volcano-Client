@@ -9,10 +9,10 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include "SkyboxPass.hpp"
-#include "../ShaderLibrary.hpp"
-#include "../../VulkanInit.hpp"
-#include "../../../Logger.hpp"
-#include "../../../resources/ImageLoad.hpp"
+#include "../../ShaderLibrary.hpp"
+#include "../../../VulkanInit.hpp"
+#include "../../../../Logger.hpp"
+#include "../../../../resources/ImageLoad.hpp"
 
 namespace Volcano::Engine::Passes {
 
