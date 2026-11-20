@@ -19,6 +19,14 @@ Remaining work, roughly in milestone order. **(M2)** marks what milestone 2 need
 * [ ] Weather, biome tints and the Nether/End dimension visuals
 * [ ] Dyed leather and armor trims. Enchant glint is done on held items and worn armor ; GUI icons get a static baked glint; still missing on dropped items (the entity data only carries the item id).
 * [ ] Automatic singleplayer server generator
+* [ ] `server.properties` editor in the world's Edit screen: a short curated list (gamemode, difficulty, seed, view/simulation distance, `online-mode` read-only along with `server-port`), "Open file" for the rest. Edit only the touched keys so comments and plugin keys survive; seed the file at creation; changes apply on the next server start.
+* [ ] **Installer readiness (M4)** so anyone can install, click Start Menu > Volcano Client, and play:
+  * Install per user (`%LOCALAPPDATA%\Programs`, done in `tools/NSIS/VolcanoInstaller.nsi`), or move settings, logs, saves, `java/` and `resources/minecraft*` to `%APPDATA%`; the client writes next to the exe today, which fails under Program Files. The shortcut's "Start in" folder must be the install dir (relative paths).
+  * Ship the dependent DLLs (OpenSSL, `pincel.dll`, OpenAL, GLFW if dynamic) and the VC++ runtime: the build uses the dynamic CRT, so bundle the redistributable or switch `CMAKE_MSVC_RUNTIME_LIBRARY` to static.
+  * Handle a missing Vulkan driver (`vulkan-1.dll` / no suitable GPU) with a dialog instead of a crash.
+  * Sign the installer, the exe and the DLLs, with a timestamp (SmartScreen reputation).
+  * Test the whole first run on a clean VM: consent dialog, Mojang and minecraft-data download, Java download, create world, play, uninstall (user data is kept).
+  * Offline play and slow or blocked networks: downloads should resume and report errors in a dialog.
 
 ## Current State
 Completion: **about 60% Complete.** (Estimate; milestone 2 is mostly entity coverage, weather and polish away.)
@@ -267,7 +275,7 @@ Everything below was checked in the running client by the user and works.
 [ ] Dropped-item glint (needs enchantments in the entity metadata).
 [ ] Dyed leather and armor trims.
 [ ] Pass-level profiling: the debug menu's per-pass timings plus a frame profiler (Tracy) to find the real hot spots; the frame pacing spin loop is the first suspect for CPU use at a capped FPS.
-[ ] Exe icon (`.rc` plus `.ico`).
+[x] Exe icon: `src/platform/VolcanoClient.rc` plus `resources/logo.ico` (made from `logo.png`), also used by the NSIS installer.
 [ ] Clear `blockBreaks` on a world reset.
 
 ### Pincel dirty rectangles and async UI upload (2026-11-02, built, not run in the client)

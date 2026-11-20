@@ -160,7 +160,7 @@ struct World {
         self->dir = "saves";
         self->distro = ServerDistro::PAPER;
         self->jvmPath = std::get<std::string>(state->config->Get("Singleplayer.JavaPath", std::string("java/bin/java.exe")));
-        self->jvmArgs = std::get<std::string>(state->config->Get("Singleplayer.JavaArgs", std::string("-Xmx1536M -Xms1G -Xss1M -XX:+AlwaysPreTouch -XX:+UseSerialGC -XX:+UseG1GC -XX:ConcGCThreads=1 -XX:ParallelGCThreads=2 -XX:G1NewSizePercent=40 -XX:MaxGCPauseMillis=50 -XX:+UseStringDeduplication -XX:+UnlockExperimentalVMOptions -XX:+TieredCompilation -XX:CICompilerCount=2 -XX:+DontCompileHugeMethods -XX:+VectorizeSIMD --add-modules=jdk.incubator.vector")));
+        self->jvmArgs = std::get<std::string>(state->config->Get("Singleplayer.JavaArgs", std::string("-Xmx768M -Xms768M -XX:+AlwaysPreTouch -XX:+UseSerialGC")));
     }
 };
 

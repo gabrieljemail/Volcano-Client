@@ -306,7 +306,7 @@ void BuildSearch(ControlRenderer& ui, Element parent, CreativeView& view, int wi
         .SetPlaceholder("Search items by name or ID...");
 }
 
-void BuildCreative(ControlRenderer& ui, Application* /*state*/, Screen& /*screen*/, CreativeView& view)
+void BuildCreative(ControlRenderer& ui, Application* state, Screen& screen, CreativeView& view)
 {
     int fontPixels = (ui.Units(1.0f) + 1) * static_cast<int>(Theme::SMALL_FONT_SIZE);
     const int slotPx = Px(ui, SLOT_ART);
@@ -754,7 +754,7 @@ void MiddleClickSurvival(Application* state, int32_t index, bool shiftHeld)
     state->inventory.carriedItem = clone;
 }
 
-void UpdateCreative(ControlRenderer& ui, Application* state, Screen& /*screen*/, CreativeView& view)
+void UpdateCreative(ControlRenderer& ui, Application* state, Screen& screen, CreativeView& view)
 {
     const int slotPx = Px(ui, SLOT_ART);
     const int pitchPx = Px(ui, PITCH_ART);

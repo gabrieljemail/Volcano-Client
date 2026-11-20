@@ -64,6 +64,15 @@ public:
     // Tells Mojang's session server this client is joining `serverHash`. Blocking.
     bool JoinServer(const LoginSession& session, const std::string& serverHash, std::string& error);
 
+    // The name connections use in offline mode (Network.DevUsername in settings.json). Always a valid Minecraft name:
+    // 3-16 letters, digits or underscores; anything else is dropped. The setter only stores it, Save it with the config.
+    std::string OfflineUsername();
+    void SetOfflineUsername(const std::string& name);
+    void SaveSettings(); // Writes settings.json (the offline name).
+
+    // The name shown for whoever connections log in as: the current account's profile name, or the offline name.
+    std::string CurrentUsername();
+
     // The current account's skin, for the local player; empty URL when offline or it has none.
     std::string CurrentSkinUrl(bool& slim);
 

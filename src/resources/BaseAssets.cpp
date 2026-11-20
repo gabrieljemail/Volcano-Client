@@ -25,9 +25,13 @@ using Platform::OS;
 
 constexpr const char* MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 constexpr const char* OBJECTS_URL = "https://resources.download.minecraft.net/";
-constexpr const char* SOUND_PREFIX = "minecraft/sounds/";
+// Everything under minecraft/ in the asset index lives outside the jar: sounds.json, the sound files, lang, fonts.
+constexpr const char* ASSET_PREFIX = "minecraft/";
 constexpr const char* ASSETS_ROOT = "assets/minecraft/";
 constexpr size_t SOUND_WORKERS = 6;
+constexpr const char* DATA_URL = "https://raw.githubusercontent.com/PrismarineJS/minecraft-data/master/data/pc/";
+constexpr const char* DATA_FILES[] = { "protocol.json", "blocks.json", "blockCollisionShapes.json", "items.json",
+    "foods.json", "entities.json", "particles.json" };
 
 // Share of the bar each step gets.
 constexpr float JAR_END = 0.35f;
@@ -94,10 +98,6 @@ fs::path JarMarkerPath() { return fs::path(DIRECTORY) / ".jar-sha1"; }
 // Held until the very end, then renamed over version.json - which stays the last thing written.
 fs::path PendingVersionPath() { return fs::path(DIRECTORY) / "version.json.part"; }
 
-// minecraft/sounds.json (which sound plays for which event) is only in the asset index, not the jar, so it is
-// wanted alongside the sound files themselves.
-constexpr const char* SOUND_EVENTS_KEY = "minecraft/sounds.json";
-
 } // namespace
 
 bool Installed()
@@ -105,6 +105,7 @@ bool Installed()
     std::error_code error;
     return fs::exists(fs::path(DIRECTORY) / "version.json", error)
         && fs::exists(fs::path(DIRECTORY) / ASSETS_ROOT / "sounds.json", error)
+        && fs::exists(fs::path(DATA_DIRECTORY) / "data/pc" / DATA_VERSION / "protocol.json", error)
         && fs::is_directory(fs::path(DIRECTORY) / ASSETS_ROOT / "sounds", error);
 }
 
@@ -234,7 +235,25 @@ bool Download(const ProgressFn& progress, std::string& error)
     }
     } // !jarUnpacked
 
-    // 4. The sounds, which live outside the jar as hashed files. Existing files of the right size are kept.
+    // 4. The protocol/registry JSON from the minecraft-data project (MIT licensed), which the client parses at startup.
+    report(EXTRACT_END, "Downloading game data...");
+    for (const char* file : DATA_FILES)
+    {
+        std::vector<uint8_t> bytes;
+        std::string url = std::string(DATA_URL) + DATA_VERSION + "/" + file;
+        if (!OS::HttpGet(url, bytes, error))
+        {
+            error = "Couldn't download " + std::string(file) + " from minecraft-data: " + error;
+            return false;
+        }
+        if (!WriteFile(fs::path(DATA_DIRECTORY) / "data/pc" / DATA_VERSION / file, bytes))
+        {
+            error = "Couldn't write " + std::string(file) + ".";
+            return false;
+        }
+    }
+
+    // 5. The sounds, sounds.json, lang and fonts, which live outside the jar as hashed files. Existing files of the right size are kept.
     report(EXTRACT_END, "Finding the sound files...");
     nlohmann::json index;
     if (!GetJson(indexUrl, index, error)) return false;
@@ -246,9 +265,11 @@ bool Download(const ProgressFn& progress, std::string& error)
         uint64_t size;
     };
     std::vector<Sound> sounds;
-    for (const auto& [key, entry] : index.value("objects", nlohmann::json::object()).items())
+    // Bind the objects by reference: iterating .items() of a temporary (e.g. from value()) dangles and finds nothing.
+    const nlohmann::json& objects = index["objects"];
+    for (const auto& [key, entry] : objects.items())
     {
-        if ((key.rfind(SOUND_PREFIX, 0) != 0 && key != SOUND_EVENTS_KEY) || key.find("..") != std::string::npos) continue;
+        if (key.rfind(ASSET_PREFIX, 0) != 0 || key.find("..") != std::string::npos) continue;
         std::string hash = entry.value("hash", "");
         if (hash.size() < 3) continue;
         sounds.push_back({ "assets/" + key, hash, entry.value("size", 0ull) }); // minecraft/sounds/x -> assets/minecraft/sounds/x
@@ -299,14 +320,14 @@ bool Download(const ProgressFn& progress, std::string& error)
     {
         float part = sounds.empty() ? 1.0f : static_cast<float>(done.load()) / static_cast<float>(sounds.size());
         report(EXTRACT_END + (1.0f - EXTRACT_END) * part,
-            "Downloading sounds (" + std::to_string(done.load()) + " of " + std::to_string(sounds.size()) + ")...");
+            "Downloading sounds and language files (" + std::to_string(done.load()) + " of " + std::to_string(sounds.size()) + ")...");
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     for (std::thread& worker : workers) worker.join();
 
     if (failed.load() > 0)
     {
-        error = std::to_string(failed.load()) + " sound file(s) failed to download (" + firstError + "). Run again to retry.";
+        error = std::to_string(failed.load()) + " asset file(s) failed to download (" + firstError + "). Run again to retry.";
         return false;
     }
 

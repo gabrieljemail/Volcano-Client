@@ -23,6 +23,17 @@ endif()
 
 project(VolcanoClient LANGUAGES CXX)
 
+# The exe's own icon and version info (a resource script); Windows only.
+if(WIN32)
+    # rc.exe isn't on PATH in a plain shell: look in the portable Windows SDK, then for LLVM's llvm-rc.
+    file(GLOB _sdk_rc "C:/Apps/Windows SDK/bin/*/x64/rc.exe")
+    find_program(VOLCANO_RC NAMES rc llvm-rc HINTS ${_sdk_rc} "C:/Apps/Clang+LLVM/bin" "C:/Program Files/LLVM/bin")
+    if(VOLCANO_RC)
+        set(CMAKE_RC_COMPILER "${VOLCANO_RC}" CACHE FILEPATH "Resource compiler" FORCE) # Overrides a stale bare "rc".
+    endif()
+    enable_language(RC)
+endif()
+
 # Where prebuilt copies of GLFW, ZLIB, OpenSSL, Asio and OpenAL live (the maintainer's Windows layout). Anything not
 # found there comes from the system or is downloaded; see cmake/Dependencies.cmake. Set it empty to skip it.
 set(_default_libs "")
@@ -74,6 +85,8 @@ list(APPEND SOURCES
 if(WIN32)
     # ImGui's DX11 backend for the D3D11 render engine (AttachGUI TODO).
     list(APPEND SOURCES "${THIRD_PARTY}/imgui/backends/imgui_impl_dx11.cpp")
+    list(APPEND SOURCES "src/platform/VolcanoClient.rc")
+    set_source_files_properties("src/platform/VolcanoClient.rc" PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/resources/logo.ico")
 endif()
 
 # Module scanning: the policy and variable must be set before the target exists
@@ -390,6 +403,41 @@ if(VOLCANO_RUNTIME_DLLS)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VOLCANO_RUNTIME_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
     )
+endif()
+
+# The Visual C++ runtime (the exe and OpenSSL both link the dynamic CRT). A clean PC without the redistributable would
+# fail at launch with "VCRUNTIME140.dll was not found", so ship the DLLs beside the exe (app-local deployment). The
+# Universal CRT (api-ms-win-crt-*) is part of Windows 10 and up, so it isn't needed. Skipped for VOLCANO_DEBUG_CHECKS,
+# whose debug runtime isn't redistributable.
+if(WIN32 AND NOT VOLCANO_DEBUG_CHECKS)
+    set(_vc_redist_hints "")
+    if(DEFINED ENV{VCToolsRedistDir})
+        list(APPEND _vc_redist_hints "$ENV{VCToolsRedistDir}/x64/Microsoft.VC*.CRT")
+    endif()
+    file(GLOB _vc_redist_dirs
+        ${_vc_redist_hints}
+        "C:/Apps/VS Build Tools/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT"
+        "C:/Program Files/Microsoft Visual Studio/*/*/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT"
+        "C:/Program Files (x86)/Microsoft Visual Studio/*/*/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT")
+    list(SORT _vc_redist_dirs)
+    list(REVERSE _vc_redist_dirs) # Newest first.
+    set(VOLCANO_VC_RUNTIME_DLLS "")
+    if(_vc_redist_dirs)
+        list(GET _vc_redist_dirs 0 _vc_redist_dir)
+        foreach(_dll vcruntime140.dll vcruntime140_1.dll msvcp140.dll msvcp140_atomic_wait.dll)
+            if(EXISTS "${_vc_redist_dir}/${_dll}")
+                list(APPEND VOLCANO_VC_RUNTIME_DLLS "${_vc_redist_dir}/${_dll}")
+            endif()
+        endforeach()
+        message(STATUS "Visual C++ runtime: bundling DLLs from ${_vc_redist_dir}")
+    else()
+        message(WARNING "Visual C++ redistributable DLLs not found; the build will need the VC++ redistributable installed to run on other PCs.")
+    endif()
+    if(VOLCANO_VC_RUNTIME_DLLS)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VOLCANO_VC_RUNTIME_DLLS} $<TARGET_FILE_DIR:${PROJECT_NAME}>
+        )
+    endif()
 endif()
 
 # =============================================================================

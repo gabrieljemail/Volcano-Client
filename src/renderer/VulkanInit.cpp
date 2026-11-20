@@ -343,7 +343,7 @@ void CreateGraphicsPipeline(const Volcano::Engine::ShaderLibrary& shaders)
         throw std::runtime_error("[ERROR] Failed to create pipeline layout.");
     }
 
-    cout << "Compiling shaders..." << endl;
+    Volcano::Log::InfoStream() << "Compiling shaders...";
 
     // 10. CREATE GRAPHICS PIPELINE
     VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -1399,22 +1399,22 @@ void Init(Application* state)
                 if (!matched && lowered(candidate.name).find(needle) != std::string::npos)
                 {
                     physDeviceSelector.set_name(candidate.name);
-                    cout << "Graphics.PreferredDevice \"" << preferredDevice
-                         << "\" matched Vulkan device: " << candidate.name << endl;
+                    Volcano::Log::InfoStream() << "Graphics.PreferredDevice \"" << preferredDevice
+                         << "\" matched Vulkan device: " << candidate.name;
                     matched = true;
                 }
             }
             if (!matched)
             {
-                cerr << "[WARN] Graphics.PreferredDevice \"" << preferredDevice
+                Volcano::Log::WarnStream() << "Graphics.PreferredDevice \"" << preferredDevice
                      << "\" matched no suitable Vulkan device (available: " << available
-                     << ") - falling back to the default device." << endl;
+                     << ") - falling back to the default device.";
             }
         }
         else
         {
-            cerr << "[WARN] Could not enumerate Vulkan devices to honor Graphics.PreferredDevice: "
-                 << candidates.error().message() << " - falling back to the default device." << endl;
+            Volcano::Log::WarnStream() << "Could not enumerate Vulkan devices to honor Graphics.PreferredDevice: "
+                 << candidates.error().message() << " - falling back to the default device.";
         }
     }
 
@@ -1428,8 +1428,8 @@ void Init(Application* state)
     }
     physicalDevice = physDeviceSelectorReturn.value();
     FullscreenExclusive::ConfigureDevice(physicalDevice);
-    cout << "Found Vulkan GPU: " << physicalDevice.name << endl;
-    cout << "Vulkan API version: " << physicalDevice.properties.apiVersion << endl;
+    Volcano::Log::InfoStream() << "Found Vulkan GPU: " << physicalDevice.name;
+    Volcano::Log::InfoStream() << "Vulkan API version: " << physicalDevice.properties.apiVersion;
     g_application->systemInfo.DetectGPU(physicalDevice.properties.deviceName,
         physicalDevice.properties.vendorID, physicalDevice.properties.apiVersion);
 
@@ -1442,7 +1442,7 @@ void Init(Application* state)
     indirectFeatures.multiDrawIndirect = VK_TRUE;
     indirectFeatures.drawIndirectFirstInstance = VK_TRUE;
     indirectDrawSupported = physicalDevice.enable_features_if_present(indirectFeatures);
-    cout << "Multi-draw indirect: " << (indirectDrawSupported ? "supported" : "not supported") << endl;
+    Volcano::Log::InfoStream() << "Multi-draw indirect: " << (indirectDrawSupported ? "supported" : "not supported");
 
     auto deviceBuilderReturn = deviceBuilder.build();
 
@@ -1453,7 +1453,7 @@ void Init(Application* state)
         throw std::runtime_error(message);
     }
     device = deviceBuilderReturn.value();
-    cout << "Vulkan device initialized." << endl;
+    Volcano::Log::InfoStream() << "Vulkan device initialized.";
 
     // Set up the VMA allocator.
     VmaAllocatorCreateInfo allocInfo{};
@@ -1485,8 +1485,8 @@ void Init(Application* state)
     graphicsQueue = device.get_queue(vkb::QueueType::graphics).value();
     presentQueue  = device.get_queue(vkb::QueueType::present).value();
     graphicsQueueFamilyIndex = device.get_queue_index(vkb::QueueType::graphics).value();
-    cout << "[DEBUG] Graphics queue: " << graphicsQueue << endl;
-    cout << "[DEBUG] Present queue: " << presentQueue << endl;
+    Volcano::Log::InfoStream() << "[DEBUG] Graphics queue: " << graphicsQueue;
+    Volcano::Log::InfoStream() << "[DEBUG] Present queue: " << presentQueue;
 
     // Set swapchainExtent.
     swapchainExtent = swapchain.extent;

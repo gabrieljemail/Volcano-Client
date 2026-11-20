@@ -47,6 +47,7 @@ CMakeCache.txt
 /resources/resourcepacks
 /resources/shaderpacks
 /resources/*.zip
+/java
 settings.json
 worlds.json
 servers.json
@@ -60,7 +61,7 @@ crash-report.txt
 /*.tmp.*
 /*.zip
 /*.cmake
-
+logs/
 client.err
 compile_commands.json
 imgui.ini

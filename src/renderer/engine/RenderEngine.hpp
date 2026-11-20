@@ -41,6 +41,10 @@ public:
     // Graphics.ShaderPack, ...).
     virtual void Init() = 0;
 
+    // Creates the render passes for backends that must wait until the base assets are installed (their passes
+    // load Mojang textures). A no-op for backends that create their passes in Init().
+    virtual void InitPasses() {}
+
     // Points the world/non-cubic passes' texture binding at the loaded
     // block/item texture array. Call once TextureManager::LoadResourcePack()
     // has finished.

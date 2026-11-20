@@ -53,7 +53,8 @@ void AccountPanel::Build(ControlRenderer& ui, MSAccountManager* accounts, SkinFe
 {
     selectButtons.clear();
     removeButtons.clear();
-    toggleButton = offlineButton = addButton = cancelButton = copyCodeButton = copyPageButton = Element();
+    toggleButton = addButton = cancelButton = copyCodeButton = copyPageButton = Element();
+    offlineInput = Element();
     root = Element();
     if (accounts == nullptr) return;
 
@@ -95,7 +96,8 @@ void AccountPanel::Build(ControlRenderer& ui, MSAccountManager* accounts, SkinFe
         .SetAlign(Align::End, Align::Start)
         .SetGap(units(PANEL_GAP));
 
-    std::string label = current.has_value() && *current < list.size() ? list[*current].GetProfileName() : "Offline";
+    std::string label = current.has_value() && *current < list.size() ? list[*current].GetProfileName()
+                                                                      : accounts->OfflineUsername() + " (offline)";
     toggleButton = ui.AddButton(root, label + (open ? " ^" : " v"), FULL_WIDTH);
     if (current.has_value() && *current < list.size()) AddHead(toggleButton, list[*current]);
     if (!open && !Signing(login)) return;
@@ -108,7 +110,9 @@ void AccountPanel::Build(ControlRenderer& ui, MSAccountManager* accounts, SkinFe
         .SetBorder(units(2.0f), PANEL_LIGHT)
         .SetCornerRadius(units(PANEL_RADIUS));
 
-    offlineButton = ui.AddButton(panel, current.has_value() ? "Offline" : "> Offline", FULL_WIDTH);
+    panel.AddText(current.has_value() ? "Offline username" : "> Offline username");
+    offlineInput = ui.AddField(panel, FULL_WIDTH, "Offline username");
+    offlineInput.SetText(accounts->OfflineUsername());
     for (size_t i = 0; i < list.size(); i++)
     {
         Element row = panel.AddStack(Orientation::Horizontal);
@@ -158,8 +162,21 @@ void AccountPanel::Update(ControlRenderer& ui, MSAccountManager* accounts, SkinF
         return true;
     };
 
-    if (click(toggleButton)) open = !open;
-    if (click(offlineButton)) accounts->SetCurrent(std::nullopt);
+    if (click(toggleButton))
+    {
+        open = !open;
+        if (!open) accounts->SaveSettings();
+    }
+    if (offlineInput.IsValid() && offlineInput.InputChanged())
+    {
+        // Typing a name means playing offline as it. Saved when the panel closes.
+        accounts->SetOfflineUsername(offlineInput.GetText());
+        if (accounts->CurrentIndex().has_value())
+        {
+            accounts->SetCurrent(std::nullopt);
+            changed = true;
+        }
+    }
     if (click(addButton)) accounts->BeginDeviceLogin();
     if (click(cancelButton)) accounts->CancelDeviceLogin();
     if (click(copyCodeButton)) ImGui::SetClipboardText(userCode.c_str());

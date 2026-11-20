@@ -1,4 +1,5 @@
 #include "CrashReporter.hpp"
+#include "Logger.hpp"
 #include "platform/OS.hpp"
 #include <atomic>
 #include <csignal>
@@ -87,8 +88,8 @@ void CrashReporter::Report(const std::string& reason)
     if (reporting.exchange(true)) std::_Exit(3);
 
     std::string trace = Platform::OS::CaptureStackTrace(1);
-    std::fprintf(stderr, "[FATAL] %s\nStack trace:\n%s", reason.c_str(), trace.c_str());
-    std::fflush(stderr);
+    Log::Error("[FATAL] " + reason + "\nStack trace:\n" + trace);
+    Log::Flush(); // The lines leading up to the crash must reach logs/latest.log before the process dies.
 
     // Let an attached debugger break at the real crash site instead.
     if (Platform::OS::IsDebuggerAttached())

@@ -1,3 +1,4 @@
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -88,8 +89,6 @@ static void ParseServerAddress(const std::string& address, std::string& outHost,
 
 int main(int argc, char** argv)
 {
-    Volcano::Platform::OS::AttachParentConsole();
-
     // Everything below addresses resources/ relative to the working
     // directory, and shortcuts/file associations don't guarantee it is the
     // exe's folder - anchor it once, up front.
@@ -98,15 +97,30 @@ int main(int argc, char** argv)
         if (!exeDir.empty()) std::filesystem::current_path(exeDir);
     }
 
+    // Logs go to logs/latest.log. --stdout also mirrors them to the terminal that launched the client.
+    bool standardOut = false;
+    for (int i = 1; i < argc; i++)
+    {
+        if (std::strcmp(argv[i], "--stdout") == 0) standardOut = true;
+    }
+    if (standardOut)
+    {
+        Volcano::Platform::OS::AttachParentConsole();
+        Volcano::Log::EnableStandardOut();
+    }
     Volcano::CrashReporter::Install();
     if (Volcano::CrashReporter::HandleReportMode(argc, argv)) return 0;
 
     // Let's keep this just for fun.
     Volcano::Log::Info("Hello, World!");
 
-    // Cool terminal effects.
-    std::cout << "\x1b[2J\x1b[H"; // Clear the screen and reset the cursor.
-    std::cout << "\x1b]0;Volcano Client\x07"; // Title.
+    if (standardOut)
+    {
+        // Cool terminal effects.
+        std::cout << "\x1b[2J\x1b[H"; // Clear the screen and reset the cursor.
+        std::cout << "\x1b]0;Volcano Client Log\x07"; // Title.
+        std::cout.flush();
+    }
 
     // Initialize global state.
     Volcano::Application state{};
@@ -193,6 +207,7 @@ int main(int argc, char** argv)
         {
             if (agreed) Volcano::Platform::OS::ShowErrorDialog("Download failed", failure);
             Volcano::SplashScreen::Hide();
+            Volcano::Log::Shutdown();
             return 1;
         }
         resourceManager.Reload();
@@ -211,6 +226,8 @@ int main(int argc, char** argv)
             return 1;
         }
     }
+
+    renderEngine->InitPasses();
 
     // Each init step below reports progress, which also pumps the window's
     // event queue so the OS doesn't mark the client "Not Responding".
@@ -381,8 +398,6 @@ int main(int argc, char** argv)
     auto* addressInput = new Volcano::GUI::TextInput(
         "Server Address",
         std::get<std::string>(state.config->Get("Network.DevServerHost", std::string("108.197.182.119"))) + ":" + std::to_string(devServerPort));
-    auto* usernameInput = new Volcano::GUI::TextInput(
-        "Username", std::get<std::string>(state.config->Get("Network.DevUsername", std::string("VoidDev"))));
     auto* connectButton = new Volcano::GUI::Button("Connect");
 
     // Shown above the form after a disconnect (see the polling loop below);
@@ -393,11 +408,11 @@ int main(int argc, char** argv)
 
     // Starts a connection to "host[:port]" as the username on the connect
     // screen: shared by its Connect button and the server list's Join.
-    auto connectToServer = [&state, &network, usernameInput, loadingScreen, devServerPort](const std::string& address) {
+    auto connectToServer = [&state, &network, &accountManager, loadingScreen, devServerPort](const std::string& address) {
         std::string host;
         uint16_t port;
         ParseServerAddress(address, host, port, devServerPort);
-        std::string username = usernameInput->GetValue();
+        std::string username = accountManager.CurrentUsername();
         if (host.empty() || username.empty()) return;
 
         state.SetConnectionPhase(Volcano::ConnectionPhase::Connecting, host + ":" + std::to_string(port));
@@ -415,8 +430,8 @@ int main(int argc, char** argv)
     uint16_t loopbackPort = static_cast<uint16_t>(std::get<uint32_t>(state.config->Get("Network.LoopbackPort", uint32_t{25565})));
     Volcano::GUI::Screen* mainMenuForWorlds = nullptr;
     Volcano::GUI::WorldListActions worldActions;
-    worldActions.play = [&state, &network, usernameInput, loopbackPort, loadingScreen](const Volcano::GUI::World& world) {
-        std::string username = usernameInput->GetValue();
+    worldActions.play = [&state, &network, &accountManager, loopbackPort, loadingScreen](const Volcano::GUI::World& world) {
+        std::string username = accountManager.CurrentUsername();
         if (username.empty()) return;
 
         // A relative Java path would be looked up from the world's folder, where the server runs.
@@ -436,7 +451,6 @@ int main(int argc, char** argv)
 
     connectScreen->components.push_back(disconnectReasonText);
     connectScreen->components.push_back(addressInput);
-    connectScreen->components.push_back(usernameInput);
     connectScreen->components.push_back(connectButton);
 
     // Main menu: the actual startup screen and navigation hub now
@@ -601,5 +615,6 @@ int main(int argc, char** argv)
     Volcano::Engine::D3D11::DestroyItemRenderer(state.d3dItemRenderer);
     state.d3dItemRenderer = nullptr;
 
+    Volcano::Log::Shutdown();
     return 0;
 }

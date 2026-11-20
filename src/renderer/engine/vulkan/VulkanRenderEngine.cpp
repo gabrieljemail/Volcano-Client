@@ -42,6 +42,11 @@ void VulkanRenderEngine::Init()
     ApplyFramesInFlight();
     initialized = true;
 
+    // Passes are created by InitPasses(), after the base assets are on disk (passes load Mojang textures).
+}
+
+void VulkanRenderEngine::InitPasses()
+{
     shaders.SetActivePack(std::get<std::string>(state->config->Get("Graphics.ShaderPack", std::string(""))));
 
     RegisterBuiltInPasses();

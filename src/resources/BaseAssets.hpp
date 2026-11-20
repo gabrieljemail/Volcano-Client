@@ -11,10 +11,15 @@ namespace Volcano::BaseAssets {
 constexpr const char* VERSION = "26.2";
 constexpr const char* DIRECTORY = "resources/minecraft";
 
+// The minecraft-data version the client's registries and packet parsers read, and where it is fetched to.
+constexpr const char* DATA_VERSION = "26.1";
+constexpr const char* DATA_DIRECTORY = "resources/minecraft-data";
+
 // What the user is told, and what they agree to, before anything is fetched.
 constexpr const char* NOTICE =
     "Volcano Client needs the game's textures, models, sounds and data to run. They are downloaded directly from "
-    "Mojang's servers and are not included with this program.\n\n"
+    "Mojang's servers and are not included with this program. Block, item and protocol tables are also downloaded "
+    "from the open-source minecraft-data project on GitHub.\n\n"
     "We are not affiliated with or sponsored by Mojang or Microsoft in any way, and the use of this feature means you "
     "are responsible for owning a valid license for the game and making sure you are allowed to download this content. "
     "By choosing \"I Agree, Download\", you accept full responsibility over whether you have the appropriate "
